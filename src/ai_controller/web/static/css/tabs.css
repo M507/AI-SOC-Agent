@@ -1,0 +1,85 @@
+/* Tab Styles - Tab container, tabs, and tab-related elements */
+
+/* Tabs Container */
+.tabs-container {
+    background: #2d2d30;
+    border-bottom: 1px solid #3e3e42;
+    overflow-x: auto;
+}
+
+.tabs-header {
+    display: flex;
+    padding: 0 20px;
+}
+
+.tab-group {
+    display: flex;
+    align-items: center;
+    margin-right: 20px;
+    padding: 8px 0;
+}
+
+.tab-group-label {
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    color: #858585;
+    margin-right: 8px;
+    padding: 4px 8px;
+}
+
+.tabs {
+    display: flex;
+    gap: 2px;
+}
+
+.tab {
+    padding: 8px 16px;
+    background: #2d2d30;
+    color: #858585;
+    cursor: pointer;
+    border: none;
+    border-radius: 4px 4px 0 0;
+    font-size: 13px;
+    white-space: nowrap;
+    transition: all 0.2s;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.tab:hover {
+    background: #3e3e42;
+    color: #d4d4d4;
+}
+
+.tab.active {
+    background: #1e1e1e;
+    color: #ffffff;
+    border-bottom: 2px solid #007acc;
+}
+
+.tab-badge {
+    background: #3e3e42;
+    color: #d4d4d4;
+    padding: 2px 6px;
+    border-radius: 10px;
+    font-size: 10px;
+    font-weight: 600;
+}
+
+.tab.active .tab-badge {
+    background: #007acc;
+    color: white;
+}
+
+.tab-close {
+    margin-left: 4px;
+    padding: 2px 4px;
+    border-radius: 3px;
+}
+
+.tab-close:hover {
+    background: rgba(255, 255, 255, 0.1);
+}
+

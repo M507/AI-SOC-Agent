@@ -1,0 +1,81 @@
+{
+  "_comment": "Example client: ACME Corp naming schemas for devices and users.",
+  "device_schemas": [
+    {
+      "pattern": "^LP-[A-Z0-9]{6}$",
+      "pattern_style": "regex",
+      "device_type": "laptop",
+      "example": "LP-AC1234",
+      "description": "Managed corporate laptops used by roaming users and VPN users.",
+      "tags": ["endpoint", "laptop", "windows"]
+    },
+    {
+      "pattern": "^DT-[A-Z0-9]{6}$",
+      "pattern_style": "regex",
+      "device_type": "desktop",
+      "example": "DT-HQ5678",
+      "description": "Fixed desktops located on the HQ corporate LAN.",
+      "tags": ["endpoint", "desktop", "windows"]
+    },
+    {
+      "pattern": "^DESKTOP-.*$",
+      "pattern_style": "regex",
+      "device_type": "workstation",
+      "example": "DESKTOP-ABC123",
+      "description": "Workstations following the DESKTOP-* naming pattern.",
+      "tags": ["endpoint", "workstation", "windows"]
+    },
+    {
+      "pattern": "^ACME-[A-Z]+-SRV[0-9]{2}$",
+      "pattern_style": "regex",
+      "device_type": "server",
+      "example": "ACME-APP-SRV01",
+      "description": "Server naming: ACME-<FUNCTION>-SRV## (e.g., APP, WEB, DB, LOG).",
+      "tags": ["server", "infrastructure"]
+    },
+    {
+      "pattern": "^PRT-[A-Z0-9]{4}$",
+      "pattern_style": "regex",
+      "device_type": "printer",
+      "example": "PRT-1F01",
+      "description": "Printers with PRT-<location code> pattern.",
+      "tags": ["printer", "peripheral"]
+    }
+  ],
+  "user_schemas": [
+    {
+      "pattern": "^[a-z]+\\.[a-z]+$",
+      "pattern_style": "regex",
+      "user_type": "employee",
+      "example": "john.doe",
+      "description": "Standard ACME employee accounts firstname.lastname.",
+      "tags": ["employee", "standard"]
+    },
+    {
+      "pattern": "^adm-[a-z0-9]+$",
+      "pattern_style": "regex",
+      "user_type": "administrator",
+      "example": "adm-jsmith",
+      "description": "Privileged admin accounts prefixed with adm- and mapped to a specific user.",
+      "tags": ["admin", "privileged"]
+    },
+    {
+      "pattern": "^svc-[a-z0-9]+$",
+      "pattern_style": "regex",
+      "user_type": "service_account",
+      "example": "svc-backup",
+      "description": "Service accounts with svc- prefix used by applications or scheduled tasks.",
+      "tags": ["service-account", "automation"]
+    },
+    {
+      "pattern": "^contract\\.[a-z0-9]+$",
+      "pattern_style": "regex",
+      "user_type": "contractor",
+      "example": "contract.jbrown",
+      "description": "Contractor accounts using contract.<username> naming convention.",
+      "tags": ["contractor", "temporary"]
+    }
+  ]
+}
+
+

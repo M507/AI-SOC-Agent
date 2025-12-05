@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>SamiGPT AI Controller</title>
+        <!-- CSS Files - Organized by purpose for easier maintenance -->
+        <link rel="stylesheet" href="/static/css/base.css?v=2">
+        <link rel="stylesheet" href="/static/css/layout.css?v=4">
+        <link rel="stylesheet" href="/static/css/buttons.css?v=2">
+        <link rel="stylesheet" href="/static/css/tabs.css?v=2">
+        <link rel="stylesheet" href="/static/css/status.css?v=2">
+        <link rel="stylesheet" href="/static/css/terminal.css?v=2">
+        <link rel="stylesheet" href="/static/css/autorun.css?v=4">
+        <link rel="stylesheet" href="/static/css/modal.css?v=2">
+        <link rel="stylesheet" href="/static/css/settings.css?v=2">
+        <link rel="stylesheet" href="/static/css/scrollbar.css?v=2">
+    </head>
+<body>
+    <div class="container">
+        <header>
+            <h1>SamiGPT – SOC AI Agents Orchestrator</h1>
+            <div class="header-actions">
+                <button id="new-session-btn" class="btn btn-primary">+ New Session</button>
+                <button id="new-autorun-btn" class="btn btn-secondary">+ New Autorun</button>
+                <button id="settings-btn" class="btn btn-secondary">Settings</button>
+            </div>
+        </header>
+
+        <div class="main-layout">
+            <aside class="sidebar">
+                <div class="sidebar-header">
+                    <span class="sidebar-title">Views</span>
+                </div>
+                <button id="nav-sessions" class="nav-item active">
+                    <span class="nav-label">Manual Sessions</span>
+                </button>
+                <button id="nav-autoruns" class="nav-item">
+                    <span class="nav-label">Autoruns</span>
+                </button>
+                <button id="nav-settings" class="nav-item">
+                    <span class="nav-label">Settings</span>
+                </button>
+            </aside>
+
+            <div class="main-panel">
+                <div class="tabs-container">
+                    <div class="tabs-header">
+                        <div class="tab-group" id="sessions-tab-group">
+                            <span class="tab-group-label">Sessions</span>
+                            <div class="tabs" id="sessions-tabs"></div>
+                        </div>
+                        <div class="tab-group" id="autoruns-tab-group" style="display: none;">
+                            <span class="tab-group-label">Autoruns</span>
+                            <div class="tabs" id="autoruns-tabs"></div>
+                        </div>
+                        <div class="tab-group" id="settings-tab-group" style="display: none;">
+                            <span class="tab-group-label">Settings</span>
+                            <div class="tabs" id="settings-tabs">
+                                <button class="tab" id="settings-tab">Settings</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="content-area">
+                    <div id="no-session-message" class="no-session">
+                        <p>Select a manual session tab or create a new session to start</p>
+                    </div>
+                    <div id="autorun-empty-message" class="no-session" style="display: none;">
+                        <p>No autoruns configured yet. Create one to get started.</p>
+                    </div>
+                    <div id="session-content" class="session-content" style="display: none;">
+                        <div class="session-header">
+                            <h2 id="session-title">Session</h2>
+                            <div class="session-actions">
+                                <span id="session-status" class="status-badge">Pending</span>
+                                <button id="stop-session-btn" class="btn btn-danger btn-sm">Stop</button>
+                                <button id="close-session-btn" class="btn btn-secondary btn-sm">Close Tab</button>
+                            </div>
+                        </div>
+                        <div class="terminal-container">
+                            <div class="terminal" id="terminal"></div>
+                            <div class="command-input-container">
+                                <input type="text" id="command-input" class="command-input" placeholder="Enter command (e.g., run lookup_hash_ti on &lt;hash&gt;)">
+                                <button id="execute-btn" class="btn btn-primary btn-sm">Execute</button>
+                            </div>
+                        </div>
+                    </div>
+                    <div id="settings-content" class="settings-content" style="display: none;">
+                        <div class="session-header">
+                            <h2>Settings</h2>
+                        </div>
+                        <div class="settings-body">
+                            <label class="settings-toggle">
+                                <input type="checkbox" id="debug-toggle">
+                                <span class="toggle-label">Enable debug mode (show full JSON results)</span>
+                            </label>
+                            <p class="settings-help">
+                                When debug mode is disabled, only the agent's reply text is shown.
+                                When enabled, the full JSON result object is rendered in the terminal.
+                            </p>
+                        </div>
+                    </div>
+                    <!-- Autorun Details Panel (shown when Autoruns view is active) -->
+                    <div id="autorun-content" class="autorun-content" style="display: none;">
+                        <div class="session-header">
+                            <h2 id="autorun-title">Autorun</h2>
+                            <div class="session-actions">
+                                <span id="autorun-status" class="status-badge">Enabled</span>
+                                <button id="autorun-toggle-btn" class="btn btn-secondary btn-sm">Disable</button>
+                                <button id="autorun-clear-btn" class="btn btn-secondary btn-sm">Clear</button>
+                                <button id="autorun-export-btn" class="btn btn-secondary btn-sm">Export</button>
+                                <button id="autorun-delete-btn" class="btn btn-danger btn-sm">Delete</button>
+                            </div>
+                        </div>
+                        <div class="settings-body">
+                            <p class="settings-help">
+                                <strong>Starting prompt:</strong>
+                            </p>
+                            <pre id="autorun-prompt" class="autorun-prompt"></pre>
+
+                            <p class="settings-help" id="autorun-condition-display" style="display: none;">
+                                <strong>Condition function:</strong>
+                                <span id="autorun-condition-value"></span>
+                            </p>
+
+                            <p class="settings-help">
+                                <strong>Interval:</strong>
+                                <span id="autorun-interval-display"></span>
+                            </p>
+
+                            <p class="settings-help" id="autorun-meta"></p>
+                        </div>
+
+                        <!-- Read-only terminal showing the autorun's backing session as a long chat -->
+                        <div class="terminal-container autorun-terminal-container">
+                            <div class="terminal" id="autorun-terminal"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- New Session Modal -->
+    <div id="new-session-modal" class="modal" style="display: none;">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>Create New Session</h3>
+                <span class="close" id="close-session-modal">&times;</span>
+            </div>
+            <div class="modal-body">
+                <label for="session-name">Session Name:</label>
+                <input type="text" id="session-name" placeholder="My Session">
+            </div>
+            <div class="modal-footer">
+                <button id="create-session-btn" class="btn btn-primary">Create</button>
+                <button id="cancel-session-btn" class="btn btn-secondary">Cancel</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- New Autorun Modal -->
+    <div id="new-autorun-modal" class="modal" style="display: none;">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>Create New Autorun</h3>
+                <span class="close" id="close-autorun-modal">&times;</span>
+            </div>
+            <div class="modal-body">
+                <label for="autorun-name">Name:</label>
+                <input type="text" id="autorun-name" placeholder="Check Recent Alerts">
+                
+                <label for="autorun-command">Starting prompt:</label>
+                <input
+                    type="text"
+                    id="autorun-command"
+                    placeholder="e.g. run lookup_hash_ti on &lt;hash&gt; or ask a question"
+                >
+                
+                <label for="autorun-condition">
+                    Condition function (optional):
+                    <a href="#" id="condition-help-link" class="help-link" title="Click for help">ℹ️</a>
+                </label>
+                <div id="condition-help-tooltip" class="help-tooltip help-tooltip-hidden">
+                    <strong>Supported condition functions:</strong>
+                    <ul style="margin: 8px 0; padding-left: 20px;">
+                        <li><code>get_recent_alerts</code> - Only execute if there are uninvestigated alerts</li>
+                        <li><code>list_cases</code> - Only execute if there are open cases</li>
+                    </ul>
+                    <p style="margin: 8px 0 0 0; font-size: 0.9em;">
+                        The autorun will only execute if the condition function returns content. 
+                        If the function returns empty/no content, the autorun will be skipped.
+                    </p>
+                </div>
+                <select id="autorun-condition">
+                    <option value="">No condition (always execute)</option>
+                    <option value="get_recent_alerts">get_recent_alerts (only execute if there are uninvestigated alerts)</option>
+                    <option value="list_cases">list_cases (only execute if there are open cases)</option>
+                </select>
+                <small style="color: #666; display: block; margin-top: 4px;">
+                    Choose a condition function to control when the autorun runs. 
+                    If you leave this as \"No condition\", the autorun will always execute on schedule.
+                </small>
+                
+                <label for="autorun-interval">Interval (seconds):</label>
+                <input type="number" id="autorun-interval" value="60" min="5">
+            </div>
+            <div class="modal-footer">
+                <button id="create-autorun-btn" class="btn btn-primary">Create</button>
+                <button id="cancel-autorun-btn" class="btn btn-secondary">Cancel</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- PDF Export Library -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+    
+    <!-- Markdown Rendering Library -->
+    <script src="https://cdn.jsdelivr.net/npm/marked@12.0.0/marked.min.js"></script>
+    
+    <!-- Core utilities (no dependencies) -->
+    <script src="/static/utils.js?v=1"></script>
+    
+    <!-- API client (no dependencies) -->
+    <script src="/static/api.js?v=2"></script>
+    
+    <!-- Component modules (depend on utils) -->
+    <script src="/static/websocket.js?v=1"></script>
+    <script src="/static/terminal.js?v=1"></script>
+    <script src="/static/sessions.js?v=2"></script>
+    <script src="/static/pdf_export.js?v=1"></script>
+    <script src="/static/autoruns.js?v=7"></script>
+    <script src="/static/modals.js?v=2"></script>
+    
+    <!-- Main application (depends on all modules) -->
+    <script src="/static/app.js?v=4"></script>
+    
+    <!-- Settings (depends on app) -->
+    <script src="/static/settings.js?v=1"></script>
+</body>
+</html>
+

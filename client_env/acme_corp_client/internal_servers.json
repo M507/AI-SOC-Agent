@@ -1,0 +1,97 @@
+{
+  "_comment": "Example client: ACME Corp internal servers.",
+  "servers": [
+    {
+      "hostname": "ACME-DC01",
+      "ip_address": "10.1.0.10",
+      "role": "domain_controller",
+      "environment": "production",
+      "os": "Windows Server 2019",
+      "description": "Primary domain controller and DNS server for acme.corp domain.",
+      "criticality": "high",
+      "tags": ["ad", "dns", "authentication", "critical"]
+    },
+    {
+      "hostname": "ACME-DC02",
+      "ip_address": "10.1.0.11",
+      "role": "domain_controller",
+      "environment": "production",
+      "os": "Windows Server 2019",
+      "description": "Secondary domain controller for redundancy.",
+      "criticality": "high",
+      "tags": ["ad", "dns", "authentication", "redundant"]
+    },
+    {
+      "hostname": "IT-WS01",
+      "ip_address": "10.10.0.82",
+      "role": "workstation",
+      "environment": "production",
+      "os": "Windows 10 workstation",
+      "description": "IT Workstation for IT Operations",
+      "criticality": "high",
+      "tags": ["workstation", "it", "operations"]
+    },
+    {
+      "hostname": "ACME-APP-SRV01",
+      "ip_address": "10.1.0.30",
+      "role": "application_server",
+      "environment": "production",
+      "os": "Windows Server 2019",
+      "description": "Hosts ACME's main ERP / CRM application.",
+      "criticality": "high",
+      "tags": ["application", "erp", "business-critical"]
+    },
+    {
+      "hostname": "ACME-WEB-SRV01",
+      "ip_address": "10.1.10.20",
+      "role": "web_server",
+      "environment": "production",
+      "os": "Linux",
+      "description": "Internet-facing web server in DMZ for customer portal.",
+      "criticality": "high",
+      "tags": ["web", "dmz", "internet-facing"]
+    },
+    {
+      "hostname": "ACME-LOG-SRV01",
+      "ip_address": "10.1.0.40",
+      "role": "logging_server",
+      "environment": "production",
+      "os": "Linux",
+      "description": "Central syslog/SIEM forwarder receiving logs from endpoints, servers, and network devices.",
+      "criticality": "medium",
+      "tags": ["logging", "siem", "monitoring"]
+    },
+    {
+      "hostname": "ACME-MGMT-SRV01",
+      "ip_address": "10.1.0.50",
+      "role": "jump_server",
+      "environment": "production",
+      "os": "Windows Server 2019",
+      "description": "Jump host for administrators to access internal servers via RDP.",
+      "criticality": "high",
+      "tags": ["jump-server", "management", "admin-access"]
+    },
+    {
+      "hostname": "ACME-BACKUP-SRV01",
+      "ip_address": "10.1.0.60",
+      "role": "backup_server",
+      "environment": "production",
+      "os": "Linux",
+      "description": "Backup server handling nightly backups of critical systems.",
+      "criticality": "high",
+      "tags": ["backup", "storage", "resilience"]
+    },
+    {
+      "hostname": "win10-stand-alone-test-3",
+      "ip_address": "10.10.0.82",
+      "role": "workstation",
+      "environment": "production",
+      "os": "Windows 10 workstation",
+      "description": "Standalone Windows 10 host for administrators to access via RDP and perform administrative tasks.",
+      "criticality": "medium",
+      "tags": ["workstation", "admin", "rdp", "standalone", "test"]
+    }
+  ]
+}
+
+

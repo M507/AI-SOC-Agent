@@ -1,0 +1,52 @@
+{
+  "_comment": "Template for internal users across all clients. Copy and customize per client.",
+  "users": [
+    {
+      "username": "john.doe",
+      "display_name": "John Doe",
+      "account_type": "standard_user",
+      "department": "Sales",
+      "privilege_level": "normal",
+      "description": "Typical end user account following firstname.lastname convention.",
+      "tags": ["employee", "standard"]
+    },
+    {
+      "username": "jane.smith",
+      "display_name": "Jane Smith",
+      "account_type": "important_user",
+      "department": "Executive",
+      "privilege_level": "elevated",
+      "description": "Executive user with elevated access to finance and reporting systems.",
+      "tags": ["executive", "important"]
+    },
+    {
+      "username": "adm-jsmith",
+      "display_name": "Admin - Jane Smith",
+      "account_type": "administrator",
+      "department": "IT",
+      "privilege_level": "high",
+      "description": "Dedicated admin account for privileged actions (separate from user’s normal account).",
+      "tags": ["admin", "privileged", "it"]
+    },
+    {
+      "username": "svc-backup",
+      "display_name": "Service Account - Backup",
+      "account_type": "service",
+      "department": "IT",
+      "privilege_level": "service",
+      "description": "Service account used by backup software to access servers and file shares.",
+      "tags": ["service-account", "backup", "automation"]
+    },
+    {
+      "username": "contract.jbrown",
+      "display_name": "Contractor - John Brown",
+      "account_type": "contractor",
+      "department": "IT",
+      "privilege_level": "limited",
+      "description": "Contractor account with limited and time-bound access pattern.",
+      "tags": ["contractor", "temporary"]
+    }
+  ]
+}
+
+

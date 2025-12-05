@@ -1,0 +1,83 @@
+{
+  "logging": {
+    "log_dir": "logs",
+    "log_level": "INFO"
+  },
+  "thehive": {
+    "base_url": "https://thehive.example.com",
+    "api_key": "your-thehive-api-key-here",
+    "timeout_seconds": 30
+  },
+  "iris": {
+    "base_url": "https://iris.example.com",
+    "api_key": "your-iris-api-key-here",
+    "timeout_seconds": 30
+  },
+  "elastic": {
+    "base_url": "https://elastic.example.com:9200",
+    "api_key": "your-elastic-api-key-here",
+    "username": "elastic",
+    "password": "your-elastic-password-here",
+    "timeout_seconds": 30,
+    "verify_ssl": true
+  },
+  "edr": {
+    "edr_type": "velociraptor",
+    "base_url": "https://velociraptor.example.com:8000",
+    "api_key": "your-edr-api-key-here",
+    "timeout_seconds": 30
+  },
+  "cti": {
+    "cti_type": "local_tip",
+    "base_url": "http://tip.example.com",
+    "timeout_seconds": 30,
+    "verify_ssl": false
+  },
+  "cti_opencti": {
+    "_comment": "Optional: Configure both Local TIP and OpenCTI to query both platforms concurrently",
+    "cti_type": "opencti",
+    "base_url": "https://opencti.example.com",
+    "api_key": "your-opencti-api-key-here",
+    "timeout_seconds": 30,
+    "verify_ssl": false
+  },
+  "ai_controller": {
+    "_comment": "AI Controller configuration for managing agent executions",
+    "storage_dir": "data/ai_controller",
+    "web_port": 8081,
+    "web_host": "0.0.0.0"
+  },
+  "eng": {
+    "_comment": "Set 'provider' to 'trello', 'clickup', or 'github' to choose which platform to use",
+    "provider": "trello",
+    "trello": {
+      "api_key": "your-trello-api-key-here",
+      "api_token": "your-trello-api-token-here",
+      "fine_tuning_board_id": "your-fine-tuning-board-id",
+      "engineering_board_id": "your-engineering-board-id",
+      "timeout_seconds": 30,
+      "verify_ssl": true
+    },
+    "clickup": {
+      "api_token": "your-clickup-api-token-here",
+      "fine_tuning_list_id": "your-fine-tuning-list-id",
+      "engineering_list_id": "your-engineering-list-id",
+      "timeout_seconds": 30,
+      "verify_ssl": true
+    },
+    "github": {
+      "api_token": "your-github-personal-access-token-here",
+      "fine_tuning_project_id": "your-fine-tuning-project-id",
+      "engineering_project_id": "your-engineering-project-id",
+      "timeout_seconds": 30,
+      "verify_ssl": true
+    }
+  },
+  "web": {
+    "_comment": "NOT IMPLEMENTED - TODO - Web UI authentication settings - all three fields are required",
+    "username": "admin",
+    "password": "changeme",
+    "session_secret": "generate-a-random-secret-key-here-minimum-32-characters"
+  }
+}
+

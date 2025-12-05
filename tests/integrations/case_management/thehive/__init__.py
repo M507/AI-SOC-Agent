@@ -1,0 +1,2 @@
+# TheHive integration tests
+

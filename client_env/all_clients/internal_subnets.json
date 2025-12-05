@@ -1,0 +1,47 @@
+{
+  "_comment": "Template for internal subnets across all clients. Copy and customize per client.",
+  "subnets": [
+    {
+      "name": "Corporate LAN 0",
+      "cidr": "10.0.0.0/16",
+      "network_type": "internal",
+      "access_method": ["wired", "wifi"],
+      "description": "Primary office LAN for end-user workstations and printers.",
+      "tags": ["office", "trusted", "user-devices"]
+    },
+    {
+      "name": "Corporate LAN 1",
+      "cidr": "10.0.1.0/16",
+      "network_type": "internal",
+      "access_method": ["wired"],
+      "description": "Secondary office LAN for end-user workstations and printers.",
+      "tags": ["office", "trusted", "user-devices"]
+    },
+    {
+      "name": "VPN Client Pool",
+      "cidr": "10.10.0.0/23",
+      "network_type": "internal",
+      "access_method": ["vpn"],
+      "description": "IP pool for remote VPN users accessing internal resources.",
+      "tags": ["vpn", "remote-access"]
+    },
+    {
+      "name": "Server Network",
+      "cidr": "10.10.20.0/24",
+      "network_type": "internal",
+      "access_method": ["datacenter"],
+      "description": "Subnet dedicated to core infrastructure servers (AD, file, application).",
+      "tags": ["servers", "datacenter", "critical"]
+    },
+    {
+      "name": "WiFi Guest",
+      "cidr": "192.168.50.0/24",
+      "network_type": "guest",
+      "access_method": ["wifi"],
+      "description": "Isolated guest WiFi network with internet-only access.",
+      "tags": ["wifi", "guest", "untrusted"]
+    }
+  ]
+}
+
+

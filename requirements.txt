@@ -1,0 +1,29 @@
+# SamiGPT - Incident Response AI Agent
+# Python dependencies
+
+# Core dependencies
+dataclasses>=0.8; python_version < '3.7'
+
+# HTTP client for integrations
+requests>=2.31.0
+
+# Web server for configuration management
+fastapi>=0.104.0
+uvicorn[standard]>=0.24.0
+python-multipart>=0.0.6
+websockets>=12.0
+
+# Optional: For async support in the future
+# aiohttp>=3.9.0
+
+# Optional: For enhanced logging
+# structlog>=23.2.0
+
+# Development dependencies (optional, install with: pip install -r requirements-dev.txt)
+# pytest>=7.4.0
+# pytest-asyncio>=0.21.0
+# pytest-cov>=4.1.0
+# black>=23.9.0
+# mypy>=1.6.0
+# ruff>=0.1.0
+

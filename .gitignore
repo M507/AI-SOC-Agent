@@ -1,0 +1,78 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual environments
+venv/
+env/
+ENV/
+.venv
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Logs
+logs/
+# But keep logs directory structure
+!logs/.gitkeep
+*.log
+
+# Environment variables
+.env
+.env.local
+.env.*.local
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Project specific
+*.pyc
+*.pyo
+
+# Configuration files (contain sensitive data)
+config.json
+
+.cursor/mcp.json
+PPT.md
+extra-docs/
+
+todo.md
+run_books/SOC_ASSESSMENT_AND_RECOMMENDATIONS.md
+run_books/SOC1_MCP_TOOL_GAPS_AND_RECOMMENDATIONS.md
+._prompts
+data/*
+temp/*
+examples/*
+bin/local-cursor-agent
+simulation/
+execution_flow/*.dot
+stats/

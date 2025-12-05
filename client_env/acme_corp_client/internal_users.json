@@ -1,0 +1,61 @@
+{
+  "_comment": "Example client: ACME Corp internal users.",
+  "users": [
+    {
+      "username": "Administrator",
+      "display_name": "Administrator accounts",
+      "account_type": "Administrator",
+      "department": "IT",
+      "privilege_level": "limited",
+      "description": "Administrator account with access only to all resources. **Expected Activity:** RDP connections from VPN pool (10.10.20.0/24) are normal and expected for remote administrative access. Alerts for 'Malicious RDP Connection' involving this account from VPN IPs should be reviewed but are typically false positives if no IOC matches and activity matches expected admin access patterns.",
+      "tags": ["admin", "privileged", "it", "RDP", "vpn-rdp-expected", "rdp-expected"]
+    },
+    {
+      "username": "adm-jsmith",
+      "display_name": "Admin - Jane Smith",
+      "account_type": "administrator",
+      "department": "IT",
+      "privilege_level": "high",
+      "description": "Dedicated admin account for Jane Smith used only for privileged actions.",
+      "tags": ["admin", "privileged", "it"]
+    },
+    {
+      "username": "adm-itops01",
+      "display_name": "IT Operations Admin 01",
+      "account_type": "administrator",
+      "department": "IT",
+      "privilege_level": "high",
+      "description": "Shared IT operations admin account (ideally should be replaced with per-user admin accounts).",
+      "tags": ["admin", "shared", "legacy"]
+    },
+    {
+      "username": "svc-backup",
+      "display_name": "Service Account - Backup",
+      "account_type": "service",
+      "department": "IT",
+      "privilege_level": "service",
+      "description": "Service account used by ACME-BACKUP-SRV01 to perform backup tasks.",
+      "tags": ["service-account", "backup", "automation"]
+    },
+    {
+      "username": "svc-monitor",
+      "display_name": "Service Account - Monitoring",
+      "account_type": "service",
+      "department": "IT",
+      "privilege_level": "service",
+      "description": "Service account used by monitoring/alerting tools.",
+      "tags": ["service-account", "monitoring"]
+    },
+    {
+      "username": "contract.jbrown",
+      "display_name": "Contractor - John Brown",
+      "account_type": "contractor",
+      "department": "IT",
+      "privilege_level": "limited",
+      "description": "Contractor account with access only to specific project resources.",
+      "tags": ["contractor", "temporary"]
+    }
+  ]
+}
+
+

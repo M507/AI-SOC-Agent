@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SamiGPT Configuration Manager</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>SamiGPT Configuration Manager</h1>
+            <p>Configure your incident response integrations</p>
+            <div class="config-info" id="config-info" style="margin-top: 15px; font-size: 12px; color: #666;">
+                <div>Configuration files:</div>
+                <div id="file-locations"></div>
+                <button type="button" class="btn-secondary" id="reload-btn" onclick="reloadFromFiles()" style="margin-top: 8px; padding: 6px 12px; font-size: 12px;">
+                    🔄 Reload from Files
+                </button>
+            </div>
+        </header>
+
+        <div class="alert" id="alert" style="display: none;"></div>
+
+        <main>
+            <form id="config-form">
+                <!-- TheHive Configuration -->
+                <section class="config-section">
+                    <div class="section-header">
+                        <h2>TheHive - Case Management</h2>
+                        <label class="toggle">
+                            <input type="checkbox" id="thehive-enabled" checked>
+                            <span class="slider"></span>
+                        </label>
+                    </div>
+                    <div class="config-content" id="thehive-content">
+                        <div class="form-group">
+                            <label for="thehive-url">Base URL *</label>
+                            <input type="url" id="thehive-url" name="thehive-url" required
+                                   placeholder="https://thehive.example.com">
+                        </div>
+                        <div class="form-group">
+                            <label for="thehive-api-key">API Key *</label>
+                            <input type="password" id="thehive-api-key" name="thehive-api-key" required
+                                   placeholder="Your TheHive API key">
+                        </div>
+                        <div class="form-group">
+                            <label for="thehive-timeout">Timeout (seconds)</label>
+                            <input type="number" id="thehive-timeout" name="thehive-timeout" value="30" min="1">
+                        </div>
+                        <button type="button" class="test-btn" onclick="testConnection('thehive')">
+                            Test Connection
+                        </button>
+                    </div>
+                </section>
+
+                <!-- IRIS Configuration -->
+                <section class="config-section">
+                    <div class="section-header">
+                        <h2>IRIS - Case Management</h2>
+                        <label class="toggle">
+                            <input type="checkbox" id="iris-enabled">
+                            <span class="slider"></span>
+                        </label>
+                    </div>
+                    <div class="config-content" id="iris-content" style="display: none;">
+                        <div class="form-group">
+                            <label for="iris-url">Base URL *</label>
+                            <input type="url" id="iris-url" name="iris-url" required
+                                   placeholder="https://iris.example.com">
+                        </div>
+                        <div class="form-group">
+                            <label for="iris-api-key">API Key *</label>
+                            <input type="password" id="iris-api-key" name="iris-api-key" required
+                                   placeholder="Your IRIS API key">
+                        </div>
+                        <div class="form-group">
+                            <label for="iris-timeout">Timeout (seconds)</label>
+                            <input type="number" id="iris-timeout" name="iris-timeout" value="30" min="1">
+                        </div>
+                        <button type="button" class="test-btn" onclick="testConnection('iris')">
+                            Test Connection
+                        </button>
+                    </div>
+                </section>
+
+                <!-- Elastic (SIEM) Configuration -->
+                <section class="config-section">
+                    <div class="section-header">
+                        <h2>Elastic - SIEM</h2>
+                        <label class="toggle">
+                            <input type="checkbox" id="elastic-enabled">
+                            <span class="slider"></span>
+                        </label>
+                    </div>
+                    <div class="config-content" id="elastic-content" style="display: none;">
+                        <div class="form-group">
+                            <label for="elastic-url">Base URL *</label>
+                            <input type="url" id="elastic-url" name="elastic-url"
+                                   placeholder="https://elastic.example.com:9200">
+                        </div>
+                        <div class="form-group">
+                            <label for="elastic-api-key">API Key</label>
+                            <input type="password" id="elastic-api-key" name="elastic-api-key"
+                                   placeholder="Your Elastic API key">
+                        </div>
+                        <div class="form-group">
+                            <label for="elastic-username">Username</label>
+                            <input type="text" id="elastic-username" name="elastic-username"
+                                   placeholder="elastic">
+                        </div>
+                        <div class="form-group">
+                            <label for="elastic-password">Password</label>
+                            <input type="password" id="elastic-password" name="elastic-password"
+                                   placeholder="Your password">
+                        </div>
+                        <div class="form-group">
+                            <label for="elastic-timeout">Timeout (seconds)</label>
+                            <input type="number" id="elastic-timeout" name="elastic-timeout" value="30" min="1">
+                        </div>
+                        <div class="form-group">
+                            <label class="checkbox-label">
+                                <input type="checkbox" id="elastic-verify-ssl" checked>
+                                Verify SSL
+                            </label>
+                        </div>
+                        <button type="button" class="test-btn" onclick="testConnection('elastic')">
+                            Test Connection
+                        </button>
+                    </div>
+                </section>
+
+                <!-- EDR Configuration -->
+                <section class="config-section">
+                    <div class="section-header">
+                        <h2>EDR - Endpoint Detection & Response</h2>
+                        <label class="toggle">
+                            <input type="checkbox" id="edr-enabled">
+                            <span class="slider"></span>
+                        </label>
+                    </div>
+                    <div class="config-content" id="edr-content" style="display: none;">
+                        <div class="form-group">
+                            <label for="edr-type">EDR Type *</label>
+                            <select id="edr-type" name="edr-type" required>
+                                <option value="velociraptor">Velociraptor</option>
+                                <option value="crowdstrike">CrowdStrike</option>
+                                <option value="carbon_black">Carbon Black</option>
+                                <option value="other">Other</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label for="edr-url">Base URL *</label>
+                            <input type="url" id="edr-url" name="edr-url" required
+                                   placeholder="https://edr.example.com">
+                        </div>
+                        <div class="form-group">
+                            <label for="edr-api-key">API Key *</label>
+                            <input type="password" id="edr-api-key" name="edr-api-key" required
+                                   placeholder="Your EDR API key">
+                        </div>
+                        <div class="form-group">
+                            <label for="edr-timeout">Timeout (seconds)</label>
+                            <input type="number" id="edr-timeout" name="edr-timeout" value="30" min="1">
+                        </div>
+                        <button type="button" class="test-btn" onclick="testConnection('edr')">
+                            Test Connection
+                        </button>
+                    </div>
+                </section>
+
+                <!-- Logging Configuration -->
+                <section class="config-section">
+                    <div class="section-header">
+                        <h2>Logging</h2>
+                    </div>
+                    <div class="config-content">
+                        <div class="form-group">
+                            <label for="log-dir">Log Directory</label>
+                            <input type="text" id="log-dir" name="log-dir" value="logs"
+                                   placeholder="logs">
+                        </div>
+                        <div class="form-group">
+                            <label for="log-level">Log Level</label>
+                            <select id="log-level" name="log-level">
+                                <option value="DEBUG">DEBUG</option>
+                                <option value="INFO" selected>INFO</option>
+                                <option value="WARNING">WARNING</option>
+                                <option value="ERROR">ERROR</option>
+                                <option value="CRITICAL">CRITICAL</option>
+                            </select>
+                        </div>
+                    </div>
+                </section>
+
+                <div class="form-actions">
+                    <button type="submit" class="btn btn-primary">Save Configuration</button>
+                    <button type="button" class="btn btn-secondary" onclick="loadConfig()">Reset</button>
+                </div>
+            </form>
+        </main>
+
+        <footer>
+            <p>SamiGPT - Incident Response AI Agent</p>
+        </footer>
+    </div>
+
+    <script src="/static/app.js"></script>
+</body>
+</html>
+

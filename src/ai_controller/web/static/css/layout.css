@@ -1,0 +1,144 @@
+/* Layout Styles - Main layout, sidebar, header, and content area */
+
+/* Main layout with left sidebar */
+.main-layout {
+    display: flex;
+    flex: 1;
+    min-height: 0;
+}
+
+.sidebar {
+    width: 220px;
+    background: #252526;
+    border-right: 1px solid #3e3e42;
+    display: flex;
+    flex-direction: column;
+    padding: 12px 8px;
+}
+
+.sidebar-header {
+    padding: 4px 8px 10px 8px;
+}
+
+.sidebar-title {
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    color: #858585;
+}
+
+.nav-item {
+    width: 100%;
+    text-align: left;
+    padding: 8px 10px;
+    margin-bottom: 4px;
+    border-radius: 4px;
+    border: none;
+    background: transparent;
+    color: #d4d4d4;
+    display: flex;
+    align-items: center;
+    cursor: pointer;
+    font-size: 13px;
+    transition: background 0.15s ease, color 0.15s ease;
+}
+
+.nav-item:hover {
+    background: #2d2d30;
+}
+
+.nav-item.active {
+    background: #3e3e42;
+    color: #ffffff;
+}
+
+.nav-label {
+    margin-left: 4px;
+}
+
+.main-panel {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+}
+
+/* Header */
+header {
+    background: #252526;
+    border-bottom: 1px solid #3e3e42;
+    padding: 12px 20px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+header h1 {
+    font-size: 18px;
+    font-weight: 600;
+    color: #ffffff;
+}
+
+.header-actions {
+    display: flex;
+    gap: 10px;
+}
+
+/* Content Area */
+.content-area {
+    flex: 1;
+    /* Let the main content scroll vertically when it doesn't fit,
+       while still preventing horizontal overflow. */
+    overflow-x: hidden;
+    overflow-y: auto;
+    background: #1e1e1e;
+    display: flex;
+    flex-direction: column;
+    min-height: 0; /* Critical for flex children to work properly */
+}
+
+/* When autorun-content is visible, prevent content-area from scrolling */
+.content-area.has-autorun {
+    overflow-y: hidden !important; /* Let autorun-content handle its own scrolling */
+    overflow-x: hidden;
+    /* Ensure it's a flex container for proper child sizing */
+    display: flex;
+    flex-direction: column;
+}
+
+.no-session {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    color: #858585;
+    font-size: 16px;
+}
+
+.session-content {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+}
+
+.session-header {
+    background: #252526;
+    border-bottom: 1px solid #3e3e42;
+    padding: 12px 20px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.session-header h2 {
+    font-size: 16px;
+    font-weight: 600;
+    color: #ffffff;
+}
+
+.session-actions {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+

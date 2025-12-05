@@ -1,0 +1,35 @@
+/* Status Badge Styles - Status indicators for sessions and autoruns */
+
+.status-badge {
+    padding: 4px 8px;
+    border-radius: 4px;
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+}
+
+.status-badge.pending {
+    background: #3e3e42;
+    color: #858585;
+}
+
+.status-badge.running {
+    background: #007acc;
+    color: white;
+}
+
+.status-badge.completed {
+    background: #0e7c0e;
+    color: white;
+}
+
+.status-badge.failed {
+    background: #c72525;
+    color: white;
+}
+
+.status-badge.stopped {
+    background: #858585;
+    color: white;
+}
+

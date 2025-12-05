@@ -1,0 +1,17 @@
+{
+  "_comment": "Template for internal servers across all clients. Copy and customize per client.",
+  "servers": [
+    {
+      "hostname": "ELASTIC01",
+      "ip_address": "8.213.19.240",
+      "role": "elastic_server",
+      "environment": "production",
+      "os": "Linux",
+      "description": "Elasticsearch cluster node for SIEM log storage and search capabilities.",
+      "criticality": "high",
+      "tags": ["elastic", "elasticsearch", "siem", "search", "logging"]
+    }
+  ]
+}
+
+

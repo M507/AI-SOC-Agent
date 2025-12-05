@@ -1,0 +1,39 @@
+{
+  "_comment": "Example client: ACME Corp internal subnets.",
+  "subnets": [
+    {
+      "name": "HQ Corporate LAN",
+      "cidr": "10.10.10.0/24",
+      "network_type": "internal",
+      "access_method": ["wired"],
+      "description": "Headquarters office LAN for desktops, VoIP phones, and printers.",
+      "tags": ["office", "hq", "user-devices", "wired", "remote-access","RDP"]
+    },
+    {
+      "name": "Data Center Server Network",
+      "cidr": "10.10.0.0/23",
+      "network_type": "internal",
+      "access_method": ["datacenter"],
+      "description": "Primary data center server VLAN for domain controllers, file servers, and core apps.",
+      "tags": ["servers", "datacenter", "critical"]
+    },
+    {
+      "name": "VPN Client Pool",
+      "cidr": "10.10.20.0/24",
+      "network_type": "internal",
+      "access_method": ["vpn"],
+      "description": "Remote access VPN pool for ACME Corp employees.",
+      "tags": ["vpn", "remote-access", "internal"]
+    },
+    {
+      "name": "HQ WiFi Corporate",
+      "cidr": "10.0.4.0/23",
+      "network_type": "internal",
+      "access_method": ["wifi"],
+      "description": "Secure corporate WiFi network for managed laptops and mobile devices.",
+      "tags": ["wifi", "corporate", "internal"]
+    }
+  ]
+}
+
+

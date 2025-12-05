@@ -1,0 +1,73 @@
+{
+  "_comment": "Template for naming schemas across all clients. Use regex-style or wildcard-style patterns.",
+  "device_schemas": [
+    {
+      "pattern": "^LP-[A-Z0-9]{6}$",
+      "pattern_style": "regex",
+      "device_type": "laptop",
+      "example": "LP-ABC123",
+      "description": "Standard naming for corporate laptops. Prefix LP- followed by 6 alphanumeric characters.",
+      "tags": ["endpoint", "mobile", "windows"]
+    },
+    {
+      "pattern": "^DT-[A-Z0-9]{6}$",
+      "pattern_style": "regex",
+      "device_type": "desktop",
+      "example": "DT-XYZ789",
+      "description": "Standard naming for office desktops. Prefix DT- followed by 6 alphanumeric characters.",
+      "tags": ["endpoint", "desktop", "windows"]
+    },
+    {
+      "pattern": ".*-SRV[0-9]*$",
+      "pattern_style": "regex",
+      "device_type": "server",
+      "example": "APP-SRV01",
+      "description": "Server naming pattern. Business function followed by -SRV and an index.",
+      "tags": ["server", "infrastructure"]
+    },
+    {
+      "pattern": "^PRT-[A-Z0-9]{4}$",
+      "pattern_style": "regex",
+      "device_type": "printer",
+      "example": "PRT-1F01",
+      "description": "Printer naming pattern with prefix PRT- and a location code.",
+      "tags": ["printer", "peripheral"]
+    }
+  ],
+  "user_schemas": [
+    {
+      "pattern": "^[a-z]+\\.[a-z]+$",
+      "pattern_style": "regex",
+      "user_type": "employee",
+      "example": "john.doe",
+      "description": "Standard internal employee accounts using firstname.lastname.",
+      "tags": ["employee", "standard"]
+    },
+    {
+      "pattern": "^adm-[a-z]+$",
+      "pattern_style": "regex",
+      "user_type": "administrator",
+      "example": "adm-jsmith",
+      "description": "Privileged administrator accounts with adm- prefix.",
+      "tags": ["admin", "privileged"]
+    },
+    {
+      "pattern": "^svc-[a-z0-9]+$",
+      "pattern_style": "regex",
+      "user_type": "service_account",
+      "example": "svc-backup",
+      "description": "Service accounts used by applications or scheduled tasks (svc- prefix).",
+      "tags": ["service-account", "automation"]
+    },
+    {
+      "pattern": "^contract\\.[a-z]+$",
+      "pattern_style": "regex",
+      "user_type": "contractor",
+      "example": "contract.jbrown",
+      "description": "Contractor / temporary worker accounts use contract.<username> convention.",
+      "tags": ["contractor", "temporary"]
+    }
+  ]
+}
+
+

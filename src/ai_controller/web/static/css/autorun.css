@@ -1,0 +1,87 @@
+/* Autorun Styles - Autorun-specific layout and terminal scrolling behavior */
+
+/* Autorun details - flex container that fills available space */
+.autorun-content {
+    display: flex !important;
+    flex-direction: column;
+    flex: 1 1 auto; /* Fill available space in content-area */
+    min-height: 0;
+    /* Use 100% of parent height, but don't exceed it */
+    height: 100%;
+    max-height: 100%;
+    overflow: hidden !important; /* Prevent the entire content from scrolling */
+    position: relative; /* Establish positioning context */
+    /* Ensure it doesn't exceed parent bounds */
+    box-sizing: border-box;
+    /* Make sure it's visible and properly sized */
+    width: 100%;
+}
+
+/* Note: The .has-autorun class is added to .content-area via JavaScript
+   when autorun-content is visible, preventing content-area from scrolling.
+   This allows only the terminal container to scroll. See layout.css for the rule. */
+
+/* Keep header fixed at top - no scrolling, fixed height */
+.autorun-content .session-header {
+    flex: 0 0 auto; /* Don't grow or shrink, use natural height */
+    flex-shrink: 0; /* Never shrink */
+    position: relative; /* Keep in normal flow */
+    z-index: 10; /* Ensure it stays on top */
+}
+
+/* In the Autoruns view, keep the metadata compact and fixed - no scrolling */
+.autorun-content .settings-body {
+    flex: 0 0 auto; /* Don't grow or shrink, use natural height */
+    flex-shrink: 0; /* Never shrink */
+    padding: 16px 20px;
+    overflow: visible; /* Don't scroll this section */
+    position: relative; /* Keep in normal flow */
+}
+
+/* Only the terminal container should scroll - this takes remaining space */
+.autorun-terminal-container {
+    flex: 1 1 auto; /* Take remaining space and allow shrinking */
+    min-height: 0; /* Critical for flex scrolling */
+    max-height: 100%; /* Don't exceed parent */
+    overflow-y: auto; /* Enable scrolling only for terminal */
+    overflow-x: hidden;
+    padding: 20px;
+    position: relative; /* Keep in normal flow */
+    /* Ensure it's scrollable and constrained */
+    box-sizing: border-box;
+}
+
+/* Override terminal-container styles for autorun */
+.autorun-terminal-container.terminal-container {
+    overflow-y: auto !important; /* Override the hidden from .terminal-container to allow scrolling */
+    overflow-x: hidden !important;
+    padding: 0 !important; /* Remove padding from terminal-container, we add it to autorun-terminal-container */
+    display: flex !important; /* Keep as flex to participate in parent flex layout */
+    flex-direction: column; /* Stack terminal content vertically */
+    flex: 1 1 auto; /* Take remaining space */
+    min-height: 0; /* Critical for flex scrolling */
+    max-height: 100%; /* Don't exceed parent */
+}
+
+/* The terminal inside autorun-terminal-container should not scroll independently */
+.autorun-terminal-container .terminal {
+    overflow: visible !important; /* Let the container handle scrolling */
+    height: auto; /* Let content determine height */
+    min-height: 0; /* Remove min-height constraint */
+    flex: none !important; /* Remove flex: 1 so it doesn't fill container */
+    display: block; /* Use block layout */
+}
+
+.autorun-prompt {
+    margin: 8px 0 16px 0;
+    padding: 10px 12px;
+    background: #252526;
+    border-radius: 4px;
+    border: 1px solid #3e3e42;
+    color: #d4d4d4;
+    font-family: 'Courier New', monospace;
+    font-size: 13px;
+    white-space: pre-wrap;
+    word-wrap: break-word;
+}
+

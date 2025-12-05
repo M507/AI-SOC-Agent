@@ -1,0 +1,217 @@
+/* Terminal Styles - Terminal container, terminal output, and command input */
+
+/* Terminal */
+.terminal-container {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    padding: 20px;
+    overflow: hidden;
+}
+
+.terminal {
+    flex: 1;
+    background: #1e1e1e;
+    border: 1px solid #3e3e42;
+    border-radius: 4px;
+    padding: 16px;
+    overflow-y: auto;
+    font-family: 'Courier New', monospace;
+    font-size: 13px;
+    line-height: 1.6;
+}
+
+.terminal-line {
+    margin-bottom: 8px;
+    word-wrap: break-word;
+}
+
+.terminal-line.command {
+    color: #4ec9b0;
+}
+
+.terminal-line.output {
+    color: #d4d4d4;
+}
+
+.terminal-line.error {
+    color: #f48771;
+}
+
+.terminal-line.success {
+    color: #4ec9b0;
+}
+
+.terminal-line.timestamp {
+    color: #858585;
+    font-size: 11px;
+}
+
+.terminal-line pre {
+    margin: 8px 0;
+    padding: 8px;
+    background: #252526;
+    border-radius: 4px;
+    overflow-x: auto;
+}
+
+/* Markdown content styling */
+.terminal-line .markdown-content {
+    margin: 8px 0;
+    padding: 12px;
+    background: #252526;
+    border-radius: 4px;
+    color: #d4d4d4;
+    line-height: 1.6;
+    overflow-x: auto;
+}
+
+.terminal-line .markdown-content h1,
+.terminal-line .markdown-content h2,
+.terminal-line .markdown-content h3,
+.terminal-line .markdown-content h4,
+.terminal-line .markdown-content h5,
+.terminal-line .markdown-content h6 {
+    color: #4ec9b0;
+    margin-top: 16px;
+    margin-bottom: 8px;
+    font-weight: 600;
+}
+
+.terminal-line .markdown-content h1 {
+    font-size: 1.5em;
+    border-bottom: 1px solid #3e3e42;
+    padding-bottom: 8px;
+}
+
+.terminal-line .markdown-content h2 {
+    font-size: 1.3em;
+    border-bottom: 1px solid #3e3e42;
+    padding-bottom: 6px;
+}
+
+.terminal-line .markdown-content h3 {
+    font-size: 1.1em;
+}
+
+.terminal-line .markdown-content p {
+    margin: 8px 0;
+}
+
+.terminal-line .markdown-content strong {
+    color: #ffffff;
+    font-weight: 600;
+}
+
+.terminal-line .markdown-content em {
+    font-style: italic;
+    color: #ce9178;
+}
+
+.terminal-line .markdown-content code {
+    background: #1e1e1e;
+    color: #ce9178;
+    padding: 2px 6px;
+    border-radius: 3px;
+    font-family: 'Courier New', monospace;
+    font-size: 0.9em;
+}
+
+.terminal-line .markdown-content pre {
+    background: #1e1e1e;
+    border: 1px solid #3e3e42;
+    border-radius: 4px;
+    padding: 12px;
+    overflow-x: auto;
+    margin: 12px 0;
+}
+
+.terminal-line .markdown-content pre code {
+    background: transparent;
+    padding: 0;
+    color: #d4d4d4;
+    font-size: 0.9em;
+}
+
+.terminal-line .markdown-content ul,
+.terminal-line .markdown-content ol {
+    margin: 8px 0;
+    padding-left: 24px;
+}
+
+.terminal-line .markdown-content li {
+    margin: 4px 0;
+}
+
+.terminal-line .markdown-content blockquote {
+    border-left: 4px solid #007acc;
+    padding-left: 12px;
+    margin: 12px 0;
+    color: #858585;
+    font-style: italic;
+}
+
+.terminal-line .markdown-content a {
+    color: #4ec9b0;
+    text-decoration: underline;
+}
+
+.terminal-line .markdown-content a:hover {
+    color: #6dd5c4;
+}
+
+.terminal-line .markdown-content table {
+    border-collapse: collapse;
+    margin: 12px 0;
+    width: 100%;
+}
+
+.terminal-line .markdown-content table th,
+.terminal-line .markdown-content table td {
+    border: 1px solid #3e3e42;
+    padding: 8px 12px;
+    text-align: left;
+}
+
+.terminal-line .markdown-content table th {
+    background: #2d2d30;
+    color: #4ec9b0;
+    font-weight: 600;
+}
+
+.terminal-line .markdown-content table tr:nth-child(even) {
+    background: #252526;
+}
+
+.terminal-line .markdown-content hr {
+    border: none;
+    border-top: 1px solid #3e3e42;
+    margin: 16px 0;
+}
+
+.command-input-container {
+    display: flex;
+    gap: 10px;
+    margin-top: 16px;
+}
+
+.command-input {
+    flex: 1;
+    background: #252526;
+    border: 1px solid #3e3e42;
+    border-radius: 4px;
+    padding: 10px 12px;
+    color: #d4d4d4;
+    font-size: 14px;
+    font-family: 'Courier New', monospace;
+}
+
+.command-input:focus {
+    outline: none;
+    border-color: #007acc;
+}
+
+.command-input::placeholder {
+    color: #858585;
+}
+

@@ -1,0 +1,103 @@
+{
+  "_comment": "Shared environment rules that can apply across all client infrastructures.",
+  "version": "1.0.0",
+  "environment_types": [
+    "production",
+    "staging",
+    "development",
+    "test",
+    "lab"
+  ],
+  "network_classification": {
+    "internal": {
+      "description": "Trusted internal network segments within corporate control.",
+      "default_risk_score": 3
+    },
+    "vpn": {
+      "description": "Remote-access VPN networks logically treated as internal but higher risk.",
+      "default_risk_score": 5
+    },
+    "wifi": {
+      "description": "Wireless access networks; can be internal (corporate) or guest (untrusted).",
+      "default_risk_score": 5
+    },
+    "guest": {
+      "description": "Untrusted guest / partner networks with internet-only or restricted access.",
+      "default_risk_score": 7
+    }
+  },
+  "user_categories": {
+    "standard_user": {
+      "description": "Regular employee accounts with limited privileges.",
+      "default_risk_score": 3
+    },
+    "important_user": {
+      "description": "Executives or key business users whose compromise has higher impact.",
+      "default_risk_score": 5
+    },
+    "administrator": {
+      "description": "Privileged accounts used for system administration or security functions.",
+      "default_risk_score": 8
+    },
+    "service_account": {
+      "description": "Non-interactive accounts used by services, applications, and scheduled tasks.",
+      "default_risk_score": 6
+    },
+    "contractor": {
+      "description": "External users with time-bound or limited access.",
+      "default_risk_score": 5
+    }
+  },
+  "general_rules": [
+    {
+      "id": "rule_vpn_treated_as_internal_with_extra_risk",
+      "scope": "subnet",
+      "condition": {
+        "tags_contains": ["vpn"]
+      },
+      "effect": {
+        "classification": "vpn",
+        "risk_score_modifier": "+2"
+      },
+      "description": "VPN pools are internal but carry extra risk due to remote access."
+    },
+    {
+      "id": "rule_guest_wifi_untrusted",
+      "scope": "subnet",
+      "condition": {
+        "tags_contains": ["guest", "wifi"]
+      },
+      "effect": {
+        "classification": "guest",
+        "risk_score_modifier": "+3"
+      },
+      "description": "Guest WiFi networks are untrusted and should be strongly segmented."
+    },
+    {
+      "id": "rule_admin_accounts_high_risk",
+      "scope": "user",
+      "condition": {
+        "account_type_equals": "administrator"
+      },
+      "effect": {
+        "risk_score_modifier": "+4",
+        "requires_mfa": true
+      },
+      "description": "Administrator accounts must always be treated as high risk and require MFA."
+    },
+    {
+      "id": "rule_service_accounts_monitored",
+      "scope": "user",
+      "condition": {
+        "account_type_equals": "service"
+      },
+      "effect": {
+        "risk_score_modifier": "+2",
+        "monitor_for_interactive_logons": true
+      },
+      "description": "Service accounts should not be used interactively; interactive use raises concern."
+    }
+  ]
+}
+
+
