@@ -8,7 +8,7 @@
 
 Watch the demo video to see SamiGPT in action:
 
-[Demo Video](demo/demo.mp4)
+[Demo Video](https://youtu.be/usd8ed-7AQg)
 
 ### Performance & Cost
 
