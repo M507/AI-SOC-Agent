@@ -42,6 +42,9 @@ class ModalManager {
             nameInput.value = '';
             nameInput.focus();
         }
+        if (this.controller.elasticClusters) {
+            this.controller.elasticClusters.fillSelect(document.getElementById('session-cluster-select'));
+        }
     }
 
     /**
@@ -76,6 +79,9 @@ class ModalManager {
         if (conditionHelpTooltip) {
             conditionHelpTooltip.classList.add('help-tooltip-hidden');
         }
+        if (this.controller.elasticClusters) {
+            this.controller.elasticClusters.fillSelect(document.getElementById('autorun-cluster-select'));
+        }
     }
 
     /**
@@ -104,7 +110,10 @@ class ModalManager {
             return;
         }
         
-        const data = await this.controller.api.createSession(name, 'manual');
+        const clusterId = this.controller.elasticClusters
+            ? this.controller.elasticClusters.selectedClusterId('session-cluster-select')
+            : null;
+        const data = await this.controller.api.createSession(name, 'manual', clusterId);
         
         if (data.success) {
             this.hideNewSession();
@@ -147,11 +156,15 @@ class ModalManager {
             return;
         }
         
+        const clusterId = this.controller.elasticClusters
+            ? this.controller.elasticClusters.selectedClusterId('autorun-cluster-select')
+            : null;
         const data = await this.controller.api.createAutorun(
             name, 
             command, 
             intervalSeconds,
-            conditionFunction || undefined
+            conditionFunction || undefined,
+            clusterId
         );
         
         if (data.success) {

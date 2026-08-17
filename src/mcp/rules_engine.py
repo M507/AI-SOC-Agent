@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 from ..api.case_management import CaseManagementClient
 from ..api.edr import EDRClient
@@ -61,6 +61,7 @@ class RulesEngine:
         case_client: Optional[CaseManagementClient] = None,
         siem_client: Optional[SIEMClient] = None,
         edr_client: Optional[EDRClient] = None,
+        get_siem_client: Optional[Any] = None,
     ):
         """
         Initialize the rules engine with clients.
@@ -69,11 +70,20 @@ class RulesEngine:
             case_client: Case management client.
             siem_client: SIEM client.
             edr_client: EDR client.
+            get_siem_client: Optional callable that returns the current SIEM client
+                (used so cluster-scoped MCP calls are visible to rules).
         """
         self.case_client = case_client
-        self.siem_client = siem_client
+        self._siem_client = siem_client
+        self._get_siem_client = get_siem_client
         self.edr_client = edr_client
         self.rules: Dict[str, Rule] = {}
+
+    @property
+    def siem_client(self) -> Optional[SIEMClient]:
+        if self._get_siem_client is not None:
+            return self._get_siem_client()
+        return self._siem_client
 
     def load_rule(self, rule_dict: Dict[str, Any]) -> Rule:
         """

@@ -8,12 +8,12 @@
         <link rel="stylesheet" href="/static/css/base.css?v=2">
         <link rel="stylesheet" href="/static/css/layout.css?v=6">
         <link rel="stylesheet" href="/static/css/buttons.css?v=3">
-        <link rel="stylesheet" href="/static/css/tabs.css?v=2">
+        <link rel="stylesheet" href="/static/css/tabs.css?v=3">
         <link rel="stylesheet" href="/static/css/status.css?v=2">
         <link rel="stylesheet" href="/static/css/terminal.css?v=2">
         <link rel="stylesheet" href="/static/css/autorun.css?v=5">
-        <link rel="stylesheet" href="/static/css/modal.css?v=3">
-        <link rel="stylesheet" href="/static/css/settings.css?v=5">
+        <link rel="stylesheet" href="/static/css/modal.css?v=4">
+        <link rel="stylesheet" href="/static/css/settings.css?v=7">
         <link rel="stylesheet" href="/static/css/toast.css?v=1">
         <link rel="stylesheet" href="/static/css/scrollbar.css?v=2">
     </head>
@@ -69,6 +69,7 @@
                             <div class="tabs" id="settings-tabs">
                                 <!-- Add a button here plus a matching data-settings-page-content panel for each new Settings page. -->
                                 <button class="tab active" type="button" data-settings-page="llm">LLM</button>
+                                <button class="tab" type="button" data-settings-page="elastic">Elastic</button>
                                 <button class="tab" type="button" data-settings-page="ui">UI</button>
                             </div>
                         </div>
@@ -101,6 +102,7 @@
                             <h2 id="session-title">Session</h2>
                             <div class="session-actions">
                                 <span id="session-status" class="status-badge">Pending</span>
+                                <span id="session-cluster" class="cluster-pill" hidden></span>
                                 <button id="stop-session-btn" class="btn btn-danger btn-sm">Stop</button>
                                 <button id="close-session-btn" class="btn btn-secondary btn-sm">Delete session</button>
                             </div>
@@ -138,6 +140,70 @@
                                 <textarea id="llm-system-prompt" rows="4" placeholder="Leave blank to use the default SOC assistant prompt"></textarea>
                                 <label for="llm-max-iterations">Max MCP tool iterations</label>
                                 <input type="number" id="llm-max-iterations" min="1" max="50" value="12">
+                            </section>
+                        </div>
+                    </div>
+                    <div id="settings-elastic-content" class="settings-content" data-settings-page-content="elastic" style="display: none;">
+                        <div class="session-header">
+                            <h2>Elastic clusters</h2>
+                        </div>
+                        <div class="settings-body">
+                            <section class="settings-card">
+                                <h3>Default MCP skill vector</h3>
+                                <p class="settings-help">
+                                    CVSS-style string copied onto every new cluster.
+                                    Each cluster can then override it. Sessions use the vector of the cluster they are bound to.
+                                    Example: <code>MSV:1/IRIS:N/SIEM:Y/EDR:N/SK:create_case=N</code>
+                                </p>
+                                <label for="elastic-default-skill-vector">Default vector</label>
+                                <input type="text" id="elastic-default-skill-vector" class="skill-vector-input" readonly>
+                                <div class="settings-inline-row">
+                                    <button type="button" id="elastic-edit-default-skills" class="btn btn-secondary">Edit default skills</button>
+                                </div>
+                            </section>
+                            <section class="settings-card">
+                                <h3>Configured clusters</h3>
+                                <p class="settings-help">
+                                    Each session and autorun binds to one Elastic cluster.
+                                    MCP SIEM tools use that cluster’s URL and credentials.
+                                </p>
+                                <div id="elastic-clusters-list" class="cluster-list"></div>
+                            </section>
+                            <section class="settings-card">
+                                <h3>Add cluster</h3>
+                                <label for="elastic-name">Name</label>
+                                <input type="text" id="elastic-name" placeholder="Lab ELK">
+                                <label for="elastic-url">URL</label>
+                                <input type="text" id="elastic-url" placeholder="https://elastic.example.com:9200">
+                                <p class="settings-help">
+                                    Use the Elasticsearch API URL when possible (usually port 9200).
+                                    Kibana (5601) can be saved and tested, but search tools expect Elasticsearch.
+                                </p>
+                                <label for="elastic-auth-type">Authentication</label>
+                                <select id="elastic-auth-type">
+                                    <option value="api_key">API key</option>
+                                    <option value="basic">Username and password</option>
+                                </select>
+                                <div id="elastic-api-key-row">
+                                    <label for="elastic-api-key">API key</label>
+                                    <input type="password" id="elastic-api-key" autocomplete="off">
+                                </div>
+                                <div id="elastic-basic-row" hidden>
+                                    <label for="elastic-username">Username</label>
+                                    <input type="text" id="elastic-username" autocomplete="off">
+                                    <label for="elastic-password">Password</label>
+                                    <input type="password" id="elastic-password" autocomplete="off">
+                                </div>
+                                <label for="elastic-timeout">Timeout (seconds)</label>
+                                <input type="number" id="elastic-timeout" min="5" max="120" value="30">
+                                <label class="settings-toggle">
+                                    <input type="checkbox" id="elastic-verify-ssl" checked>
+                                    <span class="toggle-label">Verify TLS certificates</span>
+                                </label>
+                                <div class="settings-inline-row">
+                                    <button type="button" id="elastic-test-btn" class="btn btn-secondary">Test connection</button>
+                                    <button type="button" id="elastic-add-btn" class="btn btn-primary">Add cluster</button>
+                                </div>
                             </section>
                         </div>
                     </div>
@@ -217,6 +283,7 @@
                             <h2 id="autorun-title">Autorun</h2>
                             <div class="session-actions">
                                 <span id="autorun-status" class="status-badge">Enabled</span>
+                                <span id="autorun-cluster" class="cluster-pill" hidden></span>
                                 <button id="autorun-toggle-btn" class="btn btn-secondary btn-sm">Disable</button>
                                 <button id="autorun-clear-btn" class="btn btn-secondary btn-sm">Clear history</button>
                                 <button id="autorun-export-btn" class="btn btn-secondary btn-sm">Export</button>
@@ -264,6 +331,11 @@
             <div class="modal-body">
                 <label for="session-name">Session Name:</label>
                 <input type="text" id="session-name" placeholder="My Session">
+                <label for="session-cluster-select">Elastic cluster:</label>
+                <select id="session-cluster-select">
+                    <option value="">No Elastic clusters configured</option>
+                </select>
+                <small>The agent in this tab will use this cluster’s credentials for SIEM tools.</small>
             </div>
             <div class="modal-footer">
                 <button id="create-session-btn" class="btn btn-primary">Create</button>
@@ -282,6 +354,11 @@
             <div class="modal-body">
                 <label for="autorun-name">Name:</label>
                 <input type="text" id="autorun-name" placeholder="Check Recent Alerts">
+                <label for="autorun-cluster-select">Elastic cluster:</label>
+                <select id="autorun-cluster-select">
+                    <option value="">No Elastic clusters configured</option>
+                </select>
+                <small>Scheduled runs use this cluster for SIEM tools and alert conditions.</small>
                 
                 <label for="autorun-command">Starting prompt:</label>
                 <textarea
@@ -326,6 +403,28 @@
         </div>
     </div>
 
+    <!-- MCP skill vector editor -->
+    <div id="skill-vector-modal" class="modal" style="display: none;">
+        <div class="modal-content modal-wide">
+            <div class="modal-header">
+                <h3 id="skill-vector-title">MCP skills</h3>
+                <span class="close" id="close-skill-vector-modal">&times;</span>
+            </div>
+            <div class="modal-body">
+                <p class="settings-help" id="skill-vector-help"></p>
+                <label for="skill-vector-string">Skill vector</label>
+                <textarea id="skill-vector-string" class="skill-vector-input" rows="3" spellcheck="false"></textarea>
+                <p id="skill-vector-error" class="settings-help skill-vector-error" hidden></p>
+                <div id="skill-vector-groups" class="skill-groups"></div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" id="skill-vector-reset-btn" class="btn btn-secondary">Reset to all on</button>
+                <button type="button" id="cancel-skill-vector-btn" class="btn btn-secondary">Cancel</button>
+                <button type="button" id="save-skill-vector-btn" class="btn btn-primary">Save</button>
+            </div>
+        </div>
+    </div>
+
     <!-- PDF Export Library -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
     
@@ -337,19 +436,20 @@
     <script src="/static/toast.js?v=1"></script>
     
     <!-- API client (no dependencies) -->
-    <script src="/static/api.js?v=4"></script>
+    <script src="/static/api.js?v=7"></script>
     
     <!-- Component modules (depend on utils) -->
     <script src="/static/websocket.js?v=1"></script>
     <script src="/static/terminal.js?v=1"></script>
-    <script src="/static/sessions.js?v=4"></script>
+    <script src="/static/sessions.js?v=5"></script>
     <script src="/static/pdf_export.js?v=2"></script>
-    <script src="/static/autoruns.js?v=9"></script>
-    <script src="/static/modals.js?v=3"></script>
+    <script src="/static/autoruns.js?v=10"></script>
+    <script src="/static/modals.js?v=4"></script>
     
     <!-- Main application (depends on all modules) -->
     <script src="/static/settings.js?v=4"></script>
-    <script src="/static/app.js?v=8"></script>
+    <script src="/static/elastic_settings.js?v=2"></script>
+    <script src="/static/app.js?v=9"></script>
 </body>
 </html>
 

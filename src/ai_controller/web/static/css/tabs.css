@@ -73,6 +73,28 @@
     color: white;
 }
 
+.tab-cluster {
+    font-size: 10px;
+    color: #89d185;
+    max-width: 120px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.cluster-pill {
+    font-size: 11px;
+    font-weight: 600;
+    padding: 4px 8px;
+    border-radius: 999px;
+    border: 1px solid #3d6b3d;
+    background: #1e3a1e;
+    color: #89d185;
+    max-width: 220px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
 .tab-close {
     margin-left: 4px;
     padding: 2px 4px;

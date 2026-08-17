@@ -22,6 +22,18 @@
     box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
 }
 
+.modal-content.modal-wide {
+    max-width: 780px;
+    max-height: 88vh;
+    display: flex;
+    flex-direction: column;
+}
+
+.modal-content.modal-wide .modal-body {
+    overflow: auto;
+    flex: 1;
+}
+
 .modal-header {
     padding: 16px 20px;
     border-bottom: 1px solid #3e3e42;

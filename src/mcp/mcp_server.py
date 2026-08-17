@@ -144,6 +144,8 @@ class SamiGPTMCPServer:
         self,
         case_client: Optional[CaseManagementClient] = None,
         siem_client: Optional[SIEMClient] = None,
+        siem_clients: Optional[Dict[str, SIEMClient]] = None,
+        default_cluster_id: Optional[str] = None,
         edr_client: Optional[EDRClient] = None,
         cti_client: Optional[Any] = None,
         cti_clients: Optional[list] = None,
@@ -155,13 +157,21 @@ class SamiGPTMCPServer:
 
         Args:
             case_client: Case management client.
-            siem_client: SIEM client.
+            siem_client: Default SIEM client (used when no cluster is selected).
+            siem_clients: Map of Elastic cluster id → SIEM client.
+            default_cluster_id: Cluster used when a tool call has no cluster id.
             edr_client: EDR client.
             cti_client: CTI (Cyber Threat Intelligence) client (single, for backward compatibility).
             cti_clients: List of CTI clients (for multi-platform support).
         """
         self.case_client = case_client
-        self.siem_client = siem_client
+        self._siem_clients: Dict[str, SIEMClient] = dict(siem_clients or {})
+        self._default_cluster_id = default_cluster_id
+        self._default_siem = siem_client
+        if self._default_siem is None and self._default_cluster_id:
+            self._default_siem = self._siem_clients.get(self._default_cluster_id)
+        if self._default_siem is None and self._siem_clients:
+            self._default_siem = next(iter(self._siem_clients.values()))
         self.edr_client = edr_client
         # Support both single client (backward compat) and multiple clients
         if cti_clients is not None:
@@ -175,8 +185,9 @@ class SamiGPTMCPServer:
         self.eng_client = eng_client
         self.rules_engine = RulesEngine(
             case_client=case_client,
-            siem_client=siem_client,
+            siem_client=None,
             edr_client=edr_client,
+            get_siem_client=lambda: self.siem_client,
         )
         self.agent_profile_manager = AgentProfileManager()
         self.runbook_manager = RunbookManager()
@@ -185,6 +196,48 @@ class SamiGPTMCPServer:
         self._initialized = False
         self._mcp_logger = logging.getLogger("sami.mcp")
         self._register_tools()
+
+    @property
+    def siem_client(self) -> Optional[SIEMClient]:
+        from .cluster_context import get_elastic_cluster_id
+
+        cluster_id = get_elastic_cluster_id()
+        if cluster_id and cluster_id in self._siem_clients:
+            return self._siem_clients[cluster_id]
+        if cluster_id and cluster_id not in self._siem_clients:
+            self._mcp_logger.warning(
+                "Unknown Elastic cluster id %s; using default SIEM client",
+                cluster_id,
+            )
+        return self._default_siem
+
+    def _tools_for_current_cluster(self) -> Dict[str, Any]:
+        """Return registered tools allowed by the bound cluster's MSV string."""
+        from ..core.elastic_clusters import skill_vector_for_cluster
+        from ..core.skill_vector import allowed_tool_names
+        from .cluster_context import get_elastic_cluster_id
+
+        allowed = set(allowed_tool_names(self.tools.keys(), skill_vector_for_cluster(get_elastic_cluster_id())))
+        return {name: definition for name, definition in self.tools.items() if name in allowed}
+
+    def replace_siem_clients(
+        self,
+        siem_clients: Dict[str, SIEMClient],
+        default_cluster_id: Optional[str] = None,
+        default_client: Optional[SIEMClient] = None,
+    ) -> None:
+        """Hot-swap cluster clients after Elastic settings change."""
+        self._siem_clients = dict(siem_clients or {})
+        self._default_cluster_id = default_cluster_id
+        self._default_siem = default_client
+        if self._default_siem is None and self._default_cluster_id:
+            self._default_siem = self._siem_clients.get(self._default_cluster_id)
+        if self._default_siem is None and self._siem_clients:
+            self._default_siem = next(iter(self._siem_clients.values()))
+        # Re-register SIEM tools if they were skipped at startup.
+        if self._default_siem or self._siem_clients:
+            if "search_security_events" not in getattr(self, "tools", {}):
+                self._register_siem_tools()
 
     def health_snapshot(self) -> Dict[str, Any]:
         """Return a JSON-serializable health view for the HTTP / UI health check."""
@@ -207,6 +260,8 @@ class SamiGPTMCPServer:
                 "kb": self.kb_client is not None,
                 "eng": self.eng_client is not None,
             },
+            "elastic_clusters": sorted(self._siem_clients.keys()),
+            "elastic_default_cluster_id": self._default_cluster_id,
             "eng_provider": eng_provider,
         }
 
@@ -1070,7 +1125,7 @@ class SamiGPTMCPServer:
         
         See TOOLS.md for detailed documentation and usage examples.
         """
-        if not self.siem_client:
+        if not self.siem_client and not self._siem_clients:
             self._mcp_logger.warning(
                 "SIEM tools not registered: No SIEM client configured. "
                 "Configure Elastic or other SIEM in config.json to enable SIEM tools."
@@ -2635,6 +2690,25 @@ To be populated during investigation.
         
         method = request.get("method")
         params = request.get("params", {})
+        from .cluster_context import (
+            extract_cluster_id,
+            reset_elastic_cluster_id,
+            set_elastic_cluster_id,
+        )
+
+        cluster_token = set_elastic_cluster_id(extract_cluster_id(params))
+        try:
+            return await self._dispatch_request(request, method, params)
+        finally:
+            reset_elastic_cluster_id(cluster_token)
+
+    async def _dispatch_request(
+        self,
+        request: Dict[str, Any],
+        method: Optional[str],
+        params: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        """Handle an MCP request after cluster context is applied."""
         
         # Get id, but only if it's present and valid (not null)
         # Use 'id' in request to check presence, then get value
@@ -2741,9 +2815,10 @@ To be populated during investigation.
             )
         
         try:
+            visible = self._tools_for_current_cluster()
             # Convert tools dict to list
             tools_list = []
-            for tool_name, tool_def in self.tools.items():
+            for tool_name, tool_def in visible.items():
                 if isinstance(tool_def, dict):
                     tools_list.append(tool_def)
                 else:
@@ -2791,6 +2866,18 @@ To be populated during investigation.
                 request_id,
                 -32601,
                 f"Tool not found: {tool_name}",
+            )
+
+        if tool_name not in self._tools_for_current_cluster():
+            self._mcp_logger.warning(
+                "RESPONSE [id=%s] Skill %s disabled for this Elastic cluster",
+                request_id,
+                tool_name,
+            )
+            return self._create_error_response(
+                request_id,
+                -32601,
+                f"Skill '{tool_name}' is disabled for this Elastic cluster",
             )
 
         # Execute the tool

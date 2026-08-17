@@ -86,6 +86,7 @@ class AgentExecutor:
         # Track currently running LLM provider so we can cancel it
         self._current_process: Optional[subprocess.Popen] = None
         self._current_provider = None
+        self._active_cluster_id: Optional[str] = None
         self._tool_registry: Dict[str, Callable] = {}
         self._initialize_tools()
     
@@ -247,13 +248,15 @@ class AgentExecutor:
                 arguments[key.strip()] = value.strip()
         return arguments
     
-    async def execute_command(self, command: Command) -> ExecutionResult:
+    async def execute_command(self, command: Command, cluster_id: Optional[str] = None) -> ExecutionResult:
         """
         Execute a parsed command and return the result.
         
         This method handles tool execution and can be extended to support
         agents and runbooks.
         """
+        previous_cluster = self._active_cluster_id
+        self._active_cluster_id = cluster_id
         try:
             if command.command_type == CommandType.RUN_TOOL:
                 return await self._execute_tool(command)
@@ -262,7 +265,6 @@ class AgentExecutor:
             elif command.command_type == CommandType.RUN_RUNBOOK:
                 return await self._execute_runbook(command)
             elif command.command_type == CommandType.UNKNOWN:
-                # Fallback: treat as freeform prompt and forward to external agent
                 return await self._execute_freeform_prompt(command.raw)
             else:
                 return ExecutionResult(
@@ -279,6 +281,8 @@ class AgentExecutor:
                 error=str(e),
                 timestamp=datetime.now()
             )
+        finally:
+            self._active_cluster_id = previous_cluster
     
     async def _execute_tool(self, command: Command) -> ExecutionResult:
         """Execute a tool command."""
@@ -386,6 +390,7 @@ class AgentExecutor:
                 host=mcp_cfg.get("host", "127.0.0.1"),
                 port=int(mcp_cfg.get("port", 8082)),
                 api_token=mcp_cfg.get("api_token") or "",
+                cluster_id=self._active_cluster_id,
             )
             llm_cfg = get_section("llm", {})
             result = await provider.complete(
@@ -502,8 +507,12 @@ class AgentExecutor:
                     clients.append(OpenCTIClient.from_config(temp_config))
             
             if "siem" in tool_name.lower() or "alert" in tool_name.lower():
-                # Need SIEM client
-                if self.config.elastic:
+                from src.core.elastic_clusters import client_for_id
+
+                siem_client = client_for_id(self._active_cluster_id)
+                if siem_client:
+                    clients.append(siem_client)
+                elif self.config.elastic:
                     from src.integrations.siem.elastic.elastic_client import ElasticSIEMClient
                     clients.append(ElasticSIEMClient.from_config(self.config))
             

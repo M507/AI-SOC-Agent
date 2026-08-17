@@ -148,6 +148,27 @@ class MCPSupervisor:
         self._started_at = None
         logger.info("MCP HTTP server stopped")
 
+    def reload_siem_clients(self) -> Dict[str, Any]:
+        """Rebuild Elastic cluster clients on the running MCP server."""
+        with self._lock:
+            if self._server is None:
+                return {"reloaded": False, "reason": "MCP server is not built yet"}
+            from .factory import load_runtime_config, _init_siem_clients
+
+            config = load_runtime_config()
+            clients, default_id, default_client = _init_siem_clients(config, logger)
+            self._server.replace_siem_clients(clients, default_id, default_client)
+            logger.info(
+                "Reloaded %s Elastic SIEM cluster client(s); default=%s",
+                len(clients),
+                default_id,
+            )
+            return {
+                "reloaded": True,
+                "cluster_ids": sorted(clients.keys()),
+                "default_cluster_id": default_id,
+            }
+
     def status(self) -> Dict[str, Any]:
         running = self.is_running
         snapshot = self._server.health_snapshot() if self._server else {}
@@ -169,6 +190,8 @@ class MCPSupervisor:
                     "tools_count": snapshot.get("tools_count", 0),
                     "tools": snapshot.get("tools", []),
                     "integrations": snapshot.get("integrations", {}),
+                    "elastic_clusters": snapshot.get("elastic_clusters", []),
+                    "elastic_default_cluster_id": snapshot.get("elastic_default_cluster_id"),
                     "eng_provider": snapshot.get("eng_provider"),
                 }
             )

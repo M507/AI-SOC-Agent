@@ -24,10 +24,12 @@ class MCPToolClient:
         port: int = 8082,
         api_token: Optional[str] = None,
         verify: Any = None,
+        cluster_id: Optional[str] = None,
     ) -> None:
         self.host = host
         self.port = port
         self.api_token = api_token or ""
+        self.cluster_id = cluster_id
         if verify is None:
             from ..core.tls import DEFAULT_CERT_PATH
 
@@ -63,6 +65,12 @@ class MCPToolClient:
 
     async def _rpc(self, method: str, params: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         request = {"jsonrpc": "2.0", "id": 1, "method": method, "params": params}
+        if self.cluster_id:
+            params = dict(params or {})
+            meta = dict(params.get("_meta") or {})
+            meta["elastic_cluster_id"] = self.cluster_id
+            params["_meta"] = meta
+            request["params"] = params
         inproc = await self._inprocess(request)
         if inproc is not None:
             return inproc

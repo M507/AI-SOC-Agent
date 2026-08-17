@@ -14,12 +14,22 @@
     "timeout_seconds": 30
   },
   "elastic": {
-    "base_url": "https://elastic.example.com:9200",
-    "api_key": "your-elastic-api-key-here",
-    "username": "elastic",
-    "password": "your-elastic-password-here",
-    "timeout_seconds": 30,
-    "verify_ssl": true
+    "_comment": "List of Elastic/Kibana clusters. Sessions and autoruns bind to one cluster id. Auth is api_key or username+password. default_skill_vector is a CVSS-style MCP Skill Vector (MSV:1/IRIS:Y/...) copied onto new clusters; each cluster.skill_vector can override it.",
+    "default_cluster_id": "default",
+    "default_skill_vector": "MSV:1/IRIS:Y/TH:Y/SIEM:Y/EDR:Y/CTI:Y/KB:Y/ENG:Y/RB:Y/AG:Y/RU:Y",
+    "clusters": [
+      {
+        "id": "default",
+        "name": "Default Elastic",
+        "base_url": "https://elastic.example.com:9200",
+        "api_key": "your-elastic-api-key-here",
+        "username": "",
+        "password": "",
+        "timeout_seconds": 30,
+        "verify_ssl": true,
+        "skill_vector": "MSV:1/IRIS:Y/TH:Y/SIEM:Y/EDR:Y/CTI:Y/KB:Y/ENG:Y/RB:Y/AG:Y/RU:Y"
+      }
+    ]
   },
   "edr": {
     "edr_type": "velociraptor",

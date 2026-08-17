@@ -46,13 +46,34 @@ class ElasticSIEMClient:
         if not config.elastic:
             raise IntegrationError("Elastic configuration is not set in SamiConfig")
 
-        http_client = ElasticHttpClient(
+        return cls.from_settings(
             base_url=config.elastic.base_url,
             api_key=config.elastic.api_key,
             username=config.elastic.username,
             password=config.elastic.password,
             timeout_seconds=config.elastic.timeout_seconds,
             verify_ssl=config.elastic.verify_ssl,
+        )
+
+    @classmethod
+    def from_settings(
+        cls,
+        *,
+        base_url: str,
+        api_key: Optional[str] = None,
+        username: Optional[str] = None,
+        password: Optional[str] = None,
+        timeout_seconds: int = 30,
+        verify_ssl: bool = True,
+    ) -> "ElasticSIEMClient":
+        """Build a client from explicit cluster credentials."""
+        http_client = ElasticHttpClient(
+            base_url=base_url,
+            api_key=api_key,
+            username=username,
+            password=password,
+            timeout_seconds=timeout_seconds,
+            verify_ssl=verify_ssl,
         )
         return cls(http_client=http_client)
 

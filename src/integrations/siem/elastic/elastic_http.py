@@ -43,6 +43,7 @@ class ElasticHttpClient:
         headers = {
             "Content-Type": "application/json",
             "Accept": "application/json",
+            "kbn-xsrf": "true",
         }
         
         if self.api_key:
@@ -148,7 +149,13 @@ class ElasticHttpClient:
             if response.status_code == 204:  # No Content
                 return {}
 
-            return response.json()
+            try:
+                return response.json()
+            except ValueError as e:
+                text = (response.text or "")[:300]
+                raise IntegrationError(
+                    f"Elastic API returned non-JSON from {url}: {text}"
+                ) from e
 
         except requests.exceptions.Timeout as e:
             raise IntegrationError(f"Elastic API request timeout: {e}") from e

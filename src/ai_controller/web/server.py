@@ -26,6 +26,7 @@ from .auth import AuthMiddleware, SecurityHeadersMiddleware, init_auth, websocke
 from .routes_auth import router as auth_router
 from .routes_llm import router as llm_router
 from .routes_mcp import router as mcp_router
+from .routes_elastic import router as elastic_router
 
 logger = get_logger("sami.ai_controller.web.server")
 
@@ -43,6 +44,7 @@ app.add_middleware(AuthMiddleware)
 app.include_router(auth_router)
 app.include_router(llm_router)
 app.include_router(mcp_router)
+app.include_router(elastic_router)
 
 # Initialize components
 executor: Optional[AgentExecutor] = None
@@ -75,7 +77,8 @@ class AutorunCreateRequest(BaseModel):
     name: str
     command: str
     interval_seconds: int
-    condition_function: Optional[str] = None  # Function/tool name to check before executing
+    condition_function: Optional[str] = None
+    cluster_id: Optional[str] = None
 
 
 class AutorunUpdateRequest(BaseModel):
@@ -83,12 +86,29 @@ class AutorunUpdateRequest(BaseModel):
     enabled: Optional[bool] = None
     interval_seconds: Optional[int] = None
     name: Optional[str] = None
-    condition_function: Optional[str] = None  # Function/tool name to check before executing
+    condition_function: Optional[str] = None
+    cluster_id: Optional[str] = None
 
 
 class UIConfigUpdate(BaseModel):
     """Request to update UI configuration flags."""
     ui_debug: Optional[bool] = None
+
+
+def _session_payload(session: Session) -> Dict[str, Any]:
+    from ...core.elastic_clusters import cluster_summary
+
+    data = session.to_dict()
+    data["cluster"] = cluster_summary(session.cluster_id)
+    return data
+
+
+def _autorun_payload(autorun: AutorunConfig) -> Dict[str, Any]:
+    from ...core.elastic_clusters import cluster_summary
+
+    data = autorun.to_dict()
+    data["cluster"] = cluster_summary(autorun.cluster_id)
+    return data
 
 
 def _env_flag(name: str, default: bool = False) -> bool:
@@ -199,7 +219,11 @@ async def _run_autorun(autorun: AutorunConfig):
         if not session:
             session_name = f"Autorun: {fresh_autorun.name}"
             logger.debug("Creating new AUTORUN session for autorun %s (%s)", fresh_autorun.id, session_name)
-            session = session_manager.create_session(session_name, SessionType.AUTORUN)
+            session = session_manager.create_session(
+                session_name,
+                SessionType.AUTORUN,
+                cluster_id=fresh_autorun.cluster_id,
+            )
             session_manager.update_autorun(fresh_autorun.id, session_id=session.id)
             session_id = session.id
 
@@ -209,7 +233,11 @@ async def _run_autorun(autorun: AutorunConfig):
         if condition_function and condition_function.strip():
             logger.info("Checking condition function '%s' for autorun %s (%s)", 
                        condition_function, fresh_autorun.id, fresh_autorun.name)
-            condition_result, condition_details = await _check_autorun_condition(condition_function, executor)
+            condition_result, condition_details = await _check_autorun_condition(
+                condition_function,
+                executor,
+                cluster_id=fresh_autorun.cluster_id,
+            )
             
             # Add condition check entry to session
             condition_command_str = f"[CONDITION CHECK] {condition_function}"
@@ -315,7 +343,10 @@ async def _run_autorun(autorun: AutorunConfig):
             "command": command_str,
         })
 
-        result: Optional[ExecutionResult] = await executor.execute_command(command)
+        result: Optional[ExecutionResult] = await executor.execute_command(
+            command,
+            cluster_id=fresh_autorun.cluster_id or (session.cluster_id if session else None),
+        )
 
         # Update entry and session status
         status = SessionStatus.COMPLETED if result and result.success else SessionStatus.FAILED
@@ -368,7 +399,11 @@ async def _run_autorun(autorun: AutorunConfig):
         running_autoruns.discard(autorun.id)
 
 
-async def _check_autorun_condition(condition_function: str, executor: AgentExecutor) -> Tuple[bool, Dict[str, Any]]:
+async def _check_autorun_condition(
+    condition_function: str,
+    executor: AgentExecutor,
+    cluster_id: Optional[str] = None,
+) -> Tuple[bool, Dict[str, Any]]:
     """
     Check if an autorun condition function returns content.
     
@@ -399,25 +434,18 @@ async def _check_autorun_condition(condition_function: str, executor: AgentExecu
             try:
                 # Import here to avoid heavy imports at module load
                 from ...core.config_storage import load_config_from_file
-                from src.integrations.siem.elastic.elastic_client import ElasticSIEMClient
+                from src.core.elastic_clusters import client_for_id
                 from src.orchestrator.tools_siem import get_recent_alerts
-            except Exception as e:
-                logger.exception("Failed to import dependencies for get_recent_alerts condition: %s", e)
-                details["evaluation"] = "✗ CONDITION ERROR: Failed to import get_recent_alerts dependencies"
-                details["error"] = str(e)
-                return False, details
 
-            try:
-                config = load_config_from_file()
-                if not getattr(config, "elastic", None):
+                siem_client = client_for_id(cluster_id)
+                if siem_client is None:
                     msg = "Elastic SIEM is not configured; cannot evaluate get_recent_alerts condition"
                     logger.warning(msg)
                     details["evaluation"] = f"✗ CONDITION ERROR: {msg}"
                     details["error"] = msg
                     return False, details
 
-                # Build SIEM client directly from config
-                siem_client = ElasticSIEMClient.from_config(config)
+                # Build SIEM client for the autorun's cluster (or the default)
                 details["command_executed"] = "python:get_recent_alerts(hours_back=1, max_alerts=100)"
 
                 logger.debug("Executing get_recent_alerts condition directly via SIEM client")
@@ -871,7 +899,7 @@ async def list_sessions(session_type: Optional[str] = None):
     )
     return JSONResponse(content={
         "success": True,
-        "sessions": [s.to_dict() for s in sessions]
+        "sessions": [_session_payload(s) for s in sessions]
     })
 
 
@@ -884,12 +912,13 @@ async def create_session(request: Request):
     data = await request.json()
     name = data.get("name", "New Session")
     session_type = SessionType(data.get("session_type", "manual"))
-    
-    session = session_manager.create_session(name, session_type)
-    
+    cluster_id = data.get("cluster_id") or None
+
+    session = session_manager.create_session(name, session_type, cluster_id=cluster_id)
+
     return JSONResponse(content={
         "success": True,
-        "session": session.to_dict()
+        "session": _session_payload(session)
     })
 
 
@@ -905,7 +934,7 @@ async def get_session(session_id: str):
     
     return JSONResponse(content={
         "success": True,
-        "session": session.to_dict()
+        "session": _session_payload(session)
     })
 
 
@@ -1037,7 +1066,7 @@ async def execute_command(session_id: str, command_request: CommandRequest):
         try:
             session_manager.update_session_status(session_id, SessionStatus.RUNNING)
             
-            result = await executor.execute_command(command)
+            result = await executor.execute_command(command, cluster_id=session.cluster_id)
             
             # Update entry
             session_manager.update_entry(
@@ -1165,7 +1194,7 @@ async def list_autoruns(enabled_only: bool = False):
     
     return JSONResponse(content={
         "success": True,
-        "autoruns": [a.to_dict() for a in autoruns]
+        "autoruns": [_autorun_payload(a) for a in autoruns]
     })
 
 
@@ -1179,12 +1208,13 @@ async def create_autorun(autorun_request: AutorunCreateRequest):
         name=autorun_request.name,
         command=autorun_request.command,
         interval_seconds=autorun_request.interval_seconds,
-        condition_function=autorun_request.condition_function
+        condition_function=autorun_request.condition_function,
+        cluster_id=autorun_request.cluster_id,
     )
-    
+
     return JSONResponse(content={
         "success": True,
-        "autorun": autorun.to_dict()
+        "autorun": _autorun_payload(autorun)
     })
 
 
@@ -1200,7 +1230,7 @@ async def get_autorun(autorun_id: str):
     
     return JSONResponse(content={
         "success": True,
-        "autorun": autorun.to_dict()
+        "autorun": _autorun_payload(autorun)
     })
 
 
@@ -1216,7 +1246,7 @@ async def update_autorun(autorun_id: str, autorun_update: AutorunUpdateRequest):
         autorun = session_manager.get_autorun(autorun_id)
         return JSONResponse(content={
             "success": True,
-            "autorun": autorun.to_dict()
+            "autorun": _autorun_payload(autorun)
         })
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))

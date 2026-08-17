@@ -17,6 +17,7 @@ class AIController {
         this.autorunManager = new AutorunManager(this);
         this.modals = new ModalManager(this);
         this.settingsManager = new SettingsManager(this);
+        this.elasticClusters = new ElasticClustersManager(this);
         this.mcpPanel = new MCPPanel(this);
         
         this.init();
@@ -26,6 +27,7 @@ class AIController {
         this.setupEventListeners();
         this.loadConfig();
         this.settingsManager.load();
+        this.elasticClusters.load();
         this.mcpPanel.refresh();
         // Default view is manual sessions; load initial data
         this.loadSessions('manual');
@@ -351,6 +353,7 @@ class AIController {
                 sessionTitle.textContent = session.name;
             }
             this.sessionManager.updateStatus(session.status);
+            this.setClusterPill('session-cluster', session.cluster);
             
             // Render terminal
             this.terminal.render(session);
@@ -485,6 +488,9 @@ class AIController {
             });
             this.setSettingsPage(this.activeSettingsPage);
             this.settingsManager.load();
+            if (this.elasticClusters) {
+                this.elasticClusters.load();
+            }
 
             if (this.activeSessionId) {
                 this.wsManager.disconnect(this.activeSessionId);
@@ -545,6 +551,21 @@ class AIController {
     
     showSettings() {
         this.setActiveSection('settings');
+    }
+
+    setClusterPill(elementId, cluster) {
+        const el = document.getElementById(elementId);
+        if (!el) return;
+        const name = cluster && cluster.name;
+        if (!name) {
+            el.hidden = true;
+            el.textContent = '';
+            el.removeAttribute('title');
+            return;
+        }
+        el.hidden = false;
+        el.textContent = name;
+        el.title = cluster.base_url ? `${name} — ${cluster.base_url}` : name;
     }
 
     updateMCPHealthIndicator(state, running) {

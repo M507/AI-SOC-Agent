@@ -186,16 +186,9 @@ def _dict_to_config(data: Dict[str, Any]) -> SamiConfig:
 
     elastic_cfg: Optional[ElasticConfig] = None
     if "elastic" in data and data["elastic"]:
-        el_data = data["elastic"]
-        if el_data.get("base_url"):
-            elastic_cfg = ElasticConfig(
-                base_url=el_data["base_url"],
-                api_key=el_data.get("api_key"),
-                username=el_data.get("username"),
-                password=el_data.get("password"),
-                timeout_seconds=el_data.get("timeout_seconds", 30),
-                verify_ssl=el_data.get("verify_ssl", True),
-            )
+        from .elastic_clusters import elastic_config_from_section
+
+        elastic_cfg = elastic_config_from_section(data["elastic"])
 
     edr_cfg: Optional[EDRConfig] = None
     if "edr" in data and data["edr"]:
@@ -715,20 +708,15 @@ def update_config_dict(
                 verify_ssl=iris_updates.get("verify_ssl", True),
             )
 
-    # Update Elastic
+    # Update Elastic (typed default cluster only; cluster lists are persisted via update_raw_section)
     if "elastic" in updates:
+        from .elastic_clusters import elastic_config_from_section
+
         el_updates = updates["elastic"]
         if el_updates is None:
             config.elastic = None
-        elif el_updates.get("base_url"):
-            config.elastic = ElasticConfig(
-                base_url=el_updates["base_url"],
-                api_key=el_updates.get("api_key"),
-                username=el_updates.get("username"),
-                password=el_updates.get("password"),
-                timeout_seconds=el_updates.get("timeout_seconds", 30),
-                verify_ssl=el_updates.get("verify_ssl", True),
-            )
+        elif el_updates.get("clusters") or el_updates.get("base_url"):
+            config.elastic = elastic_config_from_section(el_updates)
 
     # Update EDR
     if "edr" in updates:
@@ -750,13 +738,14 @@ def update_config_dict(
     return config
 
 
-def load_raw_config(config_path: str = CONFIG_FILE) -> Dict[str, Any]:
+def load_raw_config(config_path: Optional[str] = None) -> Dict[str, Any]:
     """
     Load the on-disk JSON config without converting to SamiConfig.
 
     Prefer this when reading/writing sections that must not drop unknown keys
     (llm, mcp, cti_opencti, ai_controller, comments, etc.).
     """
+    config_path = config_path or CONFIG_FILE
     _ensure_starting_config(config_path)
     config_file = Path(config_path)
     if not config_file.exists():
@@ -771,8 +760,9 @@ def load_raw_config(config_path: str = CONFIG_FILE) -> Dict[str, Any]:
         raise ConfigError(f"Failed to load config file: {e}") from e
 
 
-def save_raw_config(data: Dict[str, Any], config_path: str = CONFIG_FILE) -> None:
+def save_raw_config(data: Dict[str, Any], config_path: Optional[str] = None) -> None:
     """Write a full JSON config dict to disk, preserving unknown keys."""
+    config_path = config_path or CONFIG_FILE
     config_file = Path(config_path)
     try:
         config_file.parent.mkdir(parents=True, exist_ok=True)
@@ -786,18 +776,19 @@ def save_raw_config(data: Dict[str, Any], config_path: str = CONFIG_FILE) -> Non
 def update_raw_section(
     section: str,
     value: Any,
-    config_path: str = CONFIG_FILE,
+    config_path: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Replace a top-level config section and persist the full file."""
+    config_path = config_path or CONFIG_FILE
     data = load_raw_config(config_path)
     data[section] = value
     save_raw_config(data, config_path)
     return data
 
 
-def get_section(section: str, default: Optional[Dict[str, Any]] = None, config_path: str = CONFIG_FILE) -> Dict[str, Any]:
+def get_section(section: str, default: Optional[Dict[str, Any]] = None, config_path: Optional[str] = None) -> Dict[str, Any]:
     """Return a top-level config section as a dict."""
-    data = load_raw_config(config_path)
+    data = load_raw_config(config_path or CONFIG_FILE)
     value = data.get(section, default if default is not None else {})
     return value if isinstance(value, dict) else {}
 

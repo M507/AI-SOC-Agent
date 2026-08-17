@@ -106,6 +106,21 @@ class SessionManager {
             badge.textContent = session.entries?.length || 0;
         }
 
+        let clusterEl = tab.querySelector('.tab-cluster');
+        const clusterName = session.cluster && session.cluster.name;
+        if (clusterName) {
+            if (!clusterEl) {
+                clusterEl = document.createElement('span');
+                clusterEl.className = 'tab-cluster';
+                const nameSpan = tab.querySelector('span:first-child');
+                if (nameSpan) nameSpan.after(clusterEl);
+            }
+            clusterEl.textContent = clusterName;
+            clusterEl.title = session.cluster.base_url || '';
+        } else if (clusterEl) {
+            clusterEl.remove();
+        }
+
         // Update name if changed
         const nameSpan = tab.querySelector('span:first-child');
         if (nameSpan && nameSpan.textContent !== session.name) {
@@ -127,6 +142,7 @@ class SessionManager {
         
         tab.innerHTML = `
             <span>${escapeHtml(session.name)}</span>
+            ${session.cluster && session.cluster.name ? `<span class="tab-cluster" title="${escapeHtml(session.cluster.base_url || '')}">${escapeHtml(session.cluster.name)}</span>` : ''}
             <span class="tab-badge">${session.entries?.length || 0}</span>
             <span class="tab-close" data-session-id="${session.id}">&times;</span>
         `;

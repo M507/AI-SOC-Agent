@@ -90,6 +90,7 @@ class AutorunManager {
         
         tab.innerHTML = `
             <span>${escapeHtml(autorun.name)}</span>
+            ${autorun.cluster && autorun.cluster.name ? `<span class="tab-cluster" title="${escapeHtml(autorun.cluster.base_url || '')}">${escapeHtml(autorun.cluster.name)}</span>` : ''}
             <span class="tab-badge ${statusBadge}">${intervalText}</span>
             <span class="tab-close" data-autorun-id="${autorun.id}">&times;</span>
         `;
@@ -236,6 +237,9 @@ class AutorunManager {
 
         if (toggleBtn) {
             toggleBtn.textContent = autorun.enabled ? 'Disable' : 'Enable';
+        }
+        if (this.controller.setClusterPill) {
+            this.controller.setClusterPill('autorun-cluster', autorun.cluster);
         }
 
         // Load and render the backing session as a long-running chat in the autorun terminal

@@ -43,6 +43,11 @@ def mask_mapping(data: Dict[str, Any]) -> Dict[str, Any]:
     for key, value in data.items():
         if isinstance(value, dict):
             masked[key] = mask_mapping(value)
+        elif isinstance(value, list):
+            masked[key] = [
+                mask_mapping(item) if isinstance(item, dict) else item
+                for item in value
+            ]
         elif isinstance(value, str) and key.lower() in _SECRET_KEYS:
             masked[key] = mask_secret(value)
         else:
@@ -65,6 +70,17 @@ def merge_secrets(
     for key, value in incoming.items():
         if isinstance(value, dict):
             merged[key] = merge_secrets(value, existing.get(key) if isinstance(existing.get(key), dict) else {})
+        elif isinstance(value, list) and all(isinstance(item, dict) for item in value):
+            existing_list = existing.get(key) if isinstance(existing.get(key), list) else []
+            existing_by_id = {
+                item.get("id"): item
+                for item in existing_list
+                if isinstance(item, dict) and item.get("id")
+            }
+            merged[key] = [
+                merge_secrets(item, existing_by_id.get(item.get("id"), {}))
+                for item in value
+            ]
         elif isinstance(value, str) and key.lower() in _SECRET_KEYS and is_masked_secret(value):
             if key in existing:
                 merged[key] = existing[key]

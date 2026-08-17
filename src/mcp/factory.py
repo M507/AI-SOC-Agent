@@ -96,16 +96,39 @@ def _init_case_client(config: SamiConfig, mcp_logger: logging.Logger):
     return None
 
 
-def _init_siem_client(config: SamiConfig, mcp_logger: logging.Logger):
-    if not config.elastic:
-        return None
-    try:
-        client = ElasticSIEMClient.from_config(config)
-        mcp_logger.info("Elastic SIEM client initialized")
-        return client
-    except Exception as e:
-        mcp_logger.error("Failed to initialize Elastic SIEM client: %s", e, exc_info=True)
-        return None
+def _init_siem_clients(config: SamiConfig, mcp_logger: logging.Logger):
+    """
+    Build SIEM clients for every configured Elastic cluster.
+
+    Returns (clients_by_id, default_cluster_id, default_client).
+    """
+    from ..core.elastic_clusters import load_registry, client_for_cluster
+
+    registry = load_registry()
+    clients = {}
+    for cluster in registry.clusters:
+        try:
+            clients[cluster.id] = client_for_cluster(cluster)
+            mcp_logger.info("Elastic SIEM client initialized for cluster %s (%s)", cluster.id, cluster.name)
+        except Exception as e:
+            mcp_logger.error(
+                "Failed to initialize Elastic SIEM client for cluster %s: %s",
+                cluster.id,
+                e,
+                exc_info=True,
+            )
+    default_id = registry.default_cluster_id
+    default_client = clients.get(default_id) if default_id else None
+    if default_client is None and clients:
+        default_client = next(iter(clients.values()))
+        default_id = next(iter(clients))
+    if not clients and config.elastic:
+        try:
+            default_client = ElasticSIEMClient.from_config(config)
+            mcp_logger.info("Elastic SIEM client initialized from legacy config")
+        except Exception as e:
+            mcp_logger.error("Failed to initialize Elastic SIEM client: %s", e, exc_info=True)
+    return clients, default_id, default_client
 
 
 def _init_edr_client(config: SamiConfig, mcp_logger: logging.Logger):
@@ -223,7 +246,7 @@ def build_mcp_server(config: Optional[SamiConfig] = None) -> MCPBuildResult:
     mcp_logger = logging.getLogger("sami.mcp")
 
     case_client = _init_case_client(config, mcp_logger)
-    siem_client = _init_siem_client(config, mcp_logger)
+    siem_clients, default_cluster_id, siem_client = _init_siem_clients(config, mcp_logger)
     edr_client = _init_edr_client(config, mcp_logger)
     cti_clients = _init_cti_clients(config, mcp_logger)
     eng_client = _init_eng_client(config, mcp_logger)
@@ -231,6 +254,8 @@ def build_mcp_server(config: Optional[SamiConfig] = None) -> MCPBuildResult:
     server = SamiGPTMCPServer(
         case_client=case_client,
         siem_client=siem_client,
+        siem_clients=siem_clients,
+        default_cluster_id=default_cluster_id,
         edr_client=edr_client,
         cti_client=cti_clients[0] if cti_clients else None,
         cti_clients=cti_clients or None,

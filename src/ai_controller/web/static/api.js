@@ -109,7 +109,7 @@ class APIClient {
     /**
      * Create a new session.
      */
-    async createSession(name, sessionType = 'manual') {
+    async createSession(name, sessionType = 'manual', clusterId = null) {
         try {
             const response = await this._fetch('/api/sessions', {
                 method: 'POST',
@@ -118,7 +118,8 @@ class APIClient {
                 },
                 body: JSON.stringify({
                     name,
-                    session_type: sessionType
+                    session_type: sessionType,
+                    cluster_id: clusterId || null,
                 })
             });
             if (!response.ok) {
@@ -208,7 +209,7 @@ class APIClient {
     /**
      * Create a new autorun.
      */
-    async createAutorun(name, command, intervalSeconds, conditionFunction) {
+    async createAutorun(name, command, intervalSeconds, conditionFunction, clusterId = null) {
         try {
             const body = {
                 name,
@@ -217,6 +218,9 @@ class APIClient {
             };
             if (conditionFunction) {
                 body.condition_function = conditionFunction;
+            }
+            if (clusterId) {
+                body.cluster_id = clusterId;
             }
             const response = await this._fetch('/api/autoruns', {
                 method: 'POST',
@@ -328,7 +332,18 @@ class APIClient {
         const response = await this._fetch(url, options);
         if (!response.ok) {
             const errorText = await response.text();
-            throw new Error(`HTTP ${response.status}: ${errorText}`);
+            let message = `HTTP ${response.status}: ${errorText}`;
+            try {
+                const parsed = JSON.parse(errorText);
+                if (parsed && parsed.detail) {
+                    message = typeof parsed.detail === 'string'
+                        ? parsed.detail
+                        : JSON.stringify(parsed.detail);
+                }
+            } catch (_unused) {
+                // Keep the raw status + body when the error is not JSON.
+            }
+            throw new Error(message);
         }
         return response.json();
     }
@@ -434,6 +449,84 @@ class APIClient {
     async mcpAction(action) {
         try {
             return await this.request(`/api/mcp/${action}`, { method: 'POST' });
+        } catch (error) {
+            return { success: false, error: error.message };
+        }
+    }
+
+    async getElasticClusters() {
+        try {
+            return await this.request('/api/elastic/clusters');
+        } catch (error) {
+            return { success: false, clusters: [], error: error.message };
+        }
+    }
+
+    async createElasticCluster(payload) {
+        try {
+            return await this.request('/api/elastic/clusters', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload || {}),
+            });
+        } catch (error) {
+            return { success: false, error: error.message };
+        }
+    }
+
+    async deleteElasticCluster(clusterId) {
+        try {
+            return await this.request(`/api/elastic/clusters/${encodeURIComponent(clusterId)}`, {
+                method: 'DELETE',
+            });
+        } catch (error) {
+            return { success: false, error: error.message };
+        }
+    }
+
+    async setDefaultElasticCluster(clusterId) {
+        try {
+            return await this.request('/api/elastic/default', {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ cluster_id: clusterId }),
+            });
+        } catch (error) {
+            return { success: false, error: error.message };
+        }
+    }
+
+    async testElasticCluster(payload) {
+        try {
+            return await this.request('/api/elastic/test', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload || {}),
+            });
+        } catch (error) {
+            return { ok: false, success: false, error: error.message };
+        }
+    }
+
+    async setDefaultSkillVector(skillVector) {
+        try {
+            return await this.request('/api/elastic/default-skills', {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ skill_vector: skillVector }),
+            });
+        } catch (error) {
+            return { success: false, error: error.message };
+        }
+    }
+
+    async setClusterSkillVector(clusterId, skillVector) {
+        try {
+            return await this.request(`/api/elastic/clusters/${encodeURIComponent(clusterId)}/skills`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ skill_vector: skillVector }),
+            });
         } catch (error) {
             return { success: false, error: error.message };
         }
