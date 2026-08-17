@@ -47,6 +47,7 @@ with its own settings and health check.
    ```bash
    python app.py --port 8081
    python app.py --no-mcp    # web UI only; start MCP later from the UI
+   python app.py --debug     # auto-reload when files under src/ change
    ```
 
 4. **Open your browser:**

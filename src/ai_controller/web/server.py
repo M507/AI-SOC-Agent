@@ -91,6 +91,52 @@ class UIConfigUpdate(BaseModel):
     ui_debug: Optional[bool] = None
 
 
+def _env_flag(name: str, default: bool = False) -> bool:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def create_app():
+    """
+    Build the serving app. Used by `python app.py --debug` so each reload
+    worker re-reads env and re-initializes after a file change.
+    """
+    initialize(
+        config_storage_dir=os.environ.get("SAMI_STORAGE_DIR") or None,
+        debug_ui=_env_flag("SAMI_DEBUG_UI"),
+        mcp_auto_start=_env_flag("SAMI_MCP_AUTO_START", default=True),
+        cookie_secure=_env_flag("SAMI_COOKIE_SECURE", default=True),
+    )
+    return app
+
+
+def uvicorn_reload_kwargs(root: Path) -> dict:
+    """Watch application source and UI assets. Never watch logs, data, or config writes."""
+    return {
+        "reload": True,
+        "reload_delay": 1.0,
+        "reload_dirs": [str(root / "src")],
+        "reload_includes": ["*.py", "*.html", "*.js", "*.css"],
+        "reload_excludes": [
+            ".*",
+            ".git",
+            "venv",
+            ".venv",
+            "data",
+            "logs",
+            "certs",
+            "__pycache__",
+            ".pytest_cache",
+            "htmlcov",
+            "*.pyc",
+            "*.log",
+            str(root / "src" / "ai_controller" / "logs"),
+        ],
+    }
+
+
 def initialize(
     config_storage_dir: Optional[str] = None,
     debug_ui: bool = False,
@@ -683,22 +729,29 @@ async def on_startup():
         logger.info("Autorun scheduler task started")
 
     if MCP_AUTO_START:
-        try:
-            from ...core.config_storage import get_section
-            from ...mcp.supervisor import get_supervisor
+        asyncio.create_task(_start_mcp_background())
 
-            mcp_cfg = get_section(
-                "mcp",
-                {"enabled": True, "auto_start": True, "host": "127.0.0.1", "port": 8082},
-            )
-            if mcp_cfg.get("enabled", True) and mcp_cfg.get("auto_start", True):
-                get_supervisor().start(
-                    host=mcp_cfg.get("host", "127.0.0.1"),
-                    port=int(mcp_cfg.get("port", 8082)),
-                )
-                logger.info("MCP HTTP server auto-started")
-        except Exception:
-            logger.exception("Failed to auto-start MCP HTTP server")
+
+async def _start_mcp_background() -> None:
+    """Start MCP off the lifespan path so a slow bind cannot cancel web startup."""
+    try:
+        from ...core.config_storage import get_section
+        from ...mcp.supervisor import get_supervisor
+
+        mcp_cfg = get_section(
+            "mcp",
+            {"enabled": True, "auto_start": True, "host": "127.0.0.1", "port": 8082},
+        )
+        if not (mcp_cfg.get("enabled", True) and mcp_cfg.get("auto_start", True)):
+            return
+        await asyncio.to_thread(
+            get_supervisor().start,
+            mcp_cfg.get("host", "127.0.0.1"),
+            int(mcp_cfg.get("port", 8082)),
+        )
+        logger.info("MCP HTTP server auto-started")
+    except Exception:
+        logger.exception("Failed to auto-start MCP HTTP server")
 
 
 @app.on_event("shutdown")

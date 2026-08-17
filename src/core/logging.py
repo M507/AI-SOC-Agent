@@ -69,6 +69,11 @@ def configure_logging(config: Optional[LoggingConfig] = None) -> None:
     root_logger.addHandler(debug_handler)
     root_logger.addHandler(console_handler)
 
+    # Avoid a reload loop: WatchFiles logs every filesystem event, and those
+    # log lines must not be treated as application source changes.
+    logging.getLogger("watchfiles").setLevel(logging.WARNING)
+    logging.getLogger("watchfiles.main").setLevel(logging.WARNING)
+
     # Mark as configured
     root_logger._sami_logging_configured = True  # type: ignore[attr-defined]
 

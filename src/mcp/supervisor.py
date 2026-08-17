@@ -102,6 +102,7 @@ class MCPSupervisor:
                     ssl_keyfile=key_file,
                 )
                 uv_server = uvicorn.Server(uv_config)
+                uv_server.install_signal_handlers = False
                 thread = threading.Thread(
                     target=uv_server.run,
                     name="sami-mcp-https",
