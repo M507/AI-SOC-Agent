@@ -314,4 +314,93 @@ class APIClient {
             return { success: false, error: error.message };
         }
     }
+
+    async request(url, options = {}) {
+        const response = await fetch(url, options);
+        if (!response.ok) {
+            const errorText = await response.text();
+            throw new Error(`HTTP ${response.status}: ${errorText}`);
+        }
+        return response.json();
+    }
+
+    async getLLMProviders() {
+        try {
+            return await this.request('/api/llm/providers');
+        } catch (error) {
+            console.error('Error loading LLM providers:', error);
+            return { success: false, providers: [], error: error.message };
+        }
+    }
+
+    async getLLMSettings() {
+        try {
+            return await this.request('/api/llm/settings');
+        } catch (error) {
+            console.error('Error loading LLM settings:', error);
+            return { success: false, settings: {}, error: error.message };
+        }
+    }
+
+    async saveLLMSettings(settings) {
+        try {
+            return await this.request('/api/llm/settings', {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(settings),
+            });
+        } catch (error) {
+            console.error('Error saving LLM settings:', error);
+            return { success: false, error: error.message };
+        }
+    }
+
+    async testLLMProvider(payload) {
+        try {
+            return await this.request('/api/llm/test', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload || {}),
+            });
+        } catch (error) {
+            console.error('Error testing LLM provider:', error);
+            return { success: false, ok: false, message: error.message };
+        }
+    }
+
+    async getMCPHealth() {
+        try {
+            return await this.request('/api/mcp/health');
+        } catch (error) {
+            return { success: false, running: false, status: 'unreachable', last_error: error.message };
+        }
+    }
+
+    async getMCPSettings() {
+        try {
+            return await this.request('/api/mcp/settings');
+        } catch (error) {
+            return { success: false, error: error.message };
+        }
+    }
+
+    async saveMCPSettings(settings) {
+        try {
+            return await this.request('/api/mcp/settings', {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(settings),
+            });
+        } catch (error) {
+            return { success: false, error: error.message };
+        }
+    }
+
+    async mcpAction(action) {
+        try {
+            return await this.request(`/api/mcp/${action}`, { method: 'POST' });
+        } catch (error) {
+            return { success: false, error: error.message };
+        }
+    }
 }

@@ -6,7 +6,7 @@ class AIController {
         // Core state
         this.activeSessionId = null;
         this.uiDebugMode = false;
-        this.activeSection = 'sessions'; // 'sessions' | 'autoruns' | 'settings'
+        this.activeSection = 'sessions'; // 'sessions' | 'autoruns' | 'settings' | 'mcp'
         
         // Initialize managers
         this.api = new APIClient();
@@ -15,6 +15,8 @@ class AIController {
         this.sessionManager = new SessionManager(this);
         this.autorunManager = new AutorunManager(this);
         this.modals = new ModalManager(this);
+        this.settingsManager = new SettingsManager(this);
+        this.mcpPanel = new MCPPanel(this);
         
         this.init();
     }
@@ -22,6 +24,8 @@ class AIController {
     init() {
         this.setupEventListeners();
         this.loadConfig();
+        this.settingsManager.load();
+        this.mcpPanel.refresh();
         // Default view is manual sessions; load initial data
         this.loadSessions('manual');
         this.loadAutoruns();
@@ -49,6 +53,10 @@ class AIController {
                 }
             }
         }, 3000);
+
+        this.mcpHealthInterval = setInterval(() => {
+            this.mcpPanel.refresh();
+        }, 10000);
     }
     
     setupEventListeners() {
@@ -56,6 +64,7 @@ class AIController {
         const navSessions = document.getElementById('nav-sessions');
         const navAutoruns = document.getElementById('nav-autoruns');
         const navSettings = document.getElementById('nav-settings');
+        const navMcp = document.getElementById('nav-mcp');
 
         if (navSessions) {
             navSessions.addEventListener('click', () => {
@@ -70,6 +79,11 @@ class AIController {
         if (navSettings) {
             navSettings.addEventListener('click', () => {
                 this.setActiveSection('settings');
+            });
+        }
+        if (navMcp) {
+            navMcp.addEventListener('click', () => {
+                this.setActiveSection('mcp');
             });
         }
 
@@ -91,11 +105,17 @@ class AIController {
             });
         }
         
-        // Settings button
+        // Settings / MCP header buttons
         const settingsBtn = document.getElementById('settings-btn');
         if (settingsBtn) {
             settingsBtn.addEventListener('click', () => {
                 this.setActiveSection('settings');
+            });
+        }
+        const mcpBtn = document.getElementById('mcp-btn');
+        if (mcpBtn) {
+            mcpBtn.addEventListener('click', () => {
+                this.setActiveSection('mcp');
             });
         }
         
@@ -219,6 +239,12 @@ class AIController {
         if (settingsTab) {
             settingsTab.addEventListener('click', () => {
                 this.setActiveSection('settings');
+            });
+        }
+        const mcpTab = document.getElementById('mcp-tab');
+        if (mcpTab) {
+            mcpTab.addEventListener('click', () => {
+                this.setActiveSection('mcp');
             });
         }
         
@@ -351,7 +377,7 @@ class AIController {
     }
     
     setActiveSection(section) {
-        if (!['sessions', 'autoruns', 'settings'].includes(section)) {
+        if (!['sessions', 'autoruns', 'settings', 'mcp'].includes(section)) {
             console.warn('[AIController] Unknown section:', section);
             return;
         }
@@ -359,7 +385,7 @@ class AIController {
         this.activeSection = section;
 
         // Update sidebar nav active state
-        const sections = ['sessions', 'autoruns', 'settings'];
+        const sections = ['sessions', 'autoruns', 'settings', 'mcp'];
         sections.forEach((name) => {
             const el = document.getElementById(`nav-${name}`);
             if (el) {
@@ -375,6 +401,7 @@ class AIController {
         const sessionsGroup = document.getElementById('sessions-tab-group');
         const autorunsGroup = document.getElementById('autoruns-tab-group');
         const settingsGroup = document.getElementById('settings-tab-group');
+        const mcpGroup = document.getElementById('mcp-tab-group');
 
         if (sessionsGroup) {
             sessionsGroup.style.display = section === 'sessions' ? 'flex' : 'none';
@@ -383,13 +410,16 @@ class AIController {
             autorunsGroup.style.display = section === 'autoruns' ? 'flex' : 'none';
         }
         if (settingsGroup) {
-            // Only show settings tab row when in settings view
             settingsGroup.style.display = section === 'settings' ? 'flex' : 'none';
+        }
+        if (mcpGroup) {
+            mcpGroup.style.display = section === 'mcp' ? 'flex' : 'none';
         }
 
         const sessionContent = document.getElementById('session-content');
         const autorunContent = document.getElementById('autorun-content');
         const settingsContent = document.getElementById('settings-content');
+        const mcpContent = document.getElementById('mcp-content');
         const noSessionMessage = document.getElementById('no-session-message');
         const autorunEmpty = document.getElementById('autorun-empty-message');
 
@@ -404,11 +434,13 @@ class AIController {
                 }
             }
             if (settingsContent) settingsContent.style.display = 'none';
+            if (mcpContent) mcpContent.style.display = 'none';
             if (noSessionMessage) noSessionMessage.style.display = this.activeSessionId ? 'none' : 'flex';
             if (autorunEmpty) autorunEmpty.style.display = 'none';
         } else if (section === 'autoruns') {
             if (sessionContent) sessionContent.style.display = 'none';
             if (settingsContent) settingsContent.style.display = 'none';
+            if (mcpContent) mcpContent.style.display = 'none';
             if (noSessionMessage) noSessionMessage.style.display = 'none';
 
             const hasAutorunTabs = document.querySelector('button.tab[data-autorun-id]') !== null;
@@ -444,6 +476,7 @@ class AIController {
                 }
             }
             if (settingsContent) settingsContent.style.display = 'block';
+            if (mcpContent) mcpContent.style.display = 'none';
             if (noSessionMessage) noSessionMessage.style.display = 'none';
             if (autorunEmpty) autorunEmpty.style.display = 'none';
 
@@ -460,12 +493,46 @@ class AIController {
             if (this.activeSessionId) {
                 this.wsManager.disconnect(this.activeSessionId);
             }
+        } else if (section === 'mcp') {
+            if (sessionContent) sessionContent.style.display = 'none';
+            if (autorunContent) {
+                autorunContent.style.display = 'none';
+                const contentArea = document.querySelector('.content-area');
+                if (contentArea) {
+                    contentArea.classList.remove('has-autorun');
+                }
+            }
+            if (settingsContent) settingsContent.style.display = 'none';
+            if (mcpContent) mcpContent.style.display = 'block';
+            if (noSessionMessage) noSessionMessage.style.display = 'none';
+            if (autorunEmpty) autorunEmpty.style.display = 'none';
+
+            document.querySelectorAll('button.tab[data-session-id]').forEach(tab => {
+                tab.classList.remove('active');
+            });
+            const mcpTab = document.getElementById('mcp-tab');
+            if (mcpTab) {
+                mcpTab.classList.add('active');
+            }
+            this.mcpPanel.load();
+            if (this.activeSessionId) {
+                this.wsManager.disconnect(this.activeSessionId);
+            }
         }
     }
     
     showSettings() {
-        // Backwards-compatible helper to switch to settings section
         this.setActiveSection('settings');
+    }
+
+    updateMCPHealthIndicator(state, running) {
+        const cls = running ? 'health-ok' : (state === 'unhealthy' ? 'health-bad' : 'health-unknown');
+        ['mcp-health-dot', 'nav-mcp-dot'].forEach((id) => {
+            const el = document.getElementById(id);
+            if (!el) return;
+            el.className = `health-dot ${cls}`;
+            el.title = running ? 'MCP server running' : 'MCP server stopped';
+        });
     }
     
     async updateDebugMode(enabled) {

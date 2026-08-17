@@ -6,14 +6,14 @@
         <title>SamiGPT AI Controller</title>
         <!-- CSS Files - Organized by purpose for easier maintenance -->
         <link rel="stylesheet" href="/static/css/base.css?v=2">
-        <link rel="stylesheet" href="/static/css/layout.css?v=4">
+        <link rel="stylesheet" href="/static/css/layout.css?v=5">
         <link rel="stylesheet" href="/static/css/buttons.css?v=2">
         <link rel="stylesheet" href="/static/css/tabs.css?v=2">
         <link rel="stylesheet" href="/static/css/status.css?v=2">
         <link rel="stylesheet" href="/static/css/terminal.css?v=2">
         <link rel="stylesheet" href="/static/css/autorun.css?v=4">
         <link rel="stylesheet" href="/static/css/modal.css?v=2">
-        <link rel="stylesheet" href="/static/css/settings.css?v=2">
+        <link rel="stylesheet" href="/static/css/settings.css?v=3">
         <link rel="stylesheet" href="/static/css/scrollbar.css?v=2">
     </head>
 <body>
@@ -24,6 +24,10 @@
                 <button id="new-session-btn" class="btn btn-primary">+ New Session</button>
                 <button id="new-autorun-btn" class="btn btn-secondary">+ New Autorun</button>
                 <button id="settings-btn" class="btn btn-secondary">Settings</button>
+                <button id="mcp-btn" class="btn btn-secondary mcp-header-btn">
+                    MCP
+                    <span id="mcp-health-dot" class="health-dot health-unknown" title="MCP health unknown"></span>
+                </button>
             </div>
         </header>
 
@@ -41,6 +45,10 @@
                 <button id="nav-settings" class="nav-item">
                     <span class="nav-label">Settings</span>
                 </button>
+                <button id="nav-mcp" class="nav-item">
+                    <span class="nav-label">MCP Server</span>
+                    <span id="nav-mcp-dot" class="health-dot health-unknown"></span>
+                </button>
             </aside>
 
             <div class="main-panel">
@@ -57,7 +65,13 @@
                         <div class="tab-group" id="settings-tab-group" style="display: none;">
                             <span class="tab-group-label">Settings</span>
                             <div class="tabs" id="settings-tabs">
-                                <button class="tab" id="settings-tab">Settings</button>
+                                <button class="tab" id="settings-tab">LLM &amp; UI</button>
+                            </div>
+                        </div>
+                        <div class="tab-group" id="mcp-tab-group" style="display: none;">
+                            <span class="tab-group-label">MCP Server</span>
+                            <div class="tabs" id="mcp-tabs">
+                                <button class="tab" id="mcp-tab">Health &amp; Settings</button>
                             </div>
                         </div>
                     </div>
@@ -90,16 +104,92 @@
                     <div id="settings-content" class="settings-content" style="display: none;">
                         <div class="session-header">
                             <h2>Settings</h2>
+                            <div class="session-actions">
+                                <button id="llm-test-btn" class="btn btn-secondary btn-sm">Test provider</button>
+                                <button id="llm-save-btn" class="btn btn-primary btn-sm">Save</button>
+                            </div>
                         </div>
                         <div class="settings-body">
-                            <label class="settings-toggle">
-                                <input type="checkbox" id="debug-toggle">
-                                <span class="toggle-label">Enable debug mode (show full JSON results)</span>
-                            </label>
-                            <p class="settings-help">
-                                When debug mode is disabled, only the agent's reply text is shown.
-                                When enabled, the full JSON result object is rendered in the terminal.
-                            </p>
+                            <section class="settings-card">
+                                <h3>LLM provider</h3>
+                                <p class="settings-help">
+                                    Freeform prompts in sessions and autoruns are sent to this backend.
+                                    Cursor Agent uses the local <code>cursor-agent</code> binary.
+                                    OpenAI, OpenRouter, Open WebUI, and Custom use an OpenAI-compatible Chat Completions API
+                                    and can call SamiGPT MCP tools when the MCP server is running.
+                                </p>
+                                <label for="llm-provider">Provider</label>
+                                <select id="llm-provider"></select>
+                                <div id="llm-provider-fields" class="settings-fields"></div>
+                                <label for="llm-system-prompt">System prompt (optional)</label>
+                                <textarea id="llm-system-prompt" rows="4" placeholder="Leave blank to use the default SOC assistant prompt"></textarea>
+                                <label for="llm-max-iterations">Max MCP tool iterations</label>
+                                <input type="number" id="llm-max-iterations" min="1" max="50" value="12">
+                                <p id="llm-status" class="settings-status"></p>
+                            </section>
+                            <section class="settings-card">
+                                <h3>Display</h3>
+                                <label class="settings-toggle">
+                                    <input type="checkbox" id="debug-toggle">
+                                    <span class="toggle-label">Enable debug mode (show full JSON results)</span>
+                                </label>
+                                <p class="settings-help">
+                                    When debug mode is disabled, only the agent's reply text is shown.
+                                    When enabled, the full JSON result object is rendered in the terminal.
+                                </p>
+                            </section>
+                        </div>
+                    </div>
+                    <div id="mcp-content" class="settings-content" style="display: none;">
+                        <div class="session-header">
+                            <h2>MCP Server</h2>
+                            <div class="session-actions">
+                                <span id="mcp-status-badge" class="status-badge">Unknown</span>
+                                <button id="mcp-refresh-btn" class="btn btn-secondary btn-sm">Refresh</button>
+                                <button id="mcp-start-btn" class="btn btn-primary btn-sm">Start</button>
+                                <button id="mcp-stop-btn" class="btn btn-secondary btn-sm">Stop</button>
+                                <button id="mcp-restart-btn" class="btn btn-secondary btn-sm">Restart</button>
+                                <button id="mcp-save-btn" class="btn btn-primary btn-sm">Save</button>
+                            </div>
+                        </div>
+                        <div class="settings-body">
+                            <section class="settings-card">
+                                <h3>Health</h3>
+                                <p class="settings-help">
+                                    The MCP server is a separate HTTP listener from this web UI.
+                                    Open WebUI and other MCP clients connect here; Cursor/Claude can still use stdio.
+                                </p>
+                                <dl id="mcp-health-details" class="health-details">
+                                    <div><dt>Status</dt><dd id="mcp-health-status">—</dd></div>
+                                    <div><dt>Bind</dt><dd id="mcp-health-bind">—</dd></div>
+                                    <div><dt>Tools</dt><dd id="mcp-health-tools">—</dd></div>
+                                    <div><dt>Started</dt><dd id="mcp-health-started">—</dd></div>
+                                </dl>
+                                <div id="mcp-integrations" class="integration-pills"></div>
+                                <p id="mcp-last-error" class="settings-status"></p>
+                            </section>
+                            <section class="settings-card">
+                                <h3>Listener</h3>
+                                <label class="settings-toggle">
+                                    <input type="checkbox" id="mcp-enabled">
+                                    <span class="toggle-label">MCP HTTP server enabled</span>
+                                </label>
+                                <label class="settings-toggle">
+                                    <input type="checkbox" id="mcp-auto-start">
+                                    <span class="toggle-label">Auto-start with the web interface</span>
+                                </label>
+                                <label for="mcp-host">Host</label>
+                                <input type="text" id="mcp-host" placeholder="127.0.0.1">
+                                <label for="mcp-port">Port</label>
+                                <input type="number" id="mcp-port" min="1" max="65535" value="8082">
+                            </section>
+                            <section class="settings-card">
+                                <h3>How to connect</h3>
+                                <p class="settings-help"><strong>HTTP JSON-RPC</strong> (Open WebUI, custom agents)</p>
+                                <pre id="mcp-http-snippet" class="autorun-prompt"></pre>
+                                <p class="settings-help"><strong>Stdio</strong> (Cursor IDE, Claude Desktop)</p>
+                                <pre class="autorun-prompt">python -m src.mcp.mcp_server</pre>
+                            </section>
                         </div>
                     </div>
                     <!-- Autorun Details Panel (shown when Autoruns view is active) -->
@@ -224,7 +314,7 @@
     <script src="/static/utils.js?v=1"></script>
     
     <!-- API client (no dependencies) -->
-    <script src="/static/api.js?v=2"></script>
+    <script src="/static/api.js?v=3"></script>
     
     <!-- Component modules (depend on utils) -->
     <script src="/static/websocket.js?v=1"></script>
@@ -235,10 +325,8 @@
     <script src="/static/modals.js?v=2"></script>
     
     <!-- Main application (depends on all modules) -->
-    <script src="/static/app.js?v=4"></script>
-    
-    <!-- Settings (depends on app) -->
-    <script src="/static/settings.js?v=1"></script>
+    <script src="/static/settings.js?v=2"></script>
+    <script src="/static/app.js?v=5"></script>
 </body>
 </html>
 

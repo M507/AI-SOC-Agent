@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 from .config import (
+    AIControllerConfig,
     CTIConfig,
     ClickUpConfig,
     EDRConfig,
@@ -21,7 +22,9 @@ from .config import (
     EngConfig,
     GitHubConfig,
     IrisConfig,
+    LLMConfig,
     LoggingConfig,
+    MCPRuntimeConfig,
     SamiConfig,
     TheHiveConfig,
     TrelloConfig,
@@ -120,6 +123,34 @@ def _config_to_dict(config: SamiConfig) -> Dict[str, Any]:
             }
         if eng_dict:
             result["eng"] = eng_dict
+
+    if config.ai_controller:
+        result["ai_controller"] = {
+            "storage_dir": config.ai_controller.storage_dir,
+            "web_port": config.ai_controller.web_port,
+            "web_host": config.ai_controller.web_host,
+        }
+
+    if config.llm:
+        llm_dict: Dict[str, Any] = {
+            "provider": config.llm.provider,
+            "max_tool_iterations": config.llm.max_tool_iterations,
+        }
+        if config.llm.system_prompt:
+            llm_dict["system_prompt"] = config.llm.system_prompt
+        for key in ("cursor_agent", "openai", "openrouter", "openwebui", "custom"):
+            value = getattr(config.llm, key)
+            if value:
+                llm_dict[key] = value
+        result["llm"] = llm_dict
+
+    if config.mcp:
+        result["mcp"] = {
+            "enabled": config.mcp.enabled,
+            "auto_start": config.mcp.auto_start,
+            "host": config.mcp.host,
+            "port": config.mcp.port,
+        }
 
     return result
 
@@ -244,6 +275,39 @@ def _dict_to_config(data: Dict[str, Any]) -> SamiConfig:
                 provider=provider,
             )
 
+    ai_controller_cfg: Optional[AIControllerConfig] = None
+    if data.get("ai_controller"):
+        ac = data["ai_controller"]
+        ai_controller_cfg = AIControllerConfig(
+            storage_dir=ac.get("storage_dir", "data/ai_controller"),
+            web_port=int(ac.get("web_port", 8081)),
+            web_host=ac.get("web_host", "0.0.0.0"),
+        )
+
+    llm_cfg: Optional[LLMConfig] = None
+    if data.get("llm"):
+        llm_data = data["llm"]
+        llm_cfg = LLMConfig(
+            provider=llm_data.get("provider", "cursor_agent"),
+            system_prompt=llm_data.get("system_prompt"),
+            max_tool_iterations=int(llm_data.get("max_tool_iterations", 12)),
+            cursor_agent=llm_data.get("cursor_agent"),
+            openai=llm_data.get("openai"),
+            openrouter=llm_data.get("openrouter"),
+            openwebui=llm_data.get("openwebui"),
+            custom=llm_data.get("custom"),
+        )
+
+    mcp_cfg: Optional[MCPRuntimeConfig] = None
+    if data.get("mcp"):
+        mcp_data = data["mcp"]
+        mcp_cfg = MCPRuntimeConfig(
+            enabled=bool(mcp_data.get("enabled", True)),
+            auto_start=bool(mcp_data.get("auto_start", True)),
+            host=mcp_data.get("host", "127.0.0.1"),
+            port=int(mcp_data.get("port", 8082)),
+        )
+
     return SamiConfig(
         thehive=thehive_cfg,
         iris=iris_cfg,
@@ -252,6 +316,9 @@ def _dict_to_config(data: Dict[str, Any]) -> SamiConfig:
         cti=cti_cfg,
         eng=eng_cfg,
         logging=logging_cfg,
+        ai_controller=ai_controller_cfg,
+        llm=llm_cfg,
+        mcp=mcp_cfg,
     )
 
 
@@ -681,4 +748,56 @@ def update_config_dict(
     # Save updated config to both files
     save_config_to_file(config, config_path, env_path, save_both=save_both)
     return config
+
+
+def load_raw_config(config_path: str = CONFIG_FILE) -> Dict[str, Any]:
+    """
+    Load the on-disk JSON config without converting to SamiConfig.
+
+    Prefer this when reading/writing sections that must not drop unknown keys
+    (llm, mcp, cti_opencti, ai_controller, comments, etc.).
+    """
+    _ensure_starting_config(config_path)
+    config_file = Path(config_path)
+    if not config_file.exists():
+        return {}
+    try:
+        with open(config_file, "r") as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else {}
+    except json.JSONDecodeError as e:
+        raise ConfigError(f"Invalid JSON in config file: {e}") from e
+    except Exception as e:
+        raise ConfigError(f"Failed to load config file: {e}") from e
+
+
+def save_raw_config(data: Dict[str, Any], config_path: str = CONFIG_FILE) -> None:
+    """Write a full JSON config dict to disk, preserving unknown keys."""
+    config_file = Path(config_path)
+    try:
+        config_file.parent.mkdir(parents=True, exist_ok=True)
+        with open(config_file, "w") as f:
+            json.dump(data, f, indent=2)
+            f.write("\n")
+    except Exception as e:
+        raise ConfigError(f"Failed to save config file: {e}") from e
+
+
+def update_raw_section(
+    section: str,
+    value: Any,
+    config_path: str = CONFIG_FILE,
+) -> Dict[str, Any]:
+    """Replace a top-level config section and persist the full file."""
+    data = load_raw_config(config_path)
+    data[section] = value
+    save_raw_config(data, config_path)
+    return data
+
+
+def get_section(section: str, default: Optional[Dict[str, Any]] = None, config_path: str = CONFIG_FILE) -> Dict[str, Any]:
+    """Return a top-level config section as a dict."""
+    data = load_raw_config(config_path)
+    value = data.get(section, default if default is not None else {})
+    return value if isinstance(value, dict) else {}
 

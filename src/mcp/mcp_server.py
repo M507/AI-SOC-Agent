@@ -186,6 +186,30 @@ class SamiGPTMCPServer:
         self._mcp_logger = logging.getLogger("sami.mcp")
         self._register_tools()
 
+    def health_snapshot(self) -> Dict[str, Any]:
+        """Return a JSON-serializable health view for the HTTP / UI health check."""
+        eng_provider = None
+        if self.eng_client:
+            eng_provider = self.eng_client.__class__.__name__
+        return {
+            "status": "healthy",
+            "server": self.SERVER_NAME,
+            "version": self.SERVER_VERSION,
+            "protocol_versions": list(self.SUPPORTED_PROTOCOL_VERSIONS),
+            "initialized": self._initialized,
+            "tools_count": len(self.tools),
+            "tools": sorted(self.tools.keys()),
+            "integrations": {
+                "case_management": self.case_client is not None,
+                "siem": self.siem_client is not None,
+                "edr": self.edr_client is not None,
+                "cti": bool(self.cti_clients),
+                "kb": self.kb_client is not None,
+                "eng": self.eng_client is not None,
+            },
+            "eng_provider": eng_provider,
+        }
+
     def _register_tools(self) -> None:
         """Register all available tools."""
         self.tools: Dict[str, Dict[str, Any]] = {}
@@ -3657,16 +3681,22 @@ async def main() -> None:
     mcp_log_dir = config.logging.log_dir if config.logging else "logs"
     configure_mcp_logging(mcp_log_dir)
 
-    logger.info("Starting SamiGPT MCP Server...")
+    logger.info("Starting SamiGPT MCP Server (stdio)...")
     mcp_logger = logging.getLogger("sami.mcp")
     mcp_logger.info("=" * 80)
-    mcp_logger.info("MCP Server Starting")
+    mcp_logger.info("MCP Server Starting (stdio transport)")
     mcp_logger.info("=" * 80)
 
-    # Initialize clients
-    case_client = None
-    
-    # Log configuration status
+    from .factory import build_mcp_server
+
+    built = build_mcp_server(config)
+    server = built.server
+    case_client = server.case_client
+    siem_client = server.siem_client
+    edr_client = server.edr_client
+    cti_client = server.cti_client
+    eng_client = server.eng_client
+
     mcp_logger.info("Configuration Status:")
     mcp_logger.info(f"  IRIS configured: {config.iris is not None}")
     if config.iris:
@@ -3677,232 +3707,6 @@ async def main() -> None:
     mcp_logger.info(f"  EDR configured: {config.edr is not None}")
     mcp_logger.info(f"  CTI configured: {config.cti is not None}")
     
-    # Prioritize IRIS if both are configured
-    if config.iris:
-        try:
-            mcp_logger.info("Attempting to initialize IRIS case management client...")
-            case_client = IRISCaseManagementClient.from_config(config)
-            logger.info("IRIS case management client initialized")
-            mcp_logger.info("✓ IRIS case management client initialized successfully")
-        except Exception as e:
-            logger.error(f"Failed to initialize IRIS client: {e}")
-            mcp_logger.error(f"✗ Failed to initialize IRIS client: {e}", exc_info=True)
-    elif config.thehive:
-        try:
-            mcp_logger.info("Attempting to initialize TheHive case management client...")
-            case_client = TheHiveCaseManagementClient.from_config(config)
-            logger.info("TheHive case management client initialized")
-            mcp_logger.info("✓ TheHive case management client initialized successfully")
-        except Exception as e:
-            logger.error(f"Failed to initialize TheHive client: {e}")
-            mcp_logger.error(f"✗ Failed to initialize TheHive client: {e}", exc_info=True)
-    else:
-        mcp_logger.warning("No case management system configured (neither IRIS nor TheHive)")
-
-    # Initialize SIEM client
-    siem_client = None
-    if config.elastic:
-        try:
-            mcp_logger.info("Attempting to initialize Elastic SIEM client...")
-            siem_client = ElasticSIEMClient.from_config(config)
-            logger.info("Elastic SIEM client initialized")
-            mcp_logger.info("✓ Elastic SIEM client initialized successfully")
-            if config.elastic:
-                mcp_logger.info(f"    Elastic URL: {config.elastic.base_url}")
-                mcp_logger.info(f"    Elastic API key: {'*' * 20}...{config.elastic.api_key[-10:] if config.elastic.api_key and len(config.elastic.api_key) > 10 else '***'}")
-        except Exception as e:
-            logger.error(f"Failed to initialize Elastic SIEM client: {e}")
-            mcp_logger.error(f"✗ Failed to initialize Elastic SIEM client: {e}", exc_info=True)
-    
-    # Initialize EDR client
-    edr_client = None
-    if config.edr:
-        if config.edr.edr_type == "elastic_defend":
-            try:
-                mcp_logger.info("Attempting to initialize Elastic Defend EDR client...")
-                edr_client = ElasticDefendEDRClient.from_config(config)
-                logger.info("Elastic Defend EDR client initialized")
-                mcp_logger.info("✓ Elastic Defend EDR client initialized successfully")
-                if config.edr:
-                    mcp_logger.info(f"    EDR URL: {config.edr.base_url}")
-                    mcp_logger.info(f"    EDR Type: {config.edr.edr_type}")
-                    mcp_logger.info(f"    EDR API key: {'*' * 20}...{config.edr.api_key[-10:] if config.edr.api_key and len(config.edr.api_key) > 10 else '***'}")
-            except Exception as e:
-                logger.error(f"Failed to initialize Elastic Defend EDR client: {e}")
-                mcp_logger.error(f"✗ Failed to initialize Elastic Defend EDR client: {e}", exc_info=True)
-        else:
-            logger.info(
-                f"EDR configuration found ({config.edr.edr_type}), but integration not yet implemented"
-            )
-            mcp_logger.warning(
-                f"EDR type '{config.edr.edr_type}' is not yet implemented. Only 'elastic_defend' is supported."
-            )
-
-    # Initialize CTI client(s) - support both single and multiple platforms
-    cti_clients = []
-    cti_client = None  # For backward compatibility
-    
-    # Check for main CTI config
-    if config.cti:
-        if config.cti.cti_type == "local_tip":
-            try:
-                mcp_logger.info("Attempting to initialize Local TIP CTI client...")
-                local_tip_client = LocalTipCTIClient.from_config(config)
-                cti_clients.append(local_tip_client)
-                cti_client = local_tip_client  # For backward compatibility
-                logger.info("Local TIP CTI client initialized")
-                mcp_logger.info("✓ Local TIP CTI client initialized successfully")
-                mcp_logger.info(f"    CTI URL: {config.cti.base_url}")
-                mcp_logger.info(f"    CTI Type: {config.cti.cti_type}")
-            except Exception as e:
-                logger.error(f"Failed to initialize Local TIP CTI client: {e}")
-                mcp_logger.error(f"✗ Failed to initialize Local TIP CTI client: {e}", exc_info=True)
-        elif config.cti.cti_type == "opencti":
-            try:
-                mcp_logger.info("Attempting to initialize OpenCTI client...")
-                opencti_client = OpenCTIClient.from_config(config)
-                cti_clients.append(opencti_client)
-                cti_client = opencti_client  # For backward compatibility
-                logger.info("OpenCTI client initialized")
-                mcp_logger.info("✓ OpenCTI client initialized successfully")
-                mcp_logger.info(f"    CTI URL: {config.cti.base_url}")
-                mcp_logger.info(f"    CTI Type: {config.cti.cti_type}")
-            except Exception as e:
-                logger.error(f"Failed to initialize OpenCTI client: {e}")
-                mcp_logger.error(f"✗ Failed to initialize OpenCTI client: {e}", exc_info=True)
-        else:
-            logger.info(
-                f"CTI configuration found ({config.cti.cti_type}), but integration not yet implemented"
-            )
-            mcp_logger.warning(
-                f"CTI type '{config.cti.cti_type}' is not yet implemented. Supported types: 'local_tip', 'opencti'."
-            )
-    
-    # Check for additional CTI config (cti_opencti) to support both platforms
-    # This allows config.json to have both "cti" (local_tip) and "cti_opencti" (opencti)
-    config_dict = None
-    try:
-        from ..core.config_storage import load_config_from_file
-        import json
-        import os
-        config_file = os.getenv("SAMIGPT_CONFIG_FILE", "config.json")
-        if os.path.exists(config_file):
-            with open(config_file, "r") as f:
-                config_dict = json.load(f)
-    except Exception:
-        pass  # If we can't load config dict, that's okay
-    
-    if config_dict and "cti_opencti" in config_dict:
-        cti_opencti_config = config_dict["cti_opencti"]
-        if cti_opencti_config.get("cti_type") == "opencti":
-            try:
-                # Create a temporary config with OpenCTI settings
-                from ..core.config import CTIConfig, SamiConfig
-                opencti_config = CTIConfig(
-                    cti_type="opencti",
-                    base_url=cti_opencti_config.get("base_url"),
-                    api_key=cti_opencti_config.get("api_key"),
-                    timeout_seconds=cti_opencti_config.get("timeout_seconds", 30),
-                    verify_ssl=cti_opencti_config.get("verify_ssl", True),
-                )
-                temp_config = SamiConfig(cti=opencti_config)
-                
-                mcp_logger.info("Attempting to initialize additional OpenCTI client...")
-                opencti_client = OpenCTIClient.from_config(temp_config)
-                # Only add if we don't already have an OpenCTI client
-                if not any("OpenCTI" in c.__class__.__name__ for c in cti_clients):
-                    cti_clients.append(opencti_client)
-                    logger.info("Additional OpenCTI client initialized")
-                    mcp_logger.info("✓ Additional OpenCTI client initialized successfully")
-                    mcp_logger.info(f"    CTI URL: {opencti_config.base_url}")
-            except Exception as e:
-                logger.error(f"Failed to initialize additional OpenCTI client: {e}")
-                mcp_logger.error(f"✗ Failed to initialize additional OpenCTI client: {e}", exc_info=True)
-    
-    # Also check for cti_local_tip if main cti is opencti
-    if config_dict and "cti_local_tip" in config_dict:
-        cti_local_tip_config = config_dict["cti_local_tip"]
-        if cti_local_tip_config.get("cti_type") == "local_tip":
-            try:
-                from ..core.config import CTIConfig, SamiConfig
-                local_tip_config = CTIConfig(
-                    cti_type="local_tip",
-                    base_url=cti_local_tip_config.get("base_url"),
-                    api_key=cti_local_tip_config.get("api_key"),
-                    timeout_seconds=cti_local_tip_config.get("timeout_seconds", 30),
-                    verify_ssl=cti_local_tip_config.get("verify_ssl", False),
-                )
-                temp_config = SamiConfig(cti=local_tip_config)
-                
-                mcp_logger.info("Attempting to initialize additional Local TIP client...")
-                local_tip_client = LocalTipCTIClient.from_config(temp_config)
-                # Only add if we don't already have a Local TIP client
-                if not any("LocalTip" in c.__class__.__name__ for c in cti_clients):
-                    cti_clients.append(local_tip_client)
-                    logger.info("Additional Local TIP client initialized")
-                    mcp_logger.info("✓ Additional Local TIP client initialized successfully")
-                    mcp_logger.info(f"    CTI URL: {local_tip_config.base_url}")
-            except Exception as e:
-                logger.error(f"Failed to initialize additional Local TIP client: {e}")
-                mcp_logger.error(f"✗ Failed to initialize additional Local TIP client: {e}", exc_info=True)
-    
-    if len(cti_clients) > 1:
-        mcp_logger.info(f"✓ Multiple CTI platforms configured: {len(cti_clients)} platforms will be queried concurrently")
-
-    # Initialize Engineering client (Trello, ClickUp, or GitHub)
-    eng_client = None
-    if config.eng:
-        provider = config.eng.provider.lower() if config.eng.provider else "trello"
-        
-        if provider == "github" and config.eng.github:
-            try:
-                eng_client = GitHubClient.from_config(config)
-                mcp_logger.info("✓ GitHub (Engineering) client initialized")
-            except Exception as e:
-                mcp_logger.warning(f"Failed to initialize GitHub client: {e}")
-        elif provider == "clickup" and config.eng.clickup:
-            try:
-                eng_client = ClickUpClient.from_config(config)
-                mcp_logger.info("✓ ClickUp (Engineering) client initialized")
-            except Exception as e:
-                mcp_logger.warning(f"Failed to initialize ClickUp client: {e}")
-        elif provider == "trello" and config.eng.trello:
-            try:
-                eng_client = TrelloClient.from_config(config)
-                mcp_logger.info("✓ Trello (Engineering) client initialized")
-            except Exception as e:
-                mcp_logger.warning(f"Failed to initialize Trello client: {e}")
-        else:
-            # Try to auto-detect based on what's configured (priority: GitHub > ClickUp > Trello)
-            if config.eng.github:
-                try:
-                    eng_client = GitHubClient.from_config(config)
-                    mcp_logger.info("✓ GitHub (Engineering) client initialized (auto-detected)")
-                except Exception as e:
-                    mcp_logger.warning(f"Failed to initialize GitHub client: {e}")
-            elif config.eng.clickup:
-                try:
-                    eng_client = ClickUpClient.from_config(config)
-                    mcp_logger.info("✓ ClickUp (Engineering) client initialized (auto-detected)")
-                except Exception as e:
-                    mcp_logger.warning(f"Failed to initialize ClickUp client: {e}")
-            elif config.eng.trello:
-                try:
-                    eng_client = TrelloClient.from_config(config)
-                    mcp_logger.info("✓ Trello (Engineering) client initialized (auto-detected)")
-                except Exception as e:
-                    mcp_logger.warning(f"Failed to initialize Trello client: {e}")
-
-    # Create MCP server
-    server = SamiGPTMCPServer(
-        case_client=case_client,
-        siem_client=siem_client,
-        edr_client=edr_client,
-        cti_client=cti_client,  # For backward compatibility
-        cti_clients=cti_clients if len(cti_clients) > 0 else None,  # Pass list of clients
-        eng_client=eng_client,
-    )
-
     # Log tool registration summary
     total_tools = len(server.tools)
     logger.info(f"MCP server initialized with {total_tools} tools")

@@ -22,6 +22,8 @@ from pydantic import BaseModel
 from ..agent_executor import AgentExecutor, ExecutionResult
 from ..session_manager import SessionManager, Session, SessionType, SessionStatus, AutorunConfig
 from ...core.logging import get_logger
+from .routes_llm import router as llm_router
+from .routes_mcp import router as mcp_router
 
 logger = get_logger("sami.ai_controller.web.server")
 
@@ -31,6 +33,8 @@ app = FastAPI(
     description="Web interface for managing and executing agent commands",
     version="1.0.0",
 )
+app.include_router(llm_router)
+app.include_router(mcp_router)
 
 # Initialize components
 executor: Optional[AgentExecutor] = None
@@ -38,6 +42,7 @@ session_manager: Optional[SessionManager] = None
 
 # UI behavior flags (e.g., controlled by CLI flags like --debug)
 UI_DEBUG_MODE: bool = False
+MCP_AUTO_START: bool = True
 
 # WebSocket connections by session ID
 active_connections: Dict[str, List[WebSocket]] = {}
@@ -78,9 +83,9 @@ class UIConfigUpdate(BaseModel):
     ui_debug: Optional[bool] = None
 
 
-def initialize(config_storage_dir: Optional[str] = None, debug_ui: bool = False):
+def initialize(config_storage_dir: Optional[str] = None, debug_ui: bool = False, mcp_auto_start: bool = True):
     """Initialize the web server components."""
-    global executor, session_manager, UI_DEBUG_MODE
+    global executor, session_manager, UI_DEBUG_MODE, MCP_AUTO_START
     
     try:
         if config_storage_dir:
@@ -94,10 +99,12 @@ def initialize(config_storage_dir: Optional[str] = None, debug_ui: bool = False)
         executor = AgentExecutor(config)
         
         UI_DEBUG_MODE = debug_ui
+        MCP_AUTO_START = mcp_auto_start
         logger.info(
-            "AI Controller web server initialized (ui_debug_mode=%s, storage_dir=%s)",
+            "AI Controller web server initialized (ui_debug_mode=%s, storage_dir=%s, mcp_auto_start=%s)",
             UI_DEBUG_MODE,
             config_storage_dir or "default",
+            MCP_AUTO_START,
         )
     except Exception as e:
         logger.exception("Error initializing web server components")
@@ -655,11 +662,29 @@ async def autorun_scheduler_loop():
 
 @app.on_event("startup")
 async def on_startup():
-    """Start background tasks such as the autorun scheduler."""
+    """Start background tasks such as the autorun scheduler and MCP HTTP listener."""
     global autorun_scheduler_task
     if autorun_scheduler_task is None:
         autorun_scheduler_task = asyncio.create_task(autorun_scheduler_loop())
         logger.info("Autorun scheduler task started")
+
+    if MCP_AUTO_START:
+        try:
+            from ...core.config_storage import get_section
+            from ...mcp.supervisor import get_supervisor
+
+            mcp_cfg = get_section(
+                "mcp",
+                {"enabled": True, "auto_start": True, "host": "127.0.0.1", "port": 8082},
+            )
+            if mcp_cfg.get("enabled", True) and mcp_cfg.get("auto_start", True):
+                get_supervisor().start(
+                    host=mcp_cfg.get("host", "127.0.0.1"),
+                    port=int(mcp_cfg.get("port", 8082)),
+                )
+                logger.info("MCP HTTP server auto-started")
+        except Exception:
+            logger.exception("Failed to auto-start MCP HTTP server")
 
 
 @app.on_event("shutdown")
@@ -669,6 +694,12 @@ async def on_shutdown():
     if autorun_scheduler_task:
         autorun_scheduler_task.cancel()
         autorun_scheduler_task = None
+    try:
+        from ...mcp.supervisor import get_supervisor
+
+        get_supervisor().stop()
+    except Exception:
+        logger.warning("Error stopping MCP HTTP server during shutdown", exc_info=True)
 
 
 # Determine paths

@@ -6,6 +6,7 @@ dataclasses>=0.8; python_version < '3.7'
 
 # HTTP client for integrations
 requests>=2.31.0
+httpx>=0.27.0
 
 # Web server for configuration management
 fastapi>=0.104.0

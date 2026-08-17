@@ -77,10 +77,20 @@ The server communicates via stdio using JSON-RPC 2.0 protocol.
 
 ### Configuration
 
-The server automatically loads configuration from `config.json` in the project root. Configure integrations using the web configuration UI:
+The server automatically loads configuration from `config.json` in the project root.
+
+Start both the web UI and the HTTP MCP listener with:
 
 ```bash
-python -m src.web.config_server
+python app.py
+```
+
+Health check: `http://127.0.0.1:8082/health`
+
+Stdio mode (Cursor / Claude Desktop) is unchanged:
+
+```bash
+python -m src.mcp.mcp_server
 ```
 
 ### Tool Usage

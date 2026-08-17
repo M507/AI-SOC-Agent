@@ -61,6 +61,22 @@ Thumbs.db
 # Configuration files (contain sensitive data)
 config.json
 
+# Client-specific environments (customer infrastructure, users, naming)
+# Shared templates stay tracked; real *_client folders do not.
+client_env/*_client/
+!client_env/example_client/
+!client_env/example_client/**
+
+# Local secrets / credentials that must never be committed
+secrets/
+credentials/
+*.pem
+*.key
+*.p12
+*.pfx
+id_rsa*
+*.crt
+
 .cursor/mcp.json
 PPT.md
 extra-docs/

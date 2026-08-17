@@ -11,9 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-import os
 import re
-import shutil
 import subprocess
 from dataclasses import dataclass, asdict
 from datetime import datetime
@@ -85,8 +83,9 @@ class AgentExecutor:
     def __init__(self, config: Optional[SamiConfig] = None):
         """Initialize the agent executor."""
         self.config = config or load_config_from_file()
-        # Track currently running external process (e.g., cursor-agent) so we can cancel it
+        # Track currently running LLM provider so we can cancel it
         self._current_process: Optional[subprocess.Popen] = None
+        self._current_provider = None
         self._tool_registry: Dict[str, Callable] = {}
         self._initialize_tools()
     
@@ -369,131 +368,68 @@ class AgentExecutor:
 
     async def _execute_freeform_prompt(self, prompt: str) -> ExecutionResult:
         """
-        Execute a freeform prompt by forwarding it to an external agent
-        (Cursor IDE's cursor-agent binary).
+        Execute a freeform prompt via the configured LLM provider.
 
-        This allows the AI Controller UI to behave like a normal terminal
-        where arbitrary prompts are handled by the agent, without requiring
-        strict 'run <tool>' syntax.
+        Cursor Agent still shells out to the local binary. OpenAI-compatible
+        providers (OpenAI, OpenRouter, Open WebUI, custom) call chat
+        completions and may use MCP tools when the MCP server is running.
         """
-
-        loop = asyncio.get_event_loop()
-
-        def _run_cursor_agent(prompt_text: str) -> Dict[str, Any]:
-            """
-            Run the external cursor-agent process and capture its output.
-
-            Uses:
-                cursor-agent --print --output-format text "<prompt>"
-            """
-
-            # Try to locate cursor-agent binary
-            possible_paths = [
-                "/usr/local/bin/cursor-agent",
-                "/usr/bin/cursor-agent",
-                os.path.expanduser("~/.local/bin/cursor-agent"),
-                "/opt/homebrew/bin/cursor-agent",
-            ]
-
-            cursor_agent_bin: Optional[str] = None
-
-            for path in possible_paths:
-                if os.path.exists(path) and os.access(path, os.X_OK):
-                    cursor_agent_bin = path
-                    break
-
-            if cursor_agent_bin is None:
-                # Fall back to PATH lookup
-                cursor_agent_bin = shutil.which("cursor-agent")
-
-            if cursor_agent_bin is None:
-                raise RuntimeError(
-                    "Cursor IDE 'cursor-agent' binary not found in common locations or PATH. "
-                    "Install Cursor and ensure 'cursor-agent' is available."
-                )
-
-            # Build command
-            # --approve-mcps: auto-approve MCP server/tool usage so Cursor
-            # doesn't prompt interactively for each tool call.
-            cmd = [
-                cursor_agent_bin,
-                "--force",
-                "--approve-mcps",
-                "--print",
-                "--output-format",
-                "text",
-                prompt_text,
-            ]
-
-            logger.debug(f"Executing external cursor-agent: {' '.join(cmd)}")
-
-            # Use Popen so we can terminate the process on cancellation
-            proc = subprocess.Popen(
-                cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-            )
-
-            # Register process so it can be cancelled from outside
-            self._current_process = proc
-            try:
-                stdout, stderr = proc.communicate()
-            finally:
-                # Clear reference once process is finished
-                self._current_process = None
-
-            return {
-                "returncode": proc.returncode,
-                "stdout": (stdout or "").strip(),
-                "stderr": (stderr or "").strip(),
-                "command": cmd,
-            }
+        from ..llm.registry import get_active_provider
+        from ..mcp.client import MCPToolClient
+        from ..core.config_storage import get_section
 
         try:
-            result = await loop.run_in_executor(None, _run_cursor_agent, prompt)
-
-            success = result.get("returncode", 1) == 0
-            output: Dict[str, Any] = {
-                "stdout": result.get("stdout", ""),
-                "stderr": result.get("stderr", ""),
-                "command": " ".join(result.get("command", [])),
-            }
-
-            # Prefer stdout as primary output for UI
-            primary_output = result.get("stdout", "") or result.get("stderr", "")
-
+            provider = get_active_provider()
+            self._current_provider = provider
+            mcp_cfg = get_section("mcp", {"host": "127.0.0.1", "port": 8082})
+            mcp_client = MCPToolClient(
+                host=mcp_cfg.get("host", "127.0.0.1"),
+                port=int(mcp_cfg.get("port", 8082)),
+            )
+            llm_cfg = get_section("llm", {})
+            result = await provider.complete(
+                prompt,
+                mcp_client=mcp_client,
+                system_prompt=llm_cfg.get("system_prompt"),
+                max_tool_iterations=llm_cfg.get("max_tool_iterations", 12),
+            )
             return ExecutionResult(
-                success=success,
-                output={
-                    "raw": output,
-                    "text": primary_output,
-                },
-                error=None if success else result.get("stderr", "cursor-agent failed"),
+                success=result.success,
+                output=result.to_output_dict(),
+                error=result.error,
                 timestamp=datetime.now(),
             )
         except Exception as e:
-            logger.exception("Error forwarding prompt to external cursor-agent")
+            logger.exception("Error forwarding prompt to LLM provider")
             return ExecutionResult(
                 success=False,
                 output=None,
                 error=str(e),
                 timestamp=datetime.now(),
             )
+        finally:
+            self._current_provider = None
 
     def cancel_current_execution(self):
         """
-        Best-effort cancellation of any currently running external process.
+        Best-effort cancellation of any currently running LLM provider.
 
-        This is primarily used to stop a long-running cursor-agent process when
-        the user clicks Stop or closes the session in the web UI.
+        Used when the user clicks Stop or closes the session in the web UI.
         """
+        provider = self._current_provider
+        if provider is not None:
+            try:
+                provider.cancel()
+            except Exception as e:
+                logger.warning("Failed to cancel LLM provider: %s", e)
+            finally:
+                self._current_provider = None
+
         proc = self._current_process
         if not proc:
             return
 
         if proc.poll() is not None:
-            # Already finished
             self._current_process = None
             return
 

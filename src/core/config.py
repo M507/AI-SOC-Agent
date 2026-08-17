@@ -153,6 +153,63 @@ class WebConfig:
 
 
 @dataclass
+class AIControllerConfig:
+    """Web controller storage and bind settings."""
+
+    storage_dir: str = "data/ai_controller"
+    web_port: int = 8081
+    web_host: str = "0.0.0.0"
+
+
+@dataclass
+class LLMProviderEndpointConfig:
+    """
+    Settings for a single LLM backend.
+
+    Used by OpenAI, OpenRouter, Open WebUI, and any OpenAI-compatible API.
+    Extra keys (headers, organization, binary_path, etc.) live in `extra`.
+    """
+
+    api_key: Optional[str] = None
+    model: Optional[str] = None
+    base_url: Optional[str] = None
+    extra: Optional[dict] = None
+
+
+@dataclass
+class LLMConfig:
+    """
+    Which LLM backend the web controller uses for freeform prompts.
+
+    Supported provider ids: cursor_agent, openai, openrouter, openwebui, custom.
+    """
+
+    provider: str = "cursor_agent"
+    system_prompt: Optional[str] = None
+    max_tool_iterations: int = 12
+    cursor_agent: Optional[dict] = None
+    openai: Optional[dict] = None
+    openrouter: Optional[dict] = None
+    openwebui: Optional[dict] = None
+    custom: Optional[dict] = None
+
+
+@dataclass
+class MCPRuntimeConfig:
+    """
+    HTTP MCP server runtime settings.
+
+    The MCP server is a separate process/listener from the web UI. Stdio
+    mode (`python -m src.mcp.mcp_server`) remains available for Cursor/Claude.
+    """
+
+    enabled: bool = True
+    auto_start: bool = True
+    host: str = "127.0.0.1"
+    port: int = 8082
+
+
+@dataclass
 class SamiConfig:
     """
     Top-level configuration for SamiGPT.
@@ -168,6 +225,9 @@ class SamiConfig:
     eng: Optional[EngConfig] = None
     logging: Optional[LoggingConfig] = None
     web: Optional[WebConfig] = None
+    ai_controller: Optional[AIControllerConfig] = None
+    llm: Optional[LLMConfig] = None
+    mcp: Optional[MCPRuntimeConfig] = None
 
 
 def _require_env(name: str) -> str:

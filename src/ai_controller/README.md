@@ -89,10 +89,12 @@ python cursor_agent.py --web --port 8081 --host 0.0.0.0
 
 ```bash
 # Start web server (with venv activated)
-python cursor_agent.py --web
+python app.py
 ```
 
 Open browser to `http://localhost:8081` (or configured port).
+
+Configure the LLM provider under **Settings** (Cursor Agent, OpenAI, OpenRouter, Open WebUI, or custom). The **MCP** button shows MCP server health and listener settings.
 
 ### Command Format
 

@@ -91,3 +91,147 @@
     margin: 4px 0;
 }
 
+.settings-card {
+    background: #252526;
+    border: 1px solid #3e3e42;
+    border-radius: 8px;
+    padding: 16px 18px;
+    margin-bottom: 16px;
+}
+
+.settings-card h3 {
+    font-size: 15px;
+    font-weight: 600;
+    color: #ffffff;
+    margin-bottom: 8px;
+}
+
+.settings-body label {
+    display: block;
+    margin: 12px 0 6px;
+    font-size: 13px;
+    font-weight: 500;
+    color: #d4d4d4;
+}
+
+.settings-body input[type="text"],
+.settings-body input[type="password"],
+.settings-body input[type="number"],
+.settings-body select,
+.settings-body textarea {
+    width: 100%;
+    padding: 10px 12px;
+    background: #1e1e1e;
+    border: 1px solid #3e3e42;
+    border-radius: 4px;
+    color: #d4d4d4;
+    font-size: 14px;
+    font-family: inherit;
+}
+
+.settings-body textarea {
+    resize: vertical;
+    min-height: 80px;
+}
+
+.settings-body input:focus,
+.settings-body select:focus,
+.settings-body textarea:focus {
+    outline: none;
+    border-color: #007acc;
+}
+
+.settings-fields {
+    margin-top: 8px;
+}
+
+.settings-status {
+    margin-top: 12px;
+    font-size: 13px;
+    color: #89d185;
+    min-height: 1.2em;
+}
+
+.settings-status.is-error {
+    color: #f48771;
+}
+
+.mcp-header-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.health-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    display: inline-block;
+    background: #858585;
+}
+
+.health-dot.health-ok {
+    background: #89d185;
+    box-shadow: 0 0 6px rgba(137, 209, 133, 0.6);
+}
+
+.health-dot.health-bad {
+    background: #f48771;
+    box-shadow: 0 0 6px rgba(244, 135, 113, 0.6);
+}
+
+.health-dot.health-unknown {
+    background: #858585;
+}
+
+.health-details {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+    gap: 12px;
+    margin: 12px 0;
+}
+
+.health-details div {
+    background: #1e1e1e;
+    border: 1px solid #3e3e42;
+    border-radius: 6px;
+    padding: 10px 12px;
+}
+
+.health-details dt {
+    font-size: 11px;
+    text-transform: uppercase;
+    color: #858585;
+    margin-bottom: 4px;
+}
+
+.health-details dd {
+    font-size: 14px;
+    color: #d4d4d4;
+}
+
+.integration-pills {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 8px;
+}
+
+.integration-pill {
+    font-size: 12px;
+    padding: 4px 8px;
+    border-radius: 999px;
+    border: 1px solid #3e3e42;
+    color: #d4d4d4;
+}
+
+.integration-pill.is-on {
+    border-color: #3d6b3d;
+    background: #1e3a1e;
+    color: #89d185;
+}
+
+.integration-pill.is-off {
+    color: #858585;
+}
+

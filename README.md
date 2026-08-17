@@ -10,33 +10,15 @@ Watch the demo video to see SamiGPT in action:
 
 [Demo Video](https://youtu.be/usd8ed-7AQg)
 
-### Performance & Cost
-
-**Key Metrics:**
-- ~ $0.18 per alert
-- ~ 50 seconds to investigate an alert per agent/tab
-
-For detailed cost and usage data, see: [Cost Data CSV](usage-events/cost_all.csv)
-
 For detailed documentation and presentation materials:
 
 [AI Agents Presentation PDF](demo/BHMEA25_AI_Agents.pdf)
 
 ### Quick Start
 
-SamiGPT can be used in two ways:
-
-#### Method 1: AI Controller (Web Interface)
-
-The AI Controller provides a web-based interface and uses the Cursor IDE `cursor-agent` binary for command execution.
-
-**Prerequisites:**
-- Cursor IDE must be installed (download from [cursor.sh](https://cursor.sh))
-- Verify `cursor-agent` binary is available:
-  ```bash
-  which cursor-agent
-  # Should show path like: /usr/local/bin/cursor-agent or ~/.local/bin/cursor-agent
-  ```
+SamiGPT is started from a single entry point. That process serves the web UI
+and, by default, also starts the MCP server as a **separate HTTP listener**
+with its own settings and health check.
 
 **Steps:**
 
@@ -45,33 +27,42 @@ The AI Controller provides a web-based interface and uses the Cursor IDE `cursor
    source venv/bin/activate  # On Windows: venv\Scripts\activate
    ```
 
-2. **Start the AI Controller web interface:**
+2. **Start the application:**
    ```bash
-   python3 cursor_agent.py --web --port 8081 --host 127.0.0.1
+   python app.py
+   ```
+
+   Optional flags:
+   ```bash
+   python app.py --host 127.0.0.1 --port 8081
+   python app.py --no-mcp    # web UI only; start MCP later from the UI
    ```
 
 3. **Open your browser:**
-   Navigate to `http://127.0.0.1:8081` to access the web interface.
+   Navigate to `http://127.0.0.1:8081`.
 
-#### Method 2: MCP Server (Direct Integration)
+4. **Choose an LLM provider:**
+   Open **Settings** and select Cursor Agent, OpenAI, OpenRouter, Open WebUI,
+   or any OpenAI-compatible endpoint. Save, then use **Test provider**.
 
-Use the MCP server directly to connect SamiGPT tools to Cursor, Claude Desktop, or other MCP-compatible tools.
+5. **Check the MCP server:**
+   Use the **MCP** button in the header. It shows health, bound host/port,
+   registered tools, and start/stop/restart controls.
 
-**Steps:**
+#### MCP Server (stdio, for Cursor / Claude Desktop)
 
-1. **Activate virtual environment:**
-   ```bash
-   source venv/bin/activate  # On Windows: venv\Scripts\activate
-   ```
+The HTTP MCP listener started by `app.py` is what the web UI health-checks.
+Cursor IDE and Claude Desktop still connect over stdio if you prefer:
 
-2. **Start the MCP server:**
-   ```bash
-   python -m src.mcp.mcp_server
-   ```
+```bash
+python -m src.mcp.mcp_server
+```
 
-3. **Configure your AI tool** (see "Connect MCP Server to AI Tools" section below for detailed instructions)
+See "Connect MCP Server to AI Tools" below.
 
-**Note:** The MCP server method doesn't require the Cursor IDE `cursor-agent` binary - it works directly with any MCP-compatible tool.
+**Note:** Cursor Agent is one optional LLM backend. OpenAI, OpenRouter, Open WebUI,
+and custom OpenAI-compatible APIs work without the Cursor IDE `cursor-agent` binary.
+Those providers call SamiGPT tools through the MCP server when it is running.
 
 ## Overview
 
@@ -193,8 +184,14 @@ Edit `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS) o
 #### Other MCP-Compatible Tools
 
 The MCP server can also be connected to:
-- **Open WebUI** (via MCP configuration)
+- **Open WebUI** via the HTTP listener (`http://127.0.0.1:8082/rpc`) or stdio
 - **Other LLM tools** that support the Model Context Protocol
+
+HTTP endpoints when `app.py` is running (defaults):
+
+- Health: `http://127.0.0.1:8082/health`
+- Tools: `http://127.0.0.1:8082/tools`
+- JSON-RPC: `POST http://127.0.0.1:8082/rpc`
 
 ## Architecture
 
@@ -215,12 +212,14 @@ SamiGPT/
 │   │   ├── edr/              # EDR platform integrations
 │   │   ├── cti/              # Threat intelligence integrations
 │   │   └── eng/              # Engineering board integrations
-│   ├── mcp/              # MCP server, runbook manager, agent profiles
+│   ├── llm/              # Pluggable LLM providers (Cursor, OpenAI, OpenRouter, Open WebUI, custom)
+│   ├── mcp/              # MCP server, HTTP transport, supervisor, runbooks
 │   ├── orchestrator/     # Workflow orchestration
-│   └── web/              # Web UI for configuration
+│   └── web/              # Legacy integration config UI
+├── app.py                # Single entry point for the web interface
 ├── run_books/            # SOC tier runbooks and workflows
 ├── config/               # Agent profiles and configuration
-└── client_env/           # Client-specific infrastructure data
+└── client_env/           # Client-specific infrastructure data (gitignored except templates)
 ```
 
 ### Design Principles
@@ -243,7 +242,9 @@ See `config.json.example` for the complete configuration schema. Key sections:
 - `edr`: EDR platform configuration
 - `cti`: Threat intelligence configuration
 - `eng`: Engineering board configuration (ClickUp, Trello, GitHub)
-- `ai_controller`: AI controller web interface settings
+- `ai_controller`: Web interface bind address and session storage
+- `llm`: LLM provider used by the web UI (Cursor Agent, OpenAI, OpenRouter, Open WebUI, custom)
+- `mcp`: HTTP MCP listener host/port and auto-start
 - `logging`: Logging configuration
 
 ## Usage Examples
@@ -374,3 +375,15 @@ The following projects helped and inspired us during the literature review:
 
 - [AI-Powered SOC Detection System](https://github.com/cyberarber/ai-soc-detection-system/tree/main) - ML-powered SOC platform with autonomous threat detection
 - [ADK Runbooks](https://github.com/dandye/adk_runbooks/tree/main) - Security investigation runbooks and workflows
+
+## Changelog
+
+### v0.1 — Black Hat version
+
+Presented at Black Hat MEA 2025.
+
+**Performance & Cost**
+- ~ $0.18 per alert
+- ~ 50 seconds to investigate an alert per agent/tab
+
+For detailed cost and usage data, see: [Cost Data CSV](usage-events/cost_all.csv)
