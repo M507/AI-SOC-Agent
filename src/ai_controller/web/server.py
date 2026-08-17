@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 from datetime import datetime, timedelta
@@ -30,6 +31,25 @@ from .routes_elastic import router as elastic_router
 
 logger = get_logger("sami.ai_controller.web.server")
 
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    """
+    Run startup/shutdown without treating uvicorn reload as a failed lifespan.
+
+    WatchFiles kills the worker while Starlette is waiting for a shutdown
+    message. That raises CancelledError; if it escapes, uvicorn logs it as
+    ERROR even though the next worker starts cleanly.
+    """
+    await _web_startup()
+    try:
+        yield
+    except asyncio.CancelledError:
+        logger.info("Web server lifespan cancelled (reload or stop)")
+    finally:
+        await _web_shutdown()
+
+
 # Create FastAPI app
 app = FastAPI(
     title="SamiGPT AI Controller",
@@ -38,6 +58,7 @@ app = FastAPI(
     docs_url=None,
     redoc_url=None,
     openapi_url=None,
+    lifespan=lifespan,
 )
 app.add_middleware(SecurityHeadersMiddleware)
 app.add_middleware(AuthMiddleware)
@@ -62,6 +83,7 @@ running_tasks: Dict[str, asyncio.Task] = {}
 
 # Autorun scheduler state
 autorun_scheduler_task: Optional[asyncio.Task] = None
+mcp_start_task: Optional[asyncio.Task] = None
 running_autoruns: set[str] = set()
 
 
@@ -133,12 +155,12 @@ def create_app():
 
 
 def uvicorn_reload_kwargs(root: Path) -> dict:
-    """Watch application source and UI assets. Never watch logs, data, or config writes."""
+    """Watch Python sources only. UI files are read from disk on each request."""
     return {
         "reload": True,
         "reload_delay": 1.0,
         "reload_dirs": [str(root / "src")],
-        "reload_includes": ["*.py", "*.html", "*.js", "*.css"],
+        "reload_includes": ["*.py"],
         "reload_excludes": [
             ".*",
             ".git",
@@ -748,16 +770,15 @@ async def autorun_scheduler_loop():
         await asyncio.sleep(5)
 
 
-@app.on_event("startup")
-async def on_startup():
+async def _web_startup():
     """Start background tasks such as the autorun scheduler and MCP HTTP listener."""
-    global autorun_scheduler_task
+    global autorun_scheduler_task, mcp_start_task
     if autorun_scheduler_task is None:
         autorun_scheduler_task = asyncio.create_task(autorun_scheduler_loop())
         logger.info("Autorun scheduler task started")
 
     if MCP_AUTO_START:
-        asyncio.create_task(_start_mcp_background())
+        mcp_start_task = asyncio.create_task(_start_mcp_background())
 
 
 async def _start_mcp_background() -> None:
@@ -778,16 +799,28 @@ async def _start_mcp_background() -> None:
             int(mcp_cfg.get("port", 8082)),
         )
         logger.info("MCP HTTP server auto-started")
+    except asyncio.CancelledError:
+        raise
     except Exception:
         logger.exception("Failed to auto-start MCP HTTP server")
 
 
-@app.on_event("shutdown")
-async def on_shutdown():
+async def _web_shutdown():
     """Cleanly stop background tasks."""
-    global autorun_scheduler_task
+    global autorun_scheduler_task, mcp_start_task
+    if mcp_start_task and not mcp_start_task.done():
+        mcp_start_task.cancel()
+        try:
+            await mcp_start_task
+        except asyncio.CancelledError:
+            pass
+    mcp_start_task = None
     if autorun_scheduler_task:
         autorun_scheduler_task.cancel()
+        try:
+            await autorun_scheduler_task
+        except asyncio.CancelledError:
+            pass
         autorun_scheduler_task = None
     try:
         from ...mcp.supervisor import get_supervisor

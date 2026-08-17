@@ -202,7 +202,7 @@ def main():
         parser.add_argument(
             "--debug",
             action="store_true",
-            help="Debug mode: verbose UI JSON, and auto-reload when Python or UI files under src/ change",
+            help="Debug mode: verbose UI JSON, and auto-reload when Python files under src/ change",
         )
         
         args = parser.parse_args()
@@ -239,7 +239,7 @@ def main():
         print(f"Starting SamiGPT AI Controller on https://{web_host}:{web_port}")
         print("Sign-in uses web.username / web.password from config.json")
         if args.debug:
-            print("Debug mode: auto-reloading when Python or UI files under src/ change")
+            print("Debug mode: auto-reloading when Python files under src/ change")
         print("Press Ctrl+C to stop")
 
         run_kwargs = {

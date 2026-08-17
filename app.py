@@ -73,7 +73,7 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     parser.add_argument(
         "--debug",
         action="store_true",
-        help="Debug mode: verbose UI JSON, and auto-reload when Python or UI files under src/ change",
+        help="Debug mode: verbose UI JSON, and auto-reload when Python files under src/ change",
     )
     parser.add_argument(
         "--no-mcp",
@@ -137,7 +137,7 @@ def main(argv: Optional[List[str]] = None) -> int:
             f"{mcp_cfg.get('port', 8082)}  (Bearer token required)"
         )
     if args.debug:
-        print("Debug mode: auto-reloading when Python or UI files under src/ change")
+        print("Debug mode: auto-reloading when Python files under src/ change")
     print("Press Ctrl+C to stop")
 
     run_kwargs = {

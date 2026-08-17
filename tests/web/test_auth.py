@@ -151,7 +151,32 @@ def test_reload_watches_source_and_config():
     kwargs = uvicorn_reload_kwargs(Path("/tmp/proj"))
     assert kwargs["reload"] is True
     assert kwargs["reload_dirs"] == [str(Path("/tmp/proj") / "src")]
+    assert kwargs["reload_includes"] == ["*.py"]
     assert "config.json" not in kwargs["reload_includes"]
-    assert "*.js" in kwargs["reload_includes"]
+    assert "*.js" not in kwargs["reload_includes"]
     assert "logs" in kwargs["reload_excludes"]
     assert "venv" in kwargs["reload_excludes"]
+
+
+def test_lifespan_swallows_reload_cancel(monkeypatch):
+    import asyncio
+
+    import src.ai_controller.web.server as web_server
+
+    calls = []
+
+    async def startup():
+        calls.append("start")
+
+    async def shutdown():
+        calls.append("stop")
+
+    monkeypatch.setattr(web_server, "_web_startup", startup)
+    monkeypatch.setattr(web_server, "_web_shutdown", shutdown)
+
+    async def _run():
+        async with web_server.lifespan(web_server.app):
+            raise asyncio.CancelledError
+
+    asyncio.run(_run())
+    assert calls == ["start", "stop"]

@@ -345,6 +345,12 @@ def probe_cluster(cluster: ElasticCluster) -> Dict[str, Any]:
         timeout_seconds=min(int(cluster.timeout_seconds or 30), 15),
         verify_ssl=cluster.verify_ssl,
     )
+    logger.info(
+        "Probing Elastic cluster url=%s auth=%s verify_ssl=%s",
+        cluster.base_url,
+        cluster.auth_type(),
+        cluster.verify_ssl,
+    )
     errors: List[str] = []
     for endpoint, kind in (("_cluster/health", "elasticsearch"), ("api/status", "kibana"), ("", "http")):
         try:
@@ -360,10 +366,29 @@ def probe_cluster(cluster: ElasticCluster) -> Dict[str, Any]:
     return {
         "ok": False,
         "kind": "unknown",
-        "message": f"Could not reach {cluster.base_url}",
+        "message": _probe_failure_message(cluster.base_url, errors, verify_ssl=cluster.verify_ssl),
         "error": errors[-1] if errors else "No response",
         "attempts": errors,
     }
+
+
+def _probe_failure_message(base_url: str, errors: List[str], verify_ssl: bool = True) -> str:
+    joined = " ".join(errors)
+    lower = joined.lower()
+    if "certificate verify failed" in lower or "sslcertverificationerror" in lower:
+        hint = (
+            " Uncheck \"Verify TLS certificates\" for this cluster (lab ES often uses a self-signed cert)."
+            if verify_ssl
+            else ""
+        )
+        return f"TLS verification failed for {base_url}.{hint}"
+    if "connection refused" in lower or "failed to establish a new connection" in lower:
+        return f"Could not connect to {base_url} (connection refused or host unreachable)."
+    if "timed out" in lower or "timeout" in lower:
+        return f"Timed out reaching {base_url}."
+    if "401" in joined or "unauthorized" in lower:
+        return f"Reached {base_url} but authentication failed. Check the API key."
+    return f"Could not reach {base_url}"
 
 
 def _probe_message(kind: str, base_url: str, body: Any) -> str:

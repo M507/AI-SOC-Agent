@@ -360,10 +360,24 @@
     margin-top: 8px;
 }
 
+.solution-pills {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin: 6px 0 8px 0;
+}
+
+.skill-count {
+    font-size: 11px;
+    font-weight: 600;
+    color: #9cdcfe;
+    margin-left: 6px;
+}
+
 .skill-list {
     display: none;
-    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
-    gap: 6px 12px;
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    gap: 8px 14px;
     margin-top: 10px;
 }
 
@@ -373,24 +387,72 @@
 
 .skill-row {
     display: flex;
-    align-items: center;
+    align-items: flex-start;
     gap: 8px;
     font-size: 12px;
     color: #d4d4d4;
 }
 
-.skill-row.override-off span,
-.skill-row.override-on span {
+.skill-copy {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    min-width: 0;
+}
+
+.skill-name {
+    color: #d4d4d4;
+}
+
+.skill-id {
+    font-size: 11px;
+    color: #858585;
+    background: none;
+    padding: 0;
+}
+
+.skill-row.override-off .skill-name,
+.skill-row.override-on .skill-name {
     font-style: italic;
 }
 
-.skill-row.override-off span::after {
+.skill-row.override-off .skill-name::after {
     content: " (off)";
     color: #f48771;
 }
 
-.skill-row.override-on span::after {
+.skill-row.override-on .skill-name::after {
     content: " (forced on)";
     color: #89d185;
 }
+
+.elastic-log {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+    font-size: 12px;
+    line-height: 1.45;
+    background: #1e1e1e;
+    border: 1px solid #3e3e42;
+    border-radius: 6px;
+    padding: 10px 12px;
+    max-height: 240px;
+    overflow: auto;
+    color: #d4d4d4;
+    white-space: pre-wrap;
+    word-break: break-word;
+    min-height: 88px;
+}
+
+.elastic-log:empty::before {
+    content: "No Elastic settings actions yet.";
+    color: #858585;
+}
+
+.elastic-log-line {
+    margin: 0 0 6px 0;
+}
+
+.elastic-log-line.is-info { color: #9cdcfe; }
+.elastic-log-line.is-success { color: #89d185; }
+.elastic-log-line.is-warn { color: #dcdcaa; }
+.elastic-log-line.is-error { color: #f48771; }
 

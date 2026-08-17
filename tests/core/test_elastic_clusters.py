@@ -63,6 +63,32 @@ def test_upsert_requires_url_and_auth():
     assert cluster.skill_vector.startswith("MSV:1/")
 
 
+def test_upsert_keeps_verify_ssl_false_when_omitted():
+    existing = upsert_cluster(
+        {
+            "id": "lab-es",
+            "name": "Lab Elasticsearch",
+            "base_url": "https://elastic.example:9200",
+            "api_key": "encoded-api-key-value",
+            "verify_ssl": False,
+        }
+    )
+    updated = upsert_cluster({"id": "lab-es", "base_url": "https://elastic.example:9200"}, existing)
+    assert updated.verify_ssl is False
+
+
+def test_probe_failure_message_ssl():
+    from src.core.elastic_clusters import _probe_failure_message
+
+    message = _probe_failure_message(
+        "https://10.10.10.88:9200",
+        ["elasticsearch: certificate verify failed: self signed certificate"],
+        verify_ssl=True,
+    )
+    assert "TLS verification failed" in message
+    assert "Verify TLS" in message
+
+
 def test_mask_mapping_masks_cluster_list_secrets():
     masked = mask_mapping(
         {

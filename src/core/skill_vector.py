@@ -38,7 +38,7 @@ SOLUTION_ORDER: Tuple[str, ...] = (
 SOLUTION_LABELS: Dict[str, str] = {
     "IRIS": "IRIS",
     "TH": "TheHive",
-    "SIEM": "Elastic SIEM",
+    "SIEM": "Elastic (ELK)",
     "EDR": "EDR",
     "CTI": "Threat intel",
     "KB": "Knowledge base",
@@ -48,78 +48,126 @@ SOLUTION_LABELS: Dict[str, str] = {
     "RU": "Rules engine",
 }
 
-# Tools that are on if ANY of these solutions are Y.
-_CASE_SOLUTIONS = ("IRIS", "TH")
+SOLUTION_SHORT: Dict[str, str] = {
+    "IRIS": "IRIS",
+    "TH": "TheHive",
+    "SIEM": "ELK",
+    "EDR": "EDR",
+    "CTI": "CTI",
+    "KB": "KB",
+    "ENG": "Eng",
+    "RB": "Runbooks",
+    "AG": "Agents",
+    "RU": "Rules",
+}
+
+_ACRONYMS = {"ip", "ioc", "dns", "kql", "kb", "ti", "edr", "ai"}
+_LABEL_OVERRIDES = {
+    "lookup_hash_ti": "Look up hash in threat intel",
+    "search_kql_query": "Run a KQL search",
+    "get_ioc_matches": "Get IOC matches",
+    "kb_list_clients": "List knowledge-base clients",
+    "kb_get_client_infra": "Get client infrastructure",
+    "get_all_uncertain_alerts_for_host": "Uncertain alerts for a host",
+    "create_fine_tuning_recommendation": "Create a fine-tuning recommendation",
+    "create_visibility_recommendation": "Create a visibility recommendation",
+}
+
+
+def human_skill_label(skill: str) -> str:
+    if skill in _LABEL_OVERRIDES:
+        return _LABEL_OVERRIDES[skill]
+    parts = []
+    for part in skill.split("_"):
+        if part.lower() in _ACRONYMS:
+            parts.append(part.upper())
+        else:
+            parts.append(part.capitalize())
+    return " ".join(parts)
+
+
+# Case tools are listed under both IRIS and TheHive in the UI.
+# MCP still enables them if either solution is Y.
+CASE_SKILLS: Tuple[str, ...] = (
+    "create_case",
+    "review_case",
+    "list_cases",
+    "search_cases",
+    "add_case_comment",
+    "attach_observable_to_case",
+    "update_case_status",
+    "assign_case",
+    "get_case_timeline",
+    "add_case_task",
+    "list_case_tasks",
+    "update_case_task_status",
+    "add_case_asset",
+    "list_case_assets",
+    "add_case_evidence",
+    "list_case_evidence",
+    "update_case",
+    "link_cases",
+    "add_case_timeline_event",
+    "list_case_timeline_events",
+)
+
+SIEM_SKILLS: Tuple[str, ...] = (
+    "search_security_events",
+    "get_file_report",
+    "get_file_behavior_summary",
+    "get_entities_related_to_file",
+    "get_ip_address_report",
+    "search_user_activity",
+    "pivot_on_indicator",
+    "search_kql_query",
+    "get_recent_alerts",
+    "get_network_events",
+    "get_dns_events",
+    "get_alerts_by_entity",
+    "get_alerts_by_time_window",
+    "get_all_uncertain_alerts_for_host",
+    "get_email_events",
+    "get_security_alerts",
+    "get_security_alert_by_id",
+    "get_siem_event_by_id",
+    "close_alert",
+    "update_alert_verdict",
+    "tag_alert",
+    "add_alert_note",
+    "lookup_entity",
+    "get_ioc_matches",
+    "get_threat_intel",
+    "list_security_rules",
+    "search_security_rules",
+    "get_rule_detections",
+    "list_rule_errors",
+)
 
 SKILL_GROUPS: Tuple[Dict[str, object], ...] = (
     {
-        "id": "CASE",
-        "name": "Case management",
-        "solutions": _CASE_SOLUTIONS,
-        "help": "IRIS and TheHive share these MCP skills. Enable either solution to expose them.",
-        "skills": (
-            "create_case",
-            "review_case",
-            "list_cases",
-            "search_cases",
-            "add_case_comment",
-            "attach_observable_to_case",
-            "update_case_status",
-            "assign_case",
-            "get_case_timeline",
-            "add_case_task",
-            "list_case_tasks",
-            "update_case_task_status",
-            "add_case_asset",
-            "list_case_assets",
-            "add_case_evidence",
-            "list_case_evidence",
-            "update_case",
-            "link_cases",
-            "add_case_timeline_event",
-            "list_case_timeline_events",
-        ),
+        "id": "IRIS",
+        "name": "IRIS skills",
+        "solutions": ("IRIS",),
+        "help": "Case management tools when this cluster may talk to IRIS. TheHive uses the same tool names.",
+        "skills": CASE_SKILLS,
+    },
+    {
+        "id": "TH",
+        "name": "TheHive skills",
+        "solutions": ("TH",),
+        "help": "Case management tools when this cluster may talk to TheHive. IRIS uses the same tool names.",
+        "skills": CASE_SKILLS,
     },
     {
         "id": "SIEM",
-        "name": "Elastic SIEM",
+        "name": "Elastic / ELK skills",
         "solutions": ("SIEM",),
-        "help": "Search, alerts, and detections against the bound Elastic cluster.",
-        "skills": (
-            "search_security_events",
-            "get_file_report",
-            "get_file_behavior_summary",
-            "get_entities_related_to_file",
-            "get_ip_address_report",
-            "search_user_activity",
-            "pivot_on_indicator",
-            "search_kql_query",
-            "get_recent_alerts",
-            "get_network_events",
-            "get_dns_events",
-            "get_alerts_by_entity",
-            "get_alerts_by_time_window",
-            "get_all_uncertain_alerts_for_host",
-            "get_email_events",
-            "get_security_alerts",
-            "get_security_alert_by_id",
-            "get_siem_event_by_id",
-            "close_alert",
-            "update_alert_verdict",
-            "tag_alert",
-            "add_alert_note",
-            "lookup_entity",
-            "get_ioc_matches",
-            "get_threat_intel",
-            "list_security_rules",
-            "search_security_rules",
-            "get_rule_detections",
-            "list_rule_errors",
-        ),
+        "help": "Search, alerts, and detections against the Elastic cluster bound to this tab.",
+        "skills": SIEM_SKILLS,
     },
     {
         "id": "EDR",
-        "name": "EDR",
+        "name": "EDR skills",
         "solutions": ("EDR",),
         "help": "Endpoint isolation, process kill, and forensic collection.",
         "skills": (
@@ -133,21 +181,21 @@ SKILL_GROUPS: Tuple[Dict[str, object], ...] = (
     },
     {
         "id": "CTI",
-        "name": "Threat intel",
+        "name": "Threat intel skills",
         "solutions": ("CTI",),
         "help": "Hash lookups against configured CTI platforms.",
         "skills": ("lookup_hash_ti",),
     },
     {
         "id": "KB",
-        "name": "Knowledge base",
+        "name": "Knowledge base skills",
         "solutions": ("KB",),
         "help": "Client infrastructure notes used during investigations.",
         "skills": ("kb_list_clients", "kb_get_client_infra"),
     },
     {
         "id": "ENG",
-        "name": "Engineering",
+        "name": "Engineering skills",
         "solutions": ("ENG",),
         "help": "Trello / ClickUp / GitHub recommendation boards.",
         "skills": (
@@ -161,14 +209,14 @@ SKILL_GROUPS: Tuple[Dict[str, object], ...] = (
     },
     {
         "id": "RB",
-        "name": "Runbooks",
+        "name": "Runbook skills",
         "solutions": ("RB",),
         "help": "Saved investigation runbooks.",
         "skills": ("list_runbooks", "get_runbook", "execute_runbook"),
     },
     {
         "id": "AG",
-        "name": "Agent profiles",
+        "name": "Agent profile skills",
         "solutions": ("AG",),
         "help": "SOC-tier agent personas and routing.",
         "skills": (
@@ -180,7 +228,7 @@ SKILL_GROUPS: Tuple[Dict[str, object], ...] = (
     },
     {
         "id": "RU",
-        "name": "Rules engine",
+        "name": "Rules engine skills",
         "solutions": ("RU",),
         "help": "Chained investigation workflows.",
         "skills": ("list_rules", "execute_rule"),
@@ -190,9 +238,12 @@ SKILL_GROUPS: Tuple[Dict[str, object], ...] = (
 SKILL_TO_SOLUTIONS: Dict[str, Tuple[str, ...]] = {}
 KNOWN_SKILLS = set()
 for _group in SKILL_GROUPS:
+    sols = tuple(_group["solutions"])  # type: ignore[arg-type]
     for _skill in _group["skills"]:  # type: ignore[index]
-        SKILL_TO_SOLUTIONS[str(_skill)] = tuple(_group["solutions"])  # type: ignore[arg-type]
-        KNOWN_SKILLS.add(str(_skill))
+        skill = str(_skill)
+        KNOWN_SKILLS.add(skill)
+        previous = SKILL_TO_SOLUTIONS.get(skill, ())
+        SKILL_TO_SOLUTIONS[skill] = tuple(dict.fromkeys(previous + sols))
 
 DEFAULT_SKILL_VECTOR = VECTOR_PREFIX + "/" + "/".join(f"{code}:Y" for code in SOLUTION_ORDER)
 
@@ -368,12 +419,16 @@ def catalog_payload() -> Dict[str, object]:
         "default_skill_vector": DEFAULT_SKILL_VECTOR,
         "example": DEFAULT_SKILL_VECTOR + "/SK:create_case=N",
         "help": (
-            "CVSS-style MCP Skill Vector. Solution metrics are Y (on) or N (off). "
-            "Optional SK:skill=N disables one tool; SK:skill=Y re-enables a tool "
-            "when its solution is off. Case skills belong to both IRIS and TheHive."
+            "CVSS-style MCP Skill Vector. Each group below is one solution "
+            "(IRIS skills, Elastic / ELK skills, and so on). Solution metrics are Y or N. "
+            "SK:skill=N disables one tool; SK:skill=Y re-enables a tool when its solution is off."
         ),
         "solutions": [
-            {"id": code, "label": SOLUTION_LABELS[code]}
+            {
+                "id": code,
+                "label": SOLUTION_LABELS[code],
+                "short": SOLUTION_SHORT[code],
+            }
             for code in SOLUTION_ORDER
         ],
         "groups": [
@@ -383,7 +438,10 @@ def catalog_payload() -> Dict[str, object]:
                 "help": group["help"],
                 "solutions": list(group["solutions"]),
                 "skills": [
-                    {"id": skill, "label": skill.replace("_", " ")}
+                    {
+                        "id": skill,
+                        "label": human_skill_label(str(skill)),
+                    }
                     for skill in group["skills"]  # type: ignore[union-attr]
                 ],
             }
@@ -400,4 +458,5 @@ def summarize(raw: Optional[str]) -> Dict[str, object]:
         "solutions_on": on,
         "solutions_total": len(SOLUTION_ORDER),
         "skill_overrides": len(vector.skills),
+        "solution_flags": {code: vector.solution_on(code) for code in SOLUTION_ORDER},
     }
