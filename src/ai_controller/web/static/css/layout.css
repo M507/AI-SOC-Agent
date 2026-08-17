@@ -107,13 +107,34 @@ header h1 {
     flex-direction: column;
 }
 
-.no-session {
+.no-session,
+.empty-state {
     display: flex;
     align-items: center;
     justify-content: center;
     height: 100%;
     color: #858585;
     font-size: 16px;
+}
+
+.empty-state-body {
+    max-width: 420px;
+    padding: 24px;
+    text-align: center;
+}
+
+.empty-state-body h2 {
+    font-size: 18px;
+    font-weight: 600;
+    color: #ffffff;
+    margin-bottom: 8px;
+}
+
+.empty-state-body p {
+    font-size: 14px;
+    line-height: 1.5;
+    color: #858585;
+    margin-bottom: 16px;
 }
 
 .session-content {

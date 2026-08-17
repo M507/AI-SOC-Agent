@@ -44,10 +44,14 @@
     color: #4a9eff;
     text-decoration: none;
     margin-left: 6px;
-    font-size: 14px;
+    font-size: 13px;
     cursor: pointer;
-    display: inline-block;
-    vertical-align: middle;
+    display: inline;
+    vertical-align: baseline;
+    background: none;
+    border: none;
+    padding: 0;
+    font-family: inherit;
 }
 
 .help-link:hover {
@@ -169,11 +173,14 @@
     margin-top: 12px;
     font-size: 13px;
     color: #89d185;
-    min-height: 1.2em;
 }
 
 .settings-status.is-error {
     color: #f48771;
+}
+
+.settings-status[hidden] {
+    display: none;
 }
 
 .mcp-header-btn {

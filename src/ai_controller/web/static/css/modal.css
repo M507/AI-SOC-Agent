@@ -60,7 +60,20 @@
     color: #d4d4d4;
 }
 
-.modal-body input {
+.modal-label-row {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 8px;
+    margin-bottom: 8px;
+}
+
+.modal-label-row label {
+    margin-bottom: 0;
+}
+
+.modal-body input,
+.modal-body textarea {
     width: 100%;
     padding: 10px 12px;
     background: #1e1e1e;
@@ -68,10 +81,17 @@
     border-radius: 4px;
     color: #d4d4d4;
     font-size: 14px;
+    font-family: inherit;
     margin-bottom: 16px;
 }
 
-.modal-body input:focus {
+.modal-body textarea {
+    resize: vertical;
+    min-height: 88px;
+}
+
+.modal-body input:focus,
+.modal-body textarea:focus {
     outline: none;
     border-color: #007acc;
 }

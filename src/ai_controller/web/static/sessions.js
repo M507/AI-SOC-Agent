@@ -221,6 +221,10 @@ class SessionManager {
             return;
         }
         
+        if (!confirm('Delete this session and its chat history? This cannot be undone.')) {
+            return;
+        }
+
         console.log(`[SessionManager] Closing and deleting session ${sessionId}`);
         
         // Mark as deleted immediately to prevent any recreation
@@ -255,12 +259,22 @@ class SessionManager {
         try {
             const deleteResult = await this.controller.api.deleteSession(sessionId);
             if (deleteResult && deleteResult.success) {
-                console.log(`[SessionManager] Successfully deleted session ${sessionId} from backend`);
+                if (window.toast) {
+                    window.toast.success('Session deleted.', { key: 'session' });
+                }
             } else {
                 console.error('[SessionManager] Backend delete failed:', deleteResult);
+                this.deletedSessionIds.delete(sessionId);
+                if (window.toast) {
+                    window.toast.error(deleteResult.error || 'Could not delete session', { key: 'session' });
+                }
             }
         } catch (error) {
             console.error('[SessionManager] Error deleting session from backend:', error);
+            this.deletedSessionIds.delete(sessionId);
+            if (window.toast) {
+                window.toast.error('Could not delete session.', { key: 'session' });
+            }
         }
     }
 

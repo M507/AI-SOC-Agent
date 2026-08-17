@@ -165,10 +165,13 @@ class SettingsManager {
     }
 
     setStatus(message, isError) {
-        const el = document.getElementById('llm-status');
-        if (!el) return;
-        el.textContent = message || '';
-        el.classList.toggle('is-error', Boolean(isError));
+        if (!window.toast) return;
+        const text = String(message || '').trim();
+        if (!text) return;
+        window.toast.show(text, {
+            key: 'llm',
+            type: isError ? 'error' : undefined,
+        });
     }
 
     setRefreshBusy(busy) {
@@ -325,7 +328,7 @@ class MCPPanel {
 
     bind() {
         const map = {
-            'mcp-refresh-btn': () => this.refresh(),
+            'mcp-refresh-btn': () => this.refresh({ notify: true }),
             'mcp-start-btn': () => this.action('start'),
             'mcp-stop-btn': () => this.action('stop'),
             'mcp-restart-btn': () => this.action('restart'),
@@ -366,22 +369,54 @@ class MCPPanel {
     }
 
     async save() {
+        if (window.toast) {
+            window.toast.info('Saving MCP settings…', { key: 'mcp', duration: 0 });
+        }
         const data = await this.api.saveMCPSettings(this.collectSettings());
         if (data.success) {
             this.fillForm(data.settings || this.collectSettings());
             this.renderHealth(data.status || {});
+            if (window.toast) {
+                window.toast.success('MCP settings saved.', { key: 'mcp' });
+            }
+        } else if (window.toast) {
+            window.toast.error(data.error || 'Failed to save MCP settings', { key: 'mcp' });
         }
     }
 
-    async refresh() {
+    async refresh({ notify = false } = {}) {
         const data = await this.api.getMCPHealth();
         this.renderHealth(data);
+        if (notify && window.toast) {
+            if (data && data.success === false) {
+                window.toast.error(data.last_error || data.error || 'Could not refresh MCP health', { key: 'mcp' });
+            } else {
+                const running = Boolean(data && data.running);
+                window.toast.success(running ? 'MCP server is running.' : 'MCP server is stopped.', { key: 'mcp' });
+            }
+        }
         return data;
     }
 
     async action(name) {
+        const labels = { start: 'Starting MCP…', stop: 'Stopping MCP…', restart: 'Restarting MCP…' };
+        if (window.toast) {
+            window.toast.info(labels[name] || `${name}…`, { key: 'mcp', duration: 0 });
+        }
         const data = await this.api.mcpAction(name);
         this.renderHealth(data);
+        if (!window.toast) return;
+        if (!data || data.success === false) {
+            window.toast.error((data && (data.error || data.detail)) || `Failed to ${name} MCP`, { key: 'mcp' });
+            return;
+        }
+        const running = Boolean(data.running);
+        const done = {
+            start: running ? 'MCP server started.' : 'MCP start finished.',
+            stop: 'MCP server stopped.',
+            restart: running ? 'MCP server restarted.' : 'MCP restart finished.',
+        };
+        window.toast.success(done[name] || 'MCP action completed.', { key: 'mcp' });
     }
 
     renderHealth(status) {
@@ -402,8 +437,10 @@ class MCPPanel {
 
         const errorEl = document.getElementById('mcp-last-error');
         if (errorEl) {
-            errorEl.textContent = status.last_error || '';
-            errorEl.classList.toggle('is-error', Boolean(status.last_error));
+            const err = status.last_error || '';
+            errorEl.textContent = err;
+            errorEl.hidden = !err;
+            errorEl.classList.toggle('is-error', Boolean(err));
         }
 
         const pills = document.getElementById('mcp-integrations');

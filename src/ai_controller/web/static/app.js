@@ -88,6 +88,21 @@ class AIController {
             });
         }
 
+        const emptyNewSessionBtn = document.getElementById('empty-new-session-btn');
+        if (emptyNewSessionBtn) {
+            emptyNewSessionBtn.addEventListener('click', () => {
+                this.setActiveSection('sessions');
+                this.modals.showNewSession();
+            });
+        }
+        const emptyNewAutorunBtn = document.getElementById('empty-new-autorun-btn');
+        if (emptyNewAutorunBtn) {
+            emptyNewAutorunBtn.addEventListener('click', () => {
+                this.setActiveSection('autoruns');
+                this.modals.showNewAutorun();
+            });
+        }
+
         // New session button
         const newSessionBtn = document.getElementById('new-session-btn');
         if (newSessionBtn) {
@@ -348,7 +363,9 @@ class AIController {
     
     async executeCommand() {
         if (!this.activeSessionId) {
-            alert('Please select a session first');
+            if (window.toast) {
+                window.toast.info('Create or select a session first.', { key: 'session' });
+            }
             return;
         }
         
@@ -434,65 +451,34 @@ class AIController {
             mcpGroup.style.display = section === 'mcp' ? 'flex' : 'none';
         }
 
+        this.syncHeaderActions(section);
+
         const sessionContent = document.getElementById('session-content');
-        const autorunContent = document.getElementById('autorun-content');
         const mcpContent = document.getElementById('mcp-content');
         const noSessionMessage = document.getElementById('no-session-message');
-        const autorunEmpty = document.getElementById('autorun-empty-message');
 
         if (section !== 'settings') {
             this.hideSettingsPages();
         }
 
+        if (section !== 'autoruns' && this.autorunManager) {
+            this.autorunManager.setPanelOpen(false);
+            this.autorunManager.setEmptyVisible(false);
+        }
+
         if (section === 'sessions') {
             if (sessionContent) sessionContent.style.display = this.activeSessionId ? 'flex' : 'none';
-            if (autorunContent) {
-                autorunContent.style.display = 'none';
-                const contentArea = document.querySelector('.content-area');
-                if (contentArea) {
-                    contentArea.classList.remove('has-autorun');
-                }
-            }
             if (mcpContent) mcpContent.style.display = 'none';
             if (noSessionMessage) noSessionMessage.style.display = this.activeSessionId ? 'none' : 'flex';
-            if (autorunEmpty) autorunEmpty.style.display = 'none';
         } else if (section === 'autoruns') {
             if (sessionContent) sessionContent.style.display = 'none';
             if (mcpContent) mcpContent.style.display = 'none';
             if (noSessionMessage) noSessionMessage.style.display = 'none';
-
-            const hasAutorunTabs = document.querySelector('button.tab[data-autorun-id]') !== null;
-            if (hasAutorunTabs) {
-                if (autorunContent) {
-                    autorunContent.style.display = 'block';
-                    const contentArea = document.querySelector('.content-area');
-                    if (contentArea) {
-                        contentArea.classList.add('has-autorun');
-                    }
-                }
-                if (autorunEmpty) autorunEmpty.style.display = 'none';
-            } else {
-                if (autorunContent) {
-                    autorunContent.style.display = 'none';
-                    const contentArea = document.querySelector('.content-area');
-                    if (contentArea) {
-                        contentArea.classList.remove('has-autorun');
-                    }
-                }
-                if (autorunEmpty) autorunEmpty.style.display = 'flex';
-            }
+            this.autorunManager.syncView();
         } else if (section === 'settings') {
             if (sessionContent) sessionContent.style.display = 'none';
-            if (autorunContent) {
-                autorunContent.style.display = 'none';
-                const contentArea = document.querySelector('.content-area');
-                if (contentArea) {
-                    contentArea.classList.remove('has-autorun');
-                }
-            }
             if (mcpContent) mcpContent.style.display = 'none';
             if (noSessionMessage) noSessionMessage.style.display = 'none';
-            if (autorunEmpty) autorunEmpty.style.display = 'none';
 
             document.querySelectorAll('button.tab[data-session-id]').forEach((tab) => {
                 tab.classList.remove('active');
@@ -505,16 +491,8 @@ class AIController {
             }
         } else if (section === 'mcp') {
             if (sessionContent) sessionContent.style.display = 'none';
-            if (autorunContent) {
-                autorunContent.style.display = 'none';
-                const contentArea = document.querySelector('.content-area');
-                if (contentArea) {
-                    contentArea.classList.remove('has-autorun');
-                }
-            }
             if (mcpContent) mcpContent.style.display = 'block';
             if (noSessionMessage) noSessionMessage.style.display = 'none';
-            if (autorunEmpty) autorunEmpty.style.display = 'none';
 
             document.querySelectorAll('button.tab[data-session-id]').forEach((tab) => {
                 tab.classList.remove('active');
@@ -527,6 +505,17 @@ class AIController {
             if (this.activeSessionId) {
                 this.wsManager.disconnect(this.activeSessionId);
             }
+        }
+    }
+
+    syncHeaderActions(section) {
+        const newSessionBtn = document.getElementById('new-session-btn');
+        const newAutorunBtn = document.getElementById('new-autorun-btn');
+        if (newSessionBtn) {
+            newSessionBtn.hidden = section !== 'sessions';
+        }
+        if (newAutorunBtn) {
+            newAutorunBtn.hidden = section !== 'autoruns';
         }
     }
 
@@ -571,10 +560,19 @@ class AIController {
     async updateDebugMode(enabled) {
         this.uiDebugMode = enabled;
         
-        // Persist to backend
         const data = await this.api.updateConfig({ ui_debug: enabled });
-        if (!data.success) {
+        if (data.success) {
+            if (window.toast) {
+                window.toast.success(
+                    enabled ? 'Debug mode on — full JSON will be shown.' : 'Debug mode off — replies only.',
+                    { key: 'ui' }
+                );
+            }
+        } else {
             console.error('Failed to update debug mode:', data);
+            if (window.toast) {
+                window.toast.error(data.error || 'Could not save debug mode', { key: 'ui' });
+            }
         }
     }
 }

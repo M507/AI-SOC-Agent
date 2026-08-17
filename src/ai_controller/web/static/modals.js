@@ -3,6 +3,30 @@
 class ModalManager {
     constructor(controller) {
         this.controller = controller;
+        this.bindFormHelpers();
+    }
+
+    bindFormHelpers() {
+        const nameInput = document.getElementById('session-name');
+        if (nameInput) {
+            nameInput.addEventListener('keydown', (event) => {
+                if (event.key === 'Enter') {
+                    event.preventDefault();
+                    this.createSession();
+                }
+            });
+        }
+        const intervalInput = document.getElementById('autorun-interval');
+        if (intervalInput) {
+            intervalInput.addEventListener('input', () => this.updateIntervalPreview());
+        }
+    }
+
+    updateIntervalPreview() {
+        const intervalInput = document.getElementById('autorun-interval');
+        const preview = document.getElementById('autorun-interval-preview');
+        if (!intervalInput || !preview) return;
+        preview.textContent = formatIntervalPreview(intervalInput.value);
     }
 
     /**
@@ -48,6 +72,7 @@ class ModalManager {
         if (commandInput) commandInput.value = '';
         if (conditionInput) conditionInput.value = '';
         if (intervalInput) intervalInput.value = '300';
+        this.updateIntervalPreview();
         if (conditionHelpTooltip) {
             conditionHelpTooltip.classList.add('help-tooltip-hidden');
         }
@@ -73,7 +98,9 @@ class ModalManager {
         const name = nameInput.value.trim();
         
         if (!name) {
-            alert('Please enter a session name');
+            if (window.toast) {
+                window.toast.info('Enter a session name.', { key: 'session' });
+            }
             return;
         }
         
@@ -85,8 +112,8 @@ class ModalManager {
             if (data.session && data.session.id) {
                 await this.controller.sessionManager.switchToSession(data.session.id);
             }
-        } else {
-            alert(`Error creating session: ${data.error || 'Unknown error'}`);
+        } else if (window.toast) {
+            window.toast.error(data.error || 'Could not create session', { key: 'session' });
         }
     }
 
@@ -107,12 +134,16 @@ class ModalManager {
         const intervalSeconds = parseInt(intervalInput.value, 10);
         
         if (!name || !command) {
-            alert('Please enter autorun name and starting prompt');
+            if (window.toast) {
+                window.toast.info('Enter an autorun name and starting prompt.', { key: 'autorun' });
+            }
             return;
         }
         
         if (isNaN(intervalSeconds) || intervalSeconds < 5) {
-            alert('Interval must be at least 5 seconds');
+            if (window.toast) {
+                window.toast.info('Interval must be at least 5 seconds.', { key: 'autorun' });
+            }
             return;
         }
         
@@ -125,9 +156,18 @@ class ModalManager {
         
         if (data.success) {
             this.hideNewAutorun();
+            if (data.autorun && data.autorun.id) {
+                this.controller.autorunManager.currentAutorunId = data.autorun.id;
+            }
             await this.controller.loadAutoruns();
-        } else {
-            alert(`Error creating autorun: ${data.error || 'Unknown error'}`);
+            if (this.controller.activeSection !== 'autoruns') {
+                this.controller.setActiveSection('autoruns');
+            }
+            if (window.toast) {
+                window.toast.success('Autorun created.', { key: 'autorun' });
+            }
+        } else if (window.toast) {
+            window.toast.error(data.error || 'Could not create autorun', { key: 'autorun' });
         }
     }
 }

@@ -6,14 +6,15 @@
         <title>SamiGPT AI Controller</title>
         <!-- CSS Files - Organized by purpose for easier maintenance -->
         <link rel="stylesheet" href="/static/css/base.css?v=2">
-        <link rel="stylesheet" href="/static/css/layout.css?v=5">
+        <link rel="stylesheet" href="/static/css/layout.css?v=6">
         <link rel="stylesheet" href="/static/css/buttons.css?v=3">
         <link rel="stylesheet" href="/static/css/tabs.css?v=2">
         <link rel="stylesheet" href="/static/css/status.css?v=2">
         <link rel="stylesheet" href="/static/css/terminal.css?v=2">
-        <link rel="stylesheet" href="/static/css/autorun.css?v=4">
-        <link rel="stylesheet" href="/static/css/modal.css?v=2">
-        <link rel="stylesheet" href="/static/css/settings.css?v=4">
+        <link rel="stylesheet" href="/static/css/autorun.css?v=5">
+        <link rel="stylesheet" href="/static/css/modal.css?v=3">
+        <link rel="stylesheet" href="/static/css/settings.css?v=5">
+        <link rel="stylesheet" href="/static/css/toast.css?v=1">
         <link rel="stylesheet" href="/static/css/scrollbar.css?v=2">
     </head>
 <body>
@@ -22,7 +23,7 @@
             <h1>SamiGPT – SOC AI Agents Orchestrator</h1>
             <div class="header-actions">
                 <button id="new-session-btn" class="btn btn-primary">+ New Session</button>
-                <button id="new-autorun-btn" class="btn btn-secondary">+ New Autorun</button>
+                <button id="new-autorun-btn" class="btn btn-secondary" hidden>+ New Autorun</button>
                 <button id="settings-btn" class="btn btn-secondary">Settings</button>
                 <button id="mcp-btn" class="btn btn-secondary mcp-header-btn">
                     MCP
@@ -38,7 +39,7 @@
                     <span class="sidebar-title">Views</span>
                 </div>
                 <button id="nav-sessions" class="nav-item active">
-                    <span class="nav-label">Manual Sessions</span>
+                    <span class="nav-label">Sessions</span>
                 </button>
                 <button id="nav-autoruns" class="nav-item">
                     <span class="nav-label">Autoruns</span>
@@ -81,11 +82,19 @@
                 </div>
 
                 <div class="content-area">
-                    <div id="no-session-message" class="no-session">
-                        <p>Select a manual session tab or create a new session to start</p>
+                    <div id="no-session-message" class="empty-state">
+                        <div class="empty-state-body">
+                            <h2>Start an investigation</h2>
+                            <p>Create a session and ask the agent about an alert, hash, host, or case. It uses MCP tools against your SIEM, cases, and threat intel.</p>
+                            <button type="button" id="empty-new-session-btn" class="btn btn-primary">New Session</button>
+                        </div>
                     </div>
-                    <div id="autorun-empty-message" class="no-session" style="display: none;">
-                        <p>No autoruns configured yet. Create one to get started.</p>
+                    <div id="autorun-empty-message" class="empty-state" style="display: none;">
+                        <div class="empty-state-body">
+                            <h2>Schedule an agent</h2>
+                            <p>Autoruns run the same LLM on a timer. Add a condition if the job should skip when there is nothing to investigate.</p>
+                            <button type="button" id="empty-new-autorun-btn" class="btn btn-primary">New Autorun</button>
+                        </div>
                     </div>
                     <div id="session-content" class="session-content" style="display: none;">
                         <div class="session-header">
@@ -93,13 +102,13 @@
                             <div class="session-actions">
                                 <span id="session-status" class="status-badge">Pending</span>
                                 <button id="stop-session-btn" class="btn btn-danger btn-sm">Stop</button>
-                                <button id="close-session-btn" class="btn btn-secondary btn-sm">Close Tab</button>
+                                <button id="close-session-btn" class="btn btn-secondary btn-sm">Delete session</button>
                             </div>
                         </div>
                         <div class="terminal-container">
                             <div class="terminal" id="terminal"></div>
                             <div class="command-input-container">
-                                <input type="text" id="command-input" class="command-input" placeholder="Enter command (e.g., run lookup_hash_ti on &lt;hash&gt;)">
+                                <input type="text" id="command-input" class="command-input" placeholder="Ask about an alert, hash, host, or case…">
                                 <button id="execute-btn" class="btn btn-primary btn-sm">Execute</button>
                             </div>
                         </div>
@@ -129,7 +138,6 @@
                                 <textarea id="llm-system-prompt" rows="4" placeholder="Leave blank to use the default SOC assistant prompt"></textarea>
                                 <label for="llm-max-iterations">Max MCP tool iterations</label>
                                 <input type="number" id="llm-max-iterations" min="1" max="50" value="12">
-                                <p id="llm-status" class="settings-status"></p>
                             </section>
                         </div>
                     </div>
@@ -177,7 +185,7 @@
                                     <div><dt>Started</dt><dd id="mcp-health-started">—</dd></div>
                                 </dl>
                                 <div id="mcp-integrations" class="integration-pills"></div>
-                                <p id="mcp-last-error" class="settings-status"></p>
+                                <p id="mcp-last-error" class="settings-status is-error" hidden></p>
                             </section>
                             <section class="settings-card">
                                 <h3>Listener</h3>
@@ -204,13 +212,13 @@
                         </div>
                     </div>
                     <!-- Autorun Details Panel (shown when Autoruns view is active) -->
-                    <div id="autorun-content" class="autorun-content" style="display: none;">
+                    <div id="autorun-content" class="autorun-content" hidden>
                         <div class="session-header">
                             <h2 id="autorun-title">Autorun</h2>
                             <div class="session-actions">
                                 <span id="autorun-status" class="status-badge">Enabled</span>
                                 <button id="autorun-toggle-btn" class="btn btn-secondary btn-sm">Disable</button>
-                                <button id="autorun-clear-btn" class="btn btn-secondary btn-sm">Clear</button>
+                                <button id="autorun-clear-btn" class="btn btn-secondary btn-sm">Clear history</button>
                                 <button id="autorun-export-btn" class="btn btn-secondary btn-sm">Export</button>
                                 <button id="autorun-delete-btn" class="btn btn-danger btn-sm">Delete</button>
                             </div>
@@ -244,6 +252,8 @@
         </div>
     </div>
 
+    <div id="toast-region" class="toast-region" aria-live="polite" aria-relevant="additions text"></div>
+
     <!-- New Session Modal -->
     <div id="new-session-modal" class="modal" style="display: none;">
         <div class="modal-content">
@@ -274,16 +284,16 @@
                 <input type="text" id="autorun-name" placeholder="Check Recent Alerts">
                 
                 <label for="autorun-command">Starting prompt:</label>
-                <input
-                    type="text"
+                <textarea
                     id="autorun-command"
-                    placeholder="e.g. run lookup_hash_ti on &lt;hash&gt; or ask a question"
-                >
+                    rows="4"
+                    placeholder="What should the agent do on each run? Example: triage new uninvestigated alerts."
+                ></textarea>
                 
-                <label for="autorun-condition">
-                    Condition function (optional):
-                    <a href="#" id="condition-help-link" class="help-link" title="Click for help">ℹ️</a>
-                </label>
+                <div class="modal-label-row">
+                    <label for="autorun-condition">Condition function (optional)</label>
+                    <button type="button" id="condition-help-link" class="help-link">Help</button>
+                </div>
                 <div id="condition-help-tooltip" class="help-tooltip help-tooltip-hidden">
                     <strong>Supported condition functions:</strong>
                     <ul style="margin: 8px 0; padding-left: 20px;">
@@ -306,7 +316,8 @@
                 </small>
                 
                 <label for="autorun-interval">Interval (seconds):</label>
-                <input type="number" id="autorun-interval" value="60" min="5">
+                <input type="number" id="autorun-interval" value="300" min="5" step="5">
+                <small id="autorun-interval-preview">Every 5 minutes</small>
             </div>
             <div class="modal-footer">
                 <button id="create-autorun-btn" class="btn btn-primary">Create</button>
@@ -322,7 +333,8 @@
     <script src="https://cdn.jsdelivr.net/npm/marked@12.0.0/marked.min.js"></script>
     
     <!-- Core utilities (no dependencies) -->
-    <script src="/static/utils.js?v=1"></script>
+    <script src="/static/utils.js?v=2"></script>
+    <script src="/static/toast.js?v=1"></script>
     
     <!-- API client (no dependencies) -->
     <script src="/static/api.js?v=4"></script>
@@ -330,14 +342,14 @@
     <!-- Component modules (depend on utils) -->
     <script src="/static/websocket.js?v=1"></script>
     <script src="/static/terminal.js?v=1"></script>
-    <script src="/static/sessions.js?v=3"></script>
-    <script src="/static/pdf_export.js?v=1"></script>
-    <script src="/static/autoruns.js?v=8"></script>
-    <script src="/static/modals.js?v=2"></script>
+    <script src="/static/sessions.js?v=4"></script>
+    <script src="/static/pdf_export.js?v=2"></script>
+    <script src="/static/autoruns.js?v=9"></script>
+    <script src="/static/modals.js?v=3"></script>
     
     <!-- Main application (depends on all modules) -->
-    <script src="/static/settings.js?v=3"></script>
-    <script src="/static/app.js?v=7"></script>
+    <script src="/static/settings.js?v=4"></script>
+    <script src="/static/app.js?v=8"></script>
 </body>
 </html>
 
