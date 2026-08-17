@@ -9,12 +9,18 @@ from urllib.parse import urlparse
 
 import requests
 from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel
 
 from ...core.config_storage import get_section, load_config_from_file, load_raw_config
 from ...core.elastic_clusters import get_cluster, load_registry, probe_cluster
 from ...core.logging import get_logger
 from ...llm.registry import create_provider
 from ...mcp.supervisor import get_supervisor
+from .integration_skill_tests import (
+    run_skill_tests,
+    skill_inventory,
+    skills_for_integration,
+)
 
 logger = get_logger("sami.web.integrations")
 
@@ -31,6 +37,7 @@ class IntegrationCard:
     configured: bool
 
     def public_dict(self) -> Dict[str, Any]:
+        skill_count = len(skills_for_integration(self.id))
         return {
             "id": self.id,
             "name": self.name,
@@ -39,7 +46,16 @@ class IntegrationCard:
             "detail": self.detail,
             "configured": self.configured,
             "testable": True,
+            "has_skill_tests": skill_count > 0,
+            "skill_count": skill_count,
         }
+
+
+class SkillTestRequest(BaseModel):
+    skills: list[str] | None = None
+
+
+SkillTestRequest.model_rebuild()
 
 
 def _is_configured(*values: Any) -> bool:
@@ -285,10 +301,20 @@ async def _test_integration(card_id: str) -> Dict[str, Any]:
         cti = raw.get(card_id) if isinstance(raw.get(card_id), dict) else {}
         token = str(cti.get("api_key") or "")
         auth = f"Bearer {token}" if token else None
-        result = await asyncio.to_thread(_reachable_http, cti, authorization=auth)
+        is_local_tip = str(cti.get("cti_type") or "").lower() == "local_tip"
+        endpoint = "hashes/recents?limit=1" if is_local_tip else ""
+        result = await asyncio.to_thread(
+            _reachable_http,
+            cti,
+            endpoint=endpoint,
+            authorization=auth,
+        )
         if result["ok"]:
-            result["level"] = "warning"
-            result["message"] += " Service reachability passed; run an indicator lookup to validate the full workflow."
+            if is_local_tip:
+                result["message"] = f"Local TIP API is reachable at {_host(cti.get('base_url'))}; safe hash reads work."
+            else:
+                result["level"] = "warning"
+                result["message"] += " Service reachability passed; run an indicator lookup to validate the full workflow."
         return result
 
     if card_id == "engineering":
@@ -344,7 +370,7 @@ async def list_integrations():
     return {"success": True, "integrations": cards}
 
 
-@router.post("/{integration_id:path}/test")
+@router.post("/{integration_id}/test")
 async def test_integration(integration_id: str):
     card = _card(integration_id)
     logger.info("Integration settings: Test clicked id=%s name=%s", card.id, card.name)
@@ -360,5 +386,47 @@ async def test_integration(integration_id: str):
         card.id,
         result.get("ok"),
         result.get("message"),
+    )
+    return result
+
+
+@router.get("/{integration_id}/skills")
+async def list_integration_skills(integration_id: str):
+    card = _card(integration_id)
+    skills = skill_inventory(integration_id)
+    logger.info(
+        "Integration settings: listed %s skill test(s) id=%s",
+        len(skills),
+        integration_id,
+    )
+    return {
+        "success": True,
+        "integration_id": integration_id,
+        "integration_name": card.name,
+        "skills": skills,
+    }
+
+
+@router.post("/{integration_id}/skills/test")
+async def test_integration_skills(integration_id: str, request: SkillTestRequest):
+    card = _card(integration_id)
+    if not skills_for_integration(integration_id):
+        raise HTTPException(status_code=400, detail=f"{card.name} does not expose MCP skills")
+    logger.info(
+        "Integration settings: Skill test clicked id=%s selected=%s",
+        integration_id,
+        request.skills or "all-safe",
+    )
+    try:
+        result = await run_skill_tests(integration_id, request.skills)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception("Integration settings: skill test suite failed id=%s", integration_id)
+        raise HTTPException(status_code=500, detail=f"Could not run skill tests: {exc}") from exc
+    logger.info(
+        "Integration settings: Skill test completed id=%s counts=%s",
+        integration_id,
+        result.get("counts"),
     )
     return result

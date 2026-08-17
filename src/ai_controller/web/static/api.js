@@ -549,4 +549,24 @@ class APIClient {
             return { success: false, ok: false, level: 'error', error: error.message, message: error.message };
         }
     }
+
+    async getIntegrationSkills(integrationId) {
+        try {
+            return await this.request(`/api/integrations/${encodeURIComponent(integrationId)}/skills`);
+        } catch (error) {
+            return { success: false, skills: [], error: error.message };
+        }
+    }
+
+    async testIntegrationSkills(integrationId, skills = null) {
+        try {
+            return await this.request(`/api/integrations/${encodeURIComponent(integrationId)}/skills/test`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ skills }),
+            });
+        } catch (error) {
+            return { success: false, skills: [], error: error.message };
+        }
+    }
 }

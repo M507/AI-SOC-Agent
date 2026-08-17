@@ -531,7 +531,7 @@
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(285px, 1fr));
     gap: 14px;
-    align-items: stretch;
+    align-items: start;
 }
 
 .integration-card {
@@ -671,6 +671,8 @@
 .integration-actions {
     display: flex;
     justify-content: flex-end;
+    flex-wrap: wrap;
+    gap: 8px;
     margin-top: 12px;
 }
 
@@ -692,6 +694,109 @@
     text-align: center;
 }
 
+.integration-skills-panel {
+    margin: 14px -16px -16px;
+    padding: 14px 16px 16px;
+    border-top: 1px solid #3a3a3e;
+    border-radius: 0 0 10px 10px;
+    background: #202021;
+}
+
+.integration-skills-header {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 10px;
+}
+
+.integration-skills-header h4 {
+    margin: 0;
+    color: #f2f2f2;
+    font-size: 12px;
+}
+
+.integration-skills-header p,
+.integration-skills-loading,
+.integration-skill-error {
+    margin: 0;
+    color: #8e8e8e;
+    font-size: 10px;
+    line-height: 1.4;
+}
+
+.integration-skill-error {
+    color: #f48771;
+}
+
+.integration-skill-list {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    max-height: 420px;
+    overflow-y: auto;
+}
+
+.integration-skill-row {
+    display: grid;
+    grid-template-columns: 54px minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 8px;
+    min-height: 48px;
+    padding: 7px 8px;
+    border: 1px solid #36363a;
+    border-radius: 6px;
+    background: #252526;
+}
+
+.integration-skill-row.is-passed { border-left: 2px solid #4ec9b0; }
+.integration-skill-row.is-failed { border-left: 2px solid #f48771; }
+.integration-skill-row.is-skipped { border-left: 2px solid #777; }
+.integration-skill-row.is-testing { border-left: 2px solid #569cd6; }
+
+.integration-skill-status {
+    color: #999;
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: .04em;
+    text-transform: uppercase;
+}
+
+.integration-skill-row.is-passed .integration-skill-status { color: #79dac7; }
+.integration-skill-row.is-failed .integration-skill-status { color: #f48771; }
+.integration-skill-row.is-testing .integration-skill-status { color: #9cdcfe; }
+
+.integration-skill-copy {
+    display: flex;
+    min-width: 0;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.integration-skill-copy strong {
+    overflow: hidden;
+    color: #ddd;
+    font-size: 11px;
+    font-weight: 600;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.integration-skill-copy span {
+    color: #8d8d8d;
+    font-size: 9px;
+    line-height: 1.35;
+}
+
+.integration-skill-copy .integration-cleanup.is-ok { color: #79dac7; }
+.integration-skill-copy .integration-cleanup.is-error { color: #f48771; }
+
+.integration-skill-test {
+    min-width: 48px !important;
+    padding: 5px 8px !important;
+    font-size: 10px !important;
+}
+
 @media (max-width: 720px) {
     .integration-overview {
         align-items: flex-start;
@@ -700,6 +805,11 @@
 
     .integrations-grid {
         grid-template-columns: 1fr;
+    }
+
+    .integration-skills-header {
+        align-items: flex-start;
+        flex-direction: column;
     }
 }
 

@@ -85,7 +85,10 @@ def test_lists_integrations_without_secrets(tmp_path, monkeypatch):
     ids = {item["id"] for item in body["integrations"]}
     assert {"thehive", "iris", "elastic:lab", "edr", "cti", "engineering", "llm", "mcp"} <= ids
     assert next(item for item in body["integrations"] if item["id"] == "thehive")["configured"] is False
-    assert next(item for item in body["integrations"] if item["id"] == "elastic:lab")["configured"] is True
+    elastic_card = next(item for item in body["integrations"] if item["id"] == "elastic:lab")
+    assert elastic_card["configured"] is True
+    assert elastic_card["has_skill_tests"] is True
+    assert elastic_card["skill_count"] > 20
     assert "secret-elastic-key" not in response.text
 
 
@@ -130,3 +133,74 @@ def test_unconfigured_integration_test_is_explained(tmp_path, monkeypatch):
     response = client.post("/api/integrations/thehive/test")
     assert response.status_code == 400
     assert "not configured" in response.json()["detail"]
+
+
+def test_skill_inventory_marks_critical_skills_skipped(tmp_path, monkeypatch):
+    client = _client(
+        tmp_path,
+        monkeypatch,
+        elastic={
+            "default_cluster_id": "lab",
+            "clusters": [
+                {
+                    "id": "lab",
+                    "name": "Lab Elasticsearch",
+                    "base_url": "https://10.0.0.8:9200",
+                    "api_key": "secret-elastic-key",
+                    "verify_ssl": False,
+                }
+            ],
+        },
+    )
+    response = client.get("/api/integrations/elastic%3Alab/skills")
+    assert response.status_code == 200, response.text
+    skills = {item["id"]: item for item in response.json()["skills"]}
+    assert skills["search_security_events"]["mode"] == "read"
+    assert skills["close_alert"]["mode"] == "skip"
+    assert "destructive" in skills["close_alert"]["skip_reason"].lower()
+
+
+def test_skill_test_endpoint_returns_per_skill_results(tmp_path, monkeypatch):
+    client = _client(
+        tmp_path,
+        monkeypatch,
+        elastic={
+            "default_cluster_id": "lab",
+            "clusters": [
+                {
+                    "id": "lab",
+                    "name": "Lab Elasticsearch",
+                    "base_url": "https://10.0.0.8:9200",
+                    "api_key": "secret-elastic-key",
+                    "verify_ssl": False,
+                }
+            ],
+        },
+    )
+
+    async def fake_run(integration_id, selected):
+        assert integration_id == "elastic:lab"
+        assert selected == ["search_security_events"]
+        return {
+            "success": True,
+            "integration_id": integration_id,
+            "counts": {"passed": 1, "failed": 0, "skipped": 0},
+            "skills": [
+                {
+                    "id": "search_security_events",
+                    "label": "Search Security Events",
+                    "status": "passed",
+                    "message": "Dummy skill call completed.",
+                    "duration_ms": 5,
+                    "cleanup": None,
+                }
+            ],
+        }
+
+    monkeypatch.setattr("src.ai_controller.web.routes_integrations.run_skill_tests", fake_run)
+    response = client.post(
+        "/api/integrations/elastic%3Alab/skills/test",
+        json={"skills": ["search_security_events"]},
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["skills"][0]["status"] == "passed"
