@@ -145,14 +145,24 @@
     margin-top: 8px;
 }
 
-.llm-model-row {
+.settings-inline-row {
     display: flex;
     gap: 8px;
-    align-items: center;
+    align-items: stretch;
 }
 
-.llm-model-row input {
+.settings-inline-row select,
+.settings-inline-row input {
     flex: 1;
+    width: auto;
+    min-width: 0;
+}
+
+.settings-inline-row .btn {
+    flex: 0 0 auto;
+    padding: 10px 14px;
+    font-size: 13px;
+    white-space: nowrap;
 }
 
 .settings-status {

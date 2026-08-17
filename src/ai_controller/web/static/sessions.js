@@ -176,11 +176,10 @@ class SessionManager {
             activeTab.classList.add('active');
         }
         
-        // Deactivate settings tab if active
-        const settingsTab = document.getElementById('settings-tab');
-        if (settingsTab) {
-            settingsTab.classList.remove('active');
-        }
+        // Deactivate settings tabs if active
+        document.querySelectorAll('#settings-tabs [data-settings-page]').forEach((tab) => {
+            tab.classList.remove('active');
+        });
         
         this.controller.activeSessionId = sessionId;
         
@@ -190,11 +189,12 @@ class SessionManager {
         // Show session content
         const noSessionMessage = document.getElementById('no-session-message');
         const sessionContent = document.getElementById('session-content');
-        const settingsContent = document.getElementById('settings-content');
         
         if (noSessionMessage) noSessionMessage.style.display = 'none';
         if (sessionContent) sessionContent.style.display = 'flex';
-        if (settingsContent) settingsContent.style.display = 'none';
+        document.querySelectorAll('[data-settings-page-content]').forEach((panel) => {
+            panel.style.display = 'none';
+        });
         
         // Connect WebSocket
         this.controller.wsManager.connect(sessionId);

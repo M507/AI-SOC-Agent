@@ -7,13 +7,13 @@
         <!-- CSS Files - Organized by purpose for easier maintenance -->
         <link rel="stylesheet" href="/static/css/base.css?v=2">
         <link rel="stylesheet" href="/static/css/layout.css?v=5">
-        <link rel="stylesheet" href="/static/css/buttons.css?v=2">
+        <link rel="stylesheet" href="/static/css/buttons.css?v=3">
         <link rel="stylesheet" href="/static/css/tabs.css?v=2">
         <link rel="stylesheet" href="/static/css/status.css?v=2">
         <link rel="stylesheet" href="/static/css/terminal.css?v=2">
         <link rel="stylesheet" href="/static/css/autorun.css?v=4">
         <link rel="stylesheet" href="/static/css/modal.css?v=2">
-        <link rel="stylesheet" href="/static/css/settings.css?v=3">
+        <link rel="stylesheet" href="/static/css/settings.css?v=4">
         <link rel="stylesheet" href="/static/css/scrollbar.css?v=2">
     </head>
 <body>
@@ -66,7 +66,9 @@
                         <div class="tab-group" id="settings-tab-group" style="display: none;">
                             <span class="tab-group-label">Settings</span>
                             <div class="tabs" id="settings-tabs">
-                                <button class="tab" id="settings-tab">LLM &amp; UI</button>
+                                <!-- Add a button here plus a matching data-settings-page-content panel for each new Settings page. -->
+                                <button class="tab active" type="button" data-settings-page="llm">LLM</button>
+                                <button class="tab" type="button" data-settings-page="ui">UI</button>
                             </div>
                         </div>
                         <div class="tab-group" id="mcp-tab-group" style="display: none;">
@@ -102,11 +104,10 @@
                             </div>
                         </div>
                     </div>
-                    <div id="settings-content" class="settings-content" style="display: none;">
+                    <div id="settings-llm-content" class="settings-content" data-settings-page-content="llm" style="display: none;">
                         <div class="session-header">
-                            <h2>Settings</h2>
+                            <h2>LLM</h2>
                             <div class="session-actions">
-                                <button id="llm-refresh-models-btn" class="btn btn-secondary btn-sm">Refresh models</button>
                                 <button id="llm-test-btn" class="btn btn-secondary btn-sm">Test provider</button>
                                 <button id="llm-test-model-btn" class="btn btn-secondary btn-sm">Test model</button>
                                 <button id="llm-save-btn" class="btn btn-primary btn-sm">Save</button>
@@ -114,7 +115,7 @@
                         </div>
                         <div class="settings-body">
                             <section class="settings-card">
-                                <h3>LLM provider</h3>
+                                <h3>Provider</h3>
                                 <p class="settings-help">
                                     Freeform prompts in sessions and autoruns are sent to this backend.
                                     Cursor Agent uses the local <code>cursor-agent</code> binary.
@@ -130,6 +131,13 @@
                                 <input type="number" id="llm-max-iterations" min="1" max="50" value="12">
                                 <p id="llm-status" class="settings-status"></p>
                             </section>
+                        </div>
+                    </div>
+                    <div id="settings-ui-content" class="settings-content" data-settings-page-content="ui" style="display: none;">
+                        <div class="session-header">
+                            <h2>UI</h2>
+                        </div>
+                        <div class="settings-body">
                             <section class="settings-card">
                                 <h3>Display</h3>
                                 <label class="settings-toggle">
@@ -322,14 +330,14 @@
     <!-- Component modules (depend on utils) -->
     <script src="/static/websocket.js?v=1"></script>
     <script src="/static/terminal.js?v=1"></script>
-    <script src="/static/sessions.js?v=2"></script>
+    <script src="/static/sessions.js?v=3"></script>
     <script src="/static/pdf_export.js?v=1"></script>
-    <script src="/static/autoruns.js?v=7"></script>
+    <script src="/static/autoruns.js?v=8"></script>
     <script src="/static/modals.js?v=2"></script>
     
     <!-- Main application (depends on all modules) -->
-    <script src="/static/settings.js?v=2"></script>
-    <script src="/static/app.js?v=6"></script>
+    <script src="/static/settings.js?v=3"></script>
+    <script src="/static/app.js?v=7"></script>
 </body>
 </html>
 

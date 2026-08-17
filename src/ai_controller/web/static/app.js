@@ -7,6 +7,7 @@ class AIController {
         this.activeSessionId = null;
         this.uiDebugMode = false;
         this.activeSection = 'sessions'; // 'sessions' | 'autoruns' | 'settings' | 'mcp'
+        this.activeSettingsPage = 'llm';
         
         // Initialize managers
         this.api = new APIClient();
@@ -244,11 +245,18 @@ class AIController {
             }
         });
         
-        // Settings tab
-        const settingsTab = document.getElementById('settings-tab');
-        if (settingsTab) {
-            settingsTab.addEventListener('click', () => {
-                this.setActiveSection('settings');
+        // Settings sub-tabs (LLM, UI, and any future pages under Settings)
+        const settingsTabs = document.getElementById('settings-tabs');
+        if (settingsTabs) {
+            settingsTabs.addEventListener('click', (event) => {
+                const tab = event.target.closest('[data-settings-page]');
+                if (!tab) return;
+                if (this.activeSection !== 'settings') {
+                    this.activeSettingsPage = tab.dataset.settingsPage;
+                    this.setActiveSection('settings');
+                    return;
+                }
+                this.setSettingsPage(tab.dataset.settingsPage);
             });
         }
         const mcpTab = document.getElementById('mcp-tab');
@@ -428,28 +436,28 @@ class AIController {
 
         const sessionContent = document.getElementById('session-content');
         const autorunContent = document.getElementById('autorun-content');
-        const settingsContent = document.getElementById('settings-content');
         const mcpContent = document.getElementById('mcp-content');
         const noSessionMessage = document.getElementById('no-session-message');
         const autorunEmpty = document.getElementById('autorun-empty-message');
+
+        if (section !== 'settings') {
+            this.hideSettingsPages();
+        }
 
         if (section === 'sessions') {
             if (sessionContent) sessionContent.style.display = this.activeSessionId ? 'flex' : 'none';
             if (autorunContent) {
                 autorunContent.style.display = 'none';
-                // Remove class from content-area
                 const contentArea = document.querySelector('.content-area');
                 if (contentArea) {
                     contentArea.classList.remove('has-autorun');
                 }
             }
-            if (settingsContent) settingsContent.style.display = 'none';
             if (mcpContent) mcpContent.style.display = 'none';
             if (noSessionMessage) noSessionMessage.style.display = this.activeSessionId ? 'none' : 'flex';
             if (autorunEmpty) autorunEmpty.style.display = 'none';
         } else if (section === 'autoruns') {
             if (sessionContent) sessionContent.style.display = 'none';
-            if (settingsContent) settingsContent.style.display = 'none';
             if (mcpContent) mcpContent.style.display = 'none';
             if (noSessionMessage) noSessionMessage.style.display = 'none';
 
@@ -457,7 +465,6 @@ class AIController {
             if (hasAutorunTabs) {
                 if (autorunContent) {
                     autorunContent.style.display = 'block';
-                    // Add class to content-area to prevent it from scrolling
                     const contentArea = document.querySelector('.content-area');
                     if (contentArea) {
                         contentArea.classList.add('has-autorun');
@@ -467,7 +474,6 @@ class AIController {
             } else {
                 if (autorunContent) {
                     autorunContent.style.display = 'none';
-                    // Remove class from content-area
                     const contentArea = document.querySelector('.content-area');
                     if (contentArea) {
                         contentArea.classList.remove('has-autorun');
@@ -479,27 +485,21 @@ class AIController {
             if (sessionContent) sessionContent.style.display = 'none';
             if (autorunContent) {
                 autorunContent.style.display = 'none';
-                // Remove class from content-area
                 const contentArea = document.querySelector('.content-area');
                 if (contentArea) {
                     contentArea.classList.remove('has-autorun');
                 }
             }
-            if (settingsContent) settingsContent.style.display = 'block';
             if (mcpContent) mcpContent.style.display = 'none';
             if (noSessionMessage) noSessionMessage.style.display = 'none';
             if (autorunEmpty) autorunEmpty.style.display = 'none';
 
-            // Deactivate any active session tab and activate settings tab
-            document.querySelectorAll('button.tab[data-session-id]').forEach(tab => {
+            document.querySelectorAll('button.tab[data-session-id]').forEach((tab) => {
                 tab.classList.remove('active');
             });
-            const settingsTab = document.getElementById('settings-tab');
-            if (settingsTab) {
-                settingsTab.classList.add('active');
-            }
+            this.setSettingsPage(this.activeSettingsPage);
+            this.settingsManager.load();
 
-            // Disconnect WebSocket if a session is active
             if (this.activeSessionId) {
                 this.wsManager.disconnect(this.activeSessionId);
             }
@@ -512,12 +512,11 @@ class AIController {
                     contentArea.classList.remove('has-autorun');
                 }
             }
-            if (settingsContent) settingsContent.style.display = 'none';
             if (mcpContent) mcpContent.style.display = 'block';
             if (noSessionMessage) noSessionMessage.style.display = 'none';
             if (autorunEmpty) autorunEmpty.style.display = 'none';
 
-            document.querySelectorAll('button.tab[data-session-id]').forEach(tab => {
+            document.querySelectorAll('button.tab[data-session-id]').forEach((tab) => {
                 tab.classList.remove('active');
             });
             const mcpTab = document.getElementById('mcp-tab');
@@ -529,6 +528,30 @@ class AIController {
                 this.wsManager.disconnect(this.activeSessionId);
             }
         }
+    }
+
+    hideSettingsPages() {
+        document.querySelectorAll('[data-settings-page-content]').forEach((panel) => {
+            panel.style.display = 'none';
+        });
+        document.querySelectorAll('#settings-tabs [data-settings-page]').forEach((tab) => {
+            tab.classList.remove('active');
+        });
+    }
+
+    setSettingsPage(pageId) {
+        const tabs = Array.from(document.querySelectorAll('#settings-tabs [data-settings-page]'));
+        const pages = tabs.map((tab) => tab.dataset.settingsPage);
+        if (!pageId || !pages.includes(pageId)) {
+            pageId = pages.includes(this.activeSettingsPage) ? this.activeSettingsPage : pages[0];
+        }
+        this.activeSettingsPage = pageId || 'llm';
+        tabs.forEach((tab) => {
+            tab.classList.toggle('active', tab.dataset.settingsPage === this.activeSettingsPage);
+        });
+        document.querySelectorAll('[data-settings-page-content]').forEach((panel) => {
+            panel.style.display = panel.dataset.settingsPageContent === this.activeSettingsPage ? 'flex' : 'none';
+        });
     }
     
     showSettings() {

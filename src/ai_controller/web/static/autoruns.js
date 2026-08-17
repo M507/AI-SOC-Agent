@@ -173,13 +173,14 @@ class AutorunManager {
 
         // Hide other views
         const sessionContent = document.getElementById('session-content');
-        const settingsContent = document.getElementById('settings-content');
         const noSessionMessage = document.getElementById('no-session-message');
         const autorunContent = document.getElementById('autorun-content');
         const autorunEmpty = document.getElementById('autorun-empty-message');
 
         if (sessionContent) sessionContent.style.display = 'none';
-        if (settingsContent) settingsContent.style.display = 'none';
+        document.querySelectorAll('[data-settings-page-content]').forEach((panel) => {
+            panel.style.display = 'none';
+        });
         if (noSessionMessage) noSessionMessage.style.display = 'none';
         if (autorunEmpty) autorunEmpty.style.display = 'none';
 

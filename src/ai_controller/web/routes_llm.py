@@ -91,6 +91,23 @@ async def test_llm_provider(request: LLMTestRequest):
         raise HTTPException(status_code=400, detail=str(e))
 
 
+@router.get("/models")
+async def list_llm_models_from_config(provider: Optional[str] = None):
+    """List models using the saved provider settings in config.json."""
+    try:
+        provider_id, llm = _provider_from_request(LLMTestRequest(provider=provider))
+        models = await llm.list_models()
+        return {
+            "success": True,
+            "provider": provider_id,
+            "models": models,
+            "count": len(models),
+        }
+    except Exception as e:
+        logger.exception("LLM model list failed")
+        raise HTTPException(status_code=400, detail=str(e))
+
+
 @router.post("/models")
 async def list_llm_models(request: LLMTestRequest):
     try:
