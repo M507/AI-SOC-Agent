@@ -58,6 +58,14 @@ class LLMProvider(ABC):
     async def health_check(self) -> HealthStatus:
         """Verify credentials / reachability without running a full investigation."""
 
+    async def list_models(self) -> List[Dict[str, str]]:
+        """Return [{id, name}, ...] from the provider. Empty if unsupported."""
+        return []
+
+    async def test_model(self, model: Optional[str] = None) -> HealthStatus:
+        """Send a tiny prompt to a specific model. Defaults to health_check."""
+        return await self.health_check()
+
     def cancel(self) -> None:
         """Best-effort cancel of an in-flight completion. Optional."""
         return None

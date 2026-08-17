@@ -112,6 +112,18 @@ class CursorAgentProvider(LLMProvider):
             details={"binary_path": binary},
         )
 
+    async def list_models(self) -> List[Dict[str, str]]:
+        binary = self._binary()
+        if not binary:
+            return []
+        return [{"id": "cursor-agent", "name": "cursor-agent (local CLI)"}]
+
+    async def test_model(self, model: Optional[str] = None) -> HealthStatus:
+        status = await self.health_check()
+        if status.ok:
+            status.message = f"{status.message}. Cursor Agent runs the local CLI; there is no remote model catalog."
+        return status
+
     def cancel(self) -> None:
         proc = self._process
         if not proc or proc.poll() is not None:

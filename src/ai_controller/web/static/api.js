@@ -377,6 +377,32 @@ class APIClient {
         }
     }
 
+    async listLLMModels(payload) {
+        try {
+            return await this.request('/api/llm/models', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload || {}),
+            });
+        } catch (error) {
+            console.error('Error listing LLM models:', error);
+            return { success: false, models: [], message: error.message };
+        }
+    }
+
+    async testLLMModel(payload) {
+        try {
+            return await this.request('/api/llm/test-model', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload || {}),
+            });
+        } catch (error) {
+            console.error('Error testing LLM model:', error);
+            return { success: false, ok: false, message: error.message };
+        }
+    }
+
     async getMCPHealth() {
         try {
             return await this.request('/api/mcp/health');

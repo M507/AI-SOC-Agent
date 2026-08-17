@@ -31,6 +31,17 @@ class LLMSettingsUpdate(BaseModel):
 class LLMTestRequest(BaseModel):
     provider: Optional[str] = None
     settings: Optional[Dict[str, Any]] = None
+    model: Optional[str] = None
+
+
+def _provider_from_request(request: LLMTestRequest):
+    stored = get_section("llm", _default_llm_section())
+    provider_id = request.provider or stored.get("provider") or "cursor_agent"
+    existing_settings = stored.get(provider_id) if isinstance(stored.get(provider_id), dict) else {}
+    settings = merge_secrets(request.settings or {}, existing_settings)
+    if request.model:
+        settings["model"] = request.model
+    return provider_id, create_provider(provider_id, settings)
 
 
 def _default_llm_section() -> Dict[str, Any]:
@@ -71,14 +82,37 @@ async def update_llm_settings(update: LLMSettingsUpdate):
 
 @router.post("/test")
 async def test_llm_provider(request: LLMTestRequest):
-    stored = get_section("llm", _default_llm_section())
-    provider_id = request.provider or stored.get("provider") or "cursor_agent"
-    existing_settings = stored.get(provider_id) if isinstance(stored.get(provider_id), dict) else {}
-    settings = merge_secrets(request.settings or {}, existing_settings)
     try:
-        provider = create_provider(provider_id, settings)
+        _provider_id, provider = _provider_from_request(request)
         result = await provider.health_check()
         return {"success": True, **result.to_dict()}
     except Exception as e:
         logger.exception("LLM health check failed")
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.post("/models")
+async def list_llm_models(request: LLMTestRequest):
+    try:
+        provider_id, provider = _provider_from_request(request)
+        models = await provider.list_models()
+        return {
+            "success": True,
+            "provider": provider_id,
+            "models": models,
+            "count": len(models),
+        }
+    except Exception as e:
+        logger.exception("LLM model list failed")
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.post("/test-model")
+async def test_llm_model(request: LLMTestRequest):
+    try:
+        provider_id, provider = _provider_from_request(request)
+        result = await provider.test_model(request.model)
+        return {"success": True, "provider": provider_id, **result.to_dict()}
+    except Exception as e:
+        logger.exception("LLM model test failed")
         raise HTTPException(status_code=400, detail=str(e))

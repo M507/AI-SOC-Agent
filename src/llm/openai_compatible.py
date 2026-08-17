@@ -86,7 +86,25 @@ class OpenAICompatibleProvider(LLMProvider):
 
     def _base_url(self) -> str:
         raw = (self.settings.get("base_url") or self._defaults()["base_url"]).rstrip("/")
-        return raw
+        if self.provider_id != "openwebui":
+            return raw
+        lower = raw.lower()
+        # Open WebUI's OpenAI-compatible API lives at /api/v1. Accept a bare host.
+        if "/openai/v1" in lower:
+            return raw[: lower.rfind("/openai/v1")] + "/api/v1"
+        if lower.endswith("/api/v1") or lower.endswith("/v1"):
+            return raw
+        if lower.endswith("/api"):
+            return raw + "/v1"
+        return f"{raw}/api/v1"
+
+    def _origin(self) -> str:
+        base = self._base_url()
+        lower = base.lower()
+        for suffix in ("/openai/v1", "/api/v1", "/v1", "/api"):
+            if lower.endswith(suffix):
+                return base[: -len(suffix)]
+        return base
 
     def _model(self) -> str:
         return self.settings.get("model") or self._defaults().get("model") or ""
@@ -252,40 +270,139 @@ class OpenAICompatibleProvider(LLMProvider):
                 tool_calls=tool_calls_made,
             )
 
+    def _models_urls(self) -> List[str]:
+        base = self._base_url()
+        urls = [f"{base}/models"]
+        if self.provider_id == "openwebui":
+            native = f"{self._origin()}/api/models"
+            if native not in urls:
+                urls.append(native)
+        return urls
+
+    @staticmethod
+    def _parse_models(payload: Any) -> List[Dict[str, str]]:
+        items: List[Any]
+        if isinstance(payload, dict):
+            items = payload.get("data") or payload.get("models") or []
+        elif isinstance(payload, list):
+            items = payload
+        else:
+            items = []
+        models: List[Dict[str, str]] = []
+        seen = set()
+        for item in items:
+            if isinstance(item, str):
+                model_id, name = item, item
+            elif isinstance(item, dict):
+                model_id = item.get("id") or item.get("name") or item.get("model")
+                name = item.get("name") or model_id
+            else:
+                continue
+            if not model_id:
+                continue
+            model_id = str(model_id)
+            if model_id in seen:
+                continue
+            seen.add(model_id)
+            models.append({"id": model_id, "name": str(name)})
+        return models
+
+    async def list_models(self) -> List[Dict[str, str]]:
+        try:
+            import httpx
+        except ImportError:
+            return []
+
+        headers = self._headers()
+        last_error = ""
+        async with httpx.AsyncClient(timeout=20.0) as client:
+            for url in self._models_urls():
+                try:
+                    response = await client.get(url, headers=headers)
+                    content_type = (response.headers.get("content-type") or "").lower()
+                    if "html" in content_type or (response.text or "").lstrip().startswith("<"):
+                        last_error = f"{url} returned HTML"
+                        continue
+                    if response.status_code == 401:
+                        raise PermissionError("Authentication failed (401)")
+                    if response.status_code >= 400:
+                        last_error = f"HTTP {response.status_code} from {url}"
+                        continue
+                    models = self._parse_models(response.json())
+                    if models:
+                        return models
+                    last_error = f"{url} returned no models"
+                except PermissionError:
+                    raise
+                except Exception as e:
+                    last_error = str(e)
+        if last_error:
+            logger.warning("Could not list models for %s: %s", self.provider_id, last_error)
+        return []
+
     async def health_check(self) -> HealthStatus:
+        url = self._chat_url()
+        try:
+            models = await self.list_models()
+        except PermissionError:
+            return HealthStatus(ok=False, message="Authentication failed (401)", details={"url": url})
+        except Exception as e:
+            return HealthStatus(ok=False, message=str(e), details={"url": url})
+        if not models:
+            return HealthStatus(
+                ok=False,
+                message="Could not list models. Check the base URL and API key.",
+                details={"url": url, "models_urls": self._models_urls()},
+            )
+        configured = self._model()
+        message = f"Reached {self.display_name} ({len(models)} models)"
+        if configured:
+            message += f"; selected {configured}"
+        return HealthStatus(
+            ok=True,
+            message=message,
+            details={"url": url, "model": configured, "models": [m["id"] for m in models[:50]]},
+        )
+
+    async def test_model(self, model: Optional[str] = None) -> HealthStatus:
         try:
             import httpx
         except ImportError:
             return HealthStatus(ok=False, message="httpx is not installed")
 
-        url = self._chat_url()
-        model = self._model()
-        if not model:
-            return HealthStatus(ok=False, message="No model configured", details={"url": url})
+        chosen = (model or self._model() or "").strip()
+        if not chosen:
+            return HealthStatus(ok=False, message="No model selected. Refresh the model list and pick one.")
 
+        url = self._chat_url()
         payload = {
-            "model": model,
-            "messages": [{"role": "user", "content": "ping"}],
-            "max_tokens": 8,
+            "model": chosen,
+            "messages": [{"role": "user", "content": "Reply with the single word pong."}],
+            "max_tokens": 16,
+            "stream": False,
         }
         try:
-            async with httpx.AsyncClient(timeout=20.0) as client:
+            async with httpx.AsyncClient(timeout=60.0) as client:
                 response = await client.post(url, headers=self._headers(), json=payload)
                 if response.status_code == 401:
-                    return HealthStatus(ok=False, message="Authentication failed (401)", details={"url": url})
+                    return HealthStatus(ok=False, message="Authentication failed (401)", details={"url": url, "model": chosen})
                 if response.status_code >= 400:
                     return HealthStatus(
                         ok=False,
                         message=f"HTTP {response.status_code}: {response.text[:200]}",
-                        details={"url": url, "status": response.status_code},
+                        details={"url": url, "model": chosen, "status": response.status_code},
                     )
+                data = response.json()
+                choice = (data.get("choices") or [{}])[0]
+                text = ((choice.get("message") or {}).get("content") or "").strip()
+                preview = text.replace("\n", " ")[:120] or "(empty response)"
                 return HealthStatus(
                     ok=True,
-                    message=f"Reached {self.display_name} ({model})",
-                    details={"url": url, "model": model},
+                    message=f"{chosen} responded: {preview}",
+                    details={"url": url, "model": chosen, "response": text[:500]},
                 )
         except Exception as e:
-            return HealthStatus(ok=False, message=str(e), details={"url": url})
+            return HealthStatus(ok=False, message=str(e), details={"url": url, "model": chosen})
 
     @classmethod
     def settings_schema(cls) -> Dict[str, Any]:
@@ -324,8 +441,8 @@ def make_openai_provider(provider_id: str, display_name: str):
                 {
                     "key": "model",
                     "label": "Model",
-                    "type": "text",
-                    "placeholder": defaults.get("model") or "model-id",
+                    "type": "model",
+                    "placeholder": defaults.get("model") or "Refresh to load models",
                 },
             ]
             if provider_id == "openrouter":

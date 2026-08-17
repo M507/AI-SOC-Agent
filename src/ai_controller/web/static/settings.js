@@ -22,6 +22,14 @@ class SettingsManager {
         if (testBtn) {
             testBtn.addEventListener('click', () => this.test());
         }
+        const testModelBtn = document.getElementById('llm-test-model-btn');
+        if (testModelBtn) {
+            testModelBtn.addEventListener('click', () => this.testModel());
+        }
+        const refreshBtn = document.getElementById('llm-refresh-models-btn');
+        if (refreshBtn) {
+            refreshBtn.addEventListener('click', () => this.refreshModels());
+        }
     }
 
     async load() {
@@ -70,6 +78,23 @@ class SettingsManager {
         const fields = this.currentSchema();
         container.innerHTML = fields.map((field) => {
             const value = values[field.key] != null ? values[field.key] : '';
+            if (field.type === 'model') {
+                return `
+                    <label for="llm-field-${field.key}">${field.label}</label>
+                    <div class="llm-model-row">
+                        <input
+                            id="llm-field-${field.key}"
+                            data-llm-field="${field.key}"
+                            list="llm-model-options"
+                            type="text"
+                            value="${this.escapeAttr(value)}"
+                            placeholder="${this.escapeAttr(field.placeholder || 'Refresh to load models')}"
+                            autocomplete="off"
+                        >
+                        <datalist id="llm-model-options"></datalist>
+                    </div>
+                `;
+            }
             const inputType = field.type === 'password' ? 'password' : (field.type === 'number' ? 'number' : 'text');
             return `
                 <label for="llm-field-${field.key}">${field.label}</label>
@@ -83,6 +108,14 @@ class SettingsManager {
                 >
             `;
         }).join('');
+        const refreshBtn = document.getElementById('llm-refresh-models-btn');
+        if (refreshBtn) {
+            refreshBtn.style.display = fields.some((field) => field.type === 'model') ? '' : 'none';
+        }
+        const testModelBtn = document.getElementById('llm-test-model-btn');
+        if (testModelBtn) {
+            testModelBtn.style.display = fields.some((field) => field.type === 'model') ? '' : 'none';
+        }
     }
 
     collectProviderSettings() {
@@ -130,9 +163,63 @@ class SettingsManager {
             settings: this.collectProviderSettings(),
         });
         if (data.ok) {
+            const models = (data.details && data.details.models) || [];
+            if (models.length) {
+                this.fillModelOptions(models, this.collectProviderSettings().model);
+            }
             this.setStatus(data.message || 'Provider is reachable.');
         } else {
             this.setStatus(data.message || data.error || 'Provider check failed', true);
+        }
+    }
+
+    async refreshModels() {
+        this.setStatus('Refreshing models…');
+        const provider = this.currentProvider();
+        const current = this.collectProviderSettings().model;
+        const data = await this.api.listLLMModels({
+            provider,
+            settings: this.collectProviderSettings(),
+        });
+        const models = (data && data.models) || [];
+        if (!data.success) {
+            this.setStatus(data.message || data.error || 'Could not refresh models', true);
+            return;
+        }
+        this.fillModelOptions(models, current);
+        if (!models.length) {
+            this.setStatus('No models returned. Check the base URL and API key.', true);
+            return;
+        }
+        this.setStatus(`Loaded ${models.length} model${models.length === 1 ? '' : 's'}.`);
+    }
+
+    fillModelOptions(models, selected) {
+        const list = document.getElementById('llm-model-options');
+        const input = document.getElementById('llm-field-model');
+        const ids = models.map((m) => (typeof m === 'string' ? m : (m.id || m.name))).filter(Boolean);
+        if (list) {
+            list.innerHTML = ids.map((id) => `<option value="${this.escapeAttr(id)}"></option>`).join('');
+        }
+        if (input && ids.length && (!input.value || !ids.includes(input.value))) {
+            const keep = selected && ids.includes(selected) ? selected : ids[0];
+            input.value = keep;
+        }
+    }
+
+    async testModel() {
+        this.setStatus('Testing model…');
+        const provider = this.currentProvider();
+        const settings = this.collectProviderSettings();
+        const data = await this.api.testLLMModel({
+            provider,
+            settings,
+            model: settings.model,
+        });
+        if (data.ok) {
+            this.setStatus(data.message || 'Model responded.');
+        } else {
+            this.setStatus(data.message || data.error || 'Model test failed', true);
         }
     }
 

@@ -24,8 +24,8 @@ def test_create_openai_compatible_providers():
     openrouter = create_provider("openrouter", {"model": "anthropic/claude-sonnet-4"})
     assert "openrouter.ai" in openrouter._chat_url()
 
-    openwebui = create_provider("openwebui", {"base_url": "http://localhost:3000/api/v1", "model": "llama3"})
-    assert openwebui._chat_url().endswith("/chat/completions")
+    openwebui = create_provider("openwebui", {"base_url": "http://10.10.10.82:8080/", "model": "llama3"})
+    assert openwebui._chat_url() == "http://10.10.10.82:8080/api/v1/chat/completions"
 
 
 def test_mcp_tools_to_openai():

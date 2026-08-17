@@ -145,6 +145,16 @@
     margin-top: 8px;
 }
 
+.llm-model-row {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+}
+
+.llm-model-row input {
+    flex: 1;
+}
+
 .settings-status {
     margin-top: 12px;
     font-size: 13px;
