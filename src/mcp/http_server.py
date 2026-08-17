@@ -1,46 +1,80 @@
 """
-HTTP transport for the SamiGPT MCP server.
+HTTPS JSON-RPC transport for the SamiGPT MCP server.
 
 Exposes:
 - GET  /health  – process + integration health
 - GET  /tools   – registered MCP tools
 - POST /rpc     – JSON-RPC 2.0 (initialize, tools/list, tools/call)
 
+All routes require `Authorization: Bearer <mcp.api_token>` from config.json.
 Stdio MCP (`python -m src.mcp.mcp_server`) is unchanged for Cursor/Claude.
-This HTTP listener is what the web UI health-checks and what Open WebUI /
-other HTTP MCP clients can call.
 """
 
 from __future__ import annotations
 
+import hashlib
+import hmac
 from typing import Any, Dict
 
 from fastapi import FastAPI, Request
-from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response
+from starlette.middleware.base import BaseHTTPMiddleware
 
 from .mcp_server import SamiGPTMCPServer
 
 
-def create_mcp_http_app(server: SamiGPTMCPServer) -> FastAPI:
+class MCPTokenMiddleware(BaseHTTPMiddleware):
+    """Reject MCP HTTP requests that do not present the configured bearer token."""
+
+    async def dispatch(self, request: Request, call_next):
+        if request.url.scheme == "http":
+            return JSONResponse(status_code=403, content={"error": "HTTPS is required"})
+        expected = getattr(request.app.state, "api_token", "") or ""
+        provided = ""
+        auth = request.headers.get("authorization") or ""
+        if auth.lower().startswith("bearer "):
+            provided = auth[7:].strip()
+        if not provided:
+            provided = (request.headers.get("x-api-token") or "").strip()
+        if not expected or not hmac.compare_digest(
+            hashlib.sha256(provided.encode("utf-8")).digest(),
+            hashlib.sha256(expected.encode("utf-8")).digest(),
+        ):
+            return JSONResponse(status_code=401, content={"error": "Unauthorized"})
+        return await call_next(request)
+
+
+class MCPSecurityHeadersMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        response = await call_next(request)
+        response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["X-Frame-Options"] = "DENY"
+        response.headers["Cache-Control"] = "no-store"
+        if "server" in response.headers:
+            del response.headers["server"]
+        return response
+
+
+def create_mcp_http_app(server: SamiGPTMCPServer, api_token: str) -> FastAPI:
     """Build a standalone FastAPI app wrapping an existing MCP server instance."""
     app = FastAPI(
         title="SamiGPT MCP Server",
-        description="HTTP JSON-RPC transport for SamiGPT investigation tools",
+        description="HTTPS JSON-RPC transport for SamiGPT investigation tools",
         version=SamiGPTMCPServer.SERVER_VERSION,
-    )
-    app.add_middleware(
-        CORSMiddleware,
-        allow_origins=["*"],
-        allow_methods=["*"],
-        allow_headers=["*"],
+        docs_url=None,
+        redoc_url=None,
+        openapi_url=None,
     )
     app.state.mcp_server = server
+    app.state.api_token = api_token
+    app.add_middleware(MCPSecurityHeadersMiddleware)
+    app.add_middleware(MCPTokenMiddleware)
 
     @app.get("/health")
     async def health() -> Dict[str, Any]:
         snapshot = server.health_snapshot()
-        snapshot["transport"] = "http"
+        snapshot["transport"] = "https"
         return snapshot
 
     @app.get("/tools")
@@ -81,10 +115,11 @@ def create_mcp_http_app(server: SamiGPTMCPServer) -> FastAPI:
 
 def describe_mcp_endpoints(host: str, port: int) -> Dict[str, str]:
     """Human-readable connection info for the settings UI."""
-    base = f"http://{host}:{port}"
+    base = f"https://{host}:{port}"
     return {
         "health": f"{base}/health",
         "tools": f"{base}/tools",
         "rpc": f"{base}/rpc",
         "stdio": "python -m src.mcp.mcp_server",
+        "auth": "Authorization: Bearer <mcp.api_token from config.json>",
     }

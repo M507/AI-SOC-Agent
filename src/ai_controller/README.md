@@ -92,7 +92,8 @@ python cursor_agent.py --web --port 8081 --host 0.0.0.0
 python app.py
 ```
 
-Open browser to `http://localhost:8081` (or configured port).
+Open browser to `https://localhost:8081` (or configured port). Sign in with
+`web.username` / `web.password` from `config.json`. The UI is HTTPS-only.
 
 Configure the LLM provider under **Settings** (Cursor Agent, OpenAI, OpenRouter, Open WebUI, or custom). The **MCP** button shows MCP server health and listener settings.
 

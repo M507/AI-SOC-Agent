@@ -502,10 +502,13 @@ async def reload_config(request: Request):
 
 
 if __name__ == "__main__":
-    import uvicorn
+    import sys
 
-    print(f"Starting SamiGPT Configuration Manager...")
-    print(f"Admin secret is set via SAMIGPT_ADMIN_SECRET environment variable")
-    if ADMIN_SECRET == "admin":
-        print("WARNING: Using default admin secret! Set SAMIGPT_ADMIN_SECRET environment variable.")
-    uvicorn.run(app, host="0.0.0.0", port=8080)
+    print(
+        "The standalone config UI is disabled because it served HTTP with a default password.\n"
+        "Start the HTTPS web interface instead:\n"
+        "  python app.py\n"
+        "Then sign in with web.username / web.password from config.json.",
+        file=sys.stderr,
+    )
+    sys.exit(1)

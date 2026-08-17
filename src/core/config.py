@@ -145,11 +145,15 @@ class LoggingConfig:
 @dataclass
 class WebConfig:
     """
-    Configuration for the web management interface.
+    Configuration for the HTTPS web UI (username/password live in config.json).
     """
 
-    admin_secret: str  # Secret/password for accessing the management interface
-    session_secret: Optional[str] = None  # Secret for session signing (auto-generated if not provided)
+    username: str = "admin"
+    password: str = ""
+    session_secret: Optional[str] = None
+    session_ttl_seconds: int = 43200
+    tls_cert: str = "certs/server.crt"
+    tls_key: str = "certs/server.key"
 
 
 @dataclass

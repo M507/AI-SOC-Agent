@@ -77,11 +77,12 @@
     }
   },
   "mcp": {
-    "_comment": "HTTP MCP listener (separate from the web UI). Stdio remains available via: python -m src.mcp.mcp_server",
+    "_comment": "HTTPS MCP listener (separate from the web UI). All HTTP routes require Bearer mcp.api_token. Stdio remains available via: python -m src.mcp.mcp_server",
     "enabled": true,
     "auto_start": true,
     "host": "127.0.0.1",
-    "port": 8082
+    "port": 8082,
+    "api_token": ""
   },
   "eng": {
     "_comment": "Set 'provider' to 'trello', 'clickup', or 'github' to choose which platform to use",
@@ -110,10 +111,11 @@
     }
   },
   "web": {
-    "_comment": "NOT IMPLEMENTED - TODO - Web UI authentication settings - all three fields are required",
+    "_comment": "Required. The web UI is HTTPS-only and rejects every request without a valid session.",
     "username": "admin",
     "password": "changeme",
-    "session_secret": "generate-a-random-secret-key-here-minimum-32-characters"
+    "session_secret": "",
+    "session_ttl_seconds": 43200
   }
 }
 

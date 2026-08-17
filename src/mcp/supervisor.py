@@ -15,8 +15,9 @@ from typing import Any, Dict, Optional
 
 import uvicorn
 
-from ..core.config_storage import get_section
+from ..core.config_storage import get_section, update_raw_section
 from ..core.logging import get_logger
+from ..core.tls import ensure_tls_certs
 from .factory import build_mcp_server, load_runtime_config
 from .http_server import create_mcp_http_app, describe_mcp_endpoints
 from .mcp_server import SamiGPTMCPServer, configure_mcp_logging
@@ -39,6 +40,7 @@ class MCPSupervisor:
         self._port = _DEFAULT_PORT
         self._started_at: Optional[str] = None
         self._last_error: Optional[str] = None
+        self._tls = True
 
     @property
     def server(self) -> Optional[SamiGPTMCPServer]:
@@ -72,7 +74,23 @@ class MCPSupervisor:
                 configure_mcp_logging(log_dir)
                 built = build_mcp_server(config)
                 self._server = built.server
-                app = create_mcp_http_app(self._server)
+                mcp_cfg = get_section("mcp", {})
+                api_token = (mcp_cfg.get("api_token") or "").strip()
+                if not api_token:
+                    import secrets as _secrets
+
+                    api_token = _secrets.token_urlsafe(32)
+                    persisted = dict(mcp_cfg)
+                    persisted["api_token"] = api_token
+                    persisted.setdefault("host", host)
+                    persisted.setdefault("port", port)
+                    persisted.setdefault("enabled", True)
+                    persisted.setdefault("auto_start", True)
+                    update_raw_section("mcp", persisted)
+                    logger.warning("Generated mcp.api_token and wrote it to config.json")
+
+                app = create_mcp_http_app(self._server, api_token=api_token)
+                cert_file, key_file = ensure_tls_certs()
 
                 uv_config = uvicorn.Config(
                     app,
@@ -80,11 +98,13 @@ class MCPSupervisor:
                     port=port,
                     log_level="warning",
                     access_log=False,
+                    ssl_certfile=cert_file,
+                    ssl_keyfile=key_file,
                 )
                 uv_server = uvicorn.Server(uv_config)
                 thread = threading.Thread(
                     target=uv_server.run,
-                    name="sami-mcp-http",
+                    name="sami-mcp-https",
                     daemon=True,
                 )
                 thread.start()
@@ -95,7 +115,7 @@ class MCPSupervisor:
                 self._port = port
                 self._started_at = datetime.now(timezone.utc).isoformat()
                 self._last_error = None
-                logger.info("MCP HTTP server started on http://%s:%s", host, port)
+                logger.info("MCP HTTPS server started on https://%s:%s", host, port)
             except Exception as e:
                 self._last_error = str(e)
                 logger.exception("Failed to start MCP HTTP server")
@@ -135,6 +155,7 @@ class MCPSupervisor:
             "status": "healthy" if running else "stopped",
             "host": self._host,
             "port": self._port,
+            "tls": True,
             "started_at": self._started_at,
             "last_error": self._last_error,
             "endpoints": describe_mcp_endpoints(self._host, self._port),

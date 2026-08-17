@@ -15,13 +15,15 @@ from typing import Any, Dict, List, Optional, Tuple
 from datetime import datetime, timedelta
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Request
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from ..agent_executor import AgentExecutor, ExecutionResult
 from ..session_manager import SessionManager, Session, SessionType, SessionStatus, AutorunConfig
 from ...core.logging import get_logger
+from .auth import AuthMiddleware, SecurityHeadersMiddleware, init_auth, websocket_user
+from .routes_auth import router as auth_router
 from .routes_llm import router as llm_router
 from .routes_mcp import router as mcp_router
 
@@ -32,7 +34,13 @@ app = FastAPI(
     title="SamiGPT AI Controller",
     description="Web interface for managing and executing agent commands",
     version="1.0.0",
+    docs_url=None,
+    redoc_url=None,
+    openapi_url=None,
 )
+app.add_middleware(SecurityHeadersMiddleware)
+app.add_middleware(AuthMiddleware)
+app.include_router(auth_router)
 app.include_router(llm_router)
 app.include_router(mcp_router)
 
@@ -83,11 +91,17 @@ class UIConfigUpdate(BaseModel):
     ui_debug: Optional[bool] = None
 
 
-def initialize(config_storage_dir: Optional[str] = None, debug_ui: bool = False, mcp_auto_start: bool = True):
+def initialize(
+    config_storage_dir: Optional[str] = None,
+    debug_ui: bool = False,
+    mcp_auto_start: bool = True,
+    cookie_secure: bool = True,
+):
     """Initialize the web server components."""
     global executor, session_manager, UI_DEBUG_MODE, MCP_AUTO_START
     
     try:
+        init_auth(cookie_secure=cookie_secure)
         if config_storage_dir:
             session_manager = SessionManager(storage_dir=config_storage_dir)
         else:
@@ -732,6 +746,19 @@ async def broadcast_to_session(session_id: str, message: dict):
             active_connections[session_id].remove(conn)
 
 
+@app.get("/login", response_class=HTMLResponse)
+async def login_page(request: Request):
+    """Serve the sign-in page. Authenticated users go straight to the UI."""
+    from .auth import current_user
+
+    if current_user(request):
+        return RedirectResponse(url="/", status_code=302)
+    html_path = TEMPLATES_DIR / "login.html"
+    if html_path.exists():
+        return HTMLResponse(content=html_path.read_text())
+    return HTMLResponse(content="<h1>Login</h1><p>login.html not found</p>", status_code=500)
+
+
 @app.get("/", response_class=HTMLResponse)
 async def root():
     """Serve the main controller interface."""
@@ -1039,6 +1066,10 @@ async def execute_command(session_id: str, command_request: CommandRequest):
 @app.websocket("/ws/sessions/{session_id}")
 async def websocket_session(websocket: WebSocket, session_id: str):
     """WebSocket endpoint for real-time session updates."""
+    if not websocket_user(websocket):
+        await websocket.close(code=4401)
+        return
+
     await websocket.accept()
     
     # Add to active connections
@@ -1203,10 +1234,10 @@ async def delete_autorun(autorun_id: str):
 
 if __name__ == "__main__":
     import uvicorn
-    
-    # Initialize
+
+    from ...core.tls import uvicorn_ssl_kwargs
+
     initialize()
-    
-    print("Starting SamiGPT AI Controller...")
-    uvicorn.run(app, host="0.0.0.0", port=8081)
+    print("Starting SamiGPT AI Controller on https://0.0.0.0:8081")
+    uvicorn.run(app, host="0.0.0.0", port=8081, **uvicorn_ssl_kwargs())
 

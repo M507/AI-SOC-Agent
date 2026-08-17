@@ -225,13 +225,32 @@ def main():
         web_host = args.host or ai_controller_config.get("web_host", "0.0.0.0")
         storage_dir = args.storage_dir or ai_controller_config.get("storage_dir", "data/ai_controller")
         
-        # Initialize server
-        initialize(config_storage_dir=storage_dir, debug_ui=args.debug)
-        
-        print(f"Starting SamiGPT AI Controller on http://{web_host}:{web_port}")
+        from ...core.tls import uvicorn_ssl_kwargs
+        from ..web.auth import load_web_auth_config
+
+        try:
+            load_web_auth_config(cookie_secure=True)
+        except RuntimeError as exc:
+            print(str(exc), file=sys.stderr)
+            sys.exit(1)
+
+        initialize(
+            config_storage_dir=storage_dir,
+            debug_ui=args.debug,
+            cookie_secure=True,
+        )
+
+        print(f"Starting SamiGPT AI Controller on https://{web_host}:{web_port}")
+        print("Sign-in uses web.username / web.password from config.json")
         print("Press Ctrl+C to stop")
-        
-        uvicorn.run(app, host=web_host, port=web_port, log_level="info")
+
+        uvicorn.run(
+            app,
+            host=web_host,
+            port=web_port,
+            log_level="info",
+            **uvicorn_ssl_kwargs(),
+        )
         return
     
     # Not --web mode: pass through to Cursor IDE cursor-agent

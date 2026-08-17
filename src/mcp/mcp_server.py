@@ -3733,7 +3733,7 @@ async def main() -> None:
         mcp_logger.warning(
             "⚠️  Only rules engine tools are available. "
             "Configure integrations in config.json to enable case management, SIEM, and EDR tools. "
-            "Use the web configuration UI: python -m src.web.config_server"
+            "Use python app.py and sign in to the HTTPS web UI to configure integrations."
         )
 
     # Run MCP server (stdio mode)

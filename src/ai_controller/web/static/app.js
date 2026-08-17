@@ -118,6 +118,16 @@ class AIController {
                 this.setActiveSection('mcp');
             });
         }
+        const logoutBtn = document.getElementById('logout-btn');
+        if (logoutBtn) {
+            logoutBtn.addEventListener('click', async () => {
+                try {
+                    await fetch('/api/auth/logout', { method: 'POST', credentials: 'same-origin' });
+                } finally {
+                    window.location.href = '/login';
+                }
+            });
+        }
         
         // Command input
         const commandInput = document.getElementById('command-input');

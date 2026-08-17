@@ -1,12 +1,21 @@
 // API client for AI Controller backend
 
 class APIClient {
+    async _fetch(url, options = {}) {
+        const response = await fetch(url, { credentials: 'same-origin', ...options });
+        if (response.status === 401 && !String(url).includes('/api/auth/')) {
+            window.location.href = '/login';
+            throw new Error('Authentication required');
+        }
+        return response;
+    }
+
     /**
      * Load UI configuration (e.g., debug mode).
      */
     async loadConfig() {
         try {
-            const response = await fetch('/api/config');
+            const response = await this._fetch('/api/config');
             if (!response.ok) {
                 throw new Error(`HTTP ${response.status}`);
             }
@@ -23,7 +32,7 @@ class APIClient {
      */
     async updateConfig(config) {
         try {
-            const response = await fetch('/api/config', {
+            const response = await this._fetch('/api/config', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json'
@@ -50,7 +59,7 @@ class APIClient {
             if (sessionType) {
                 url += `?session_type=${sessionType}`;
             }
-            const response = await fetch(url);
+            const response = await this._fetch(url);
             if (!response.ok) {
                 throw new Error(`HTTP ${response.status}`);
             }
@@ -68,7 +77,7 @@ class APIClient {
     async loadAutoruns(enabledOnly = false) {
         try {
             const url = `/api/autoruns?enabled_only=${enabledOnly}`;
-            const response = await fetch(url);
+            const response = await this._fetch(url);
             if (!response.ok) {
                 throw new Error(`HTTP ${response.status}`);
             }
@@ -85,7 +94,7 @@ class APIClient {
      */
     async getSession(sessionId) {
         try {
-            const response = await fetch(`/api/sessions/${sessionId}`);
+            const response = await this._fetch(`/api/sessions/${sessionId}`);
             if (!response.ok) {
                 throw new Error(`HTTP ${response.status}`);
             }
@@ -102,7 +111,7 @@ class APIClient {
      */
     async createSession(name, sessionType = 'manual') {
         try {
-            const response = await fetch('/api/sessions', {
+            const response = await this._fetch('/api/sessions', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json'
@@ -129,7 +138,7 @@ class APIClient {
      */
     async executeCommand(sessionId, command) {
         try {
-            const response = await fetch(`/api/sessions/${sessionId}/execute`, {
+            const response = await this._fetch(`/api/sessions/${sessionId}/execute`, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json'
@@ -153,7 +162,7 @@ class APIClient {
      */
     async stopSession(sessionId) {
         try {
-            const response = await fetch(`/api/sessions/${sessionId}/stop`, {
+            const response = await this._fetch(`/api/sessions/${sessionId}/stop`, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json'
@@ -176,7 +185,7 @@ class APIClient {
      */
     async deleteSession(sessionId) {
         try {
-            const response = await fetch(`/api/sessions/${sessionId}`, {
+            const response = await this._fetch(`/api/sessions/${sessionId}`, {
                 method: 'DELETE',
                 headers: {
                     'Content-Type': 'application/json'
@@ -209,7 +218,7 @@ class APIClient {
             if (conditionFunction) {
                 body.condition_function = conditionFunction;
             }
-            const response = await fetch('/api/autoruns', {
+            const response = await this._fetch('/api/autoruns', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json'
@@ -233,7 +242,7 @@ class APIClient {
      */
     async getAutorun(autorunId) {
         try {
-            const response = await fetch(`/api/autoruns/${autorunId}`);
+            const response = await this._fetch(`/api/autoruns/${autorunId}`);
             if (!response.ok) {
                 throw new Error(`HTTP ${response.status}`);
             }
@@ -250,7 +259,7 @@ class APIClient {
      */
     async updateAutorun(autorunId, updates) {
         try {
-            const response = await fetch(`/api/autoruns/${autorunId}`, {
+            const response = await this._fetch(`/api/autoruns/${autorunId}`, {
                 method: 'PUT',
                 headers: {
                     'Content-Type': 'application/json'
@@ -274,7 +283,7 @@ class APIClient {
      */
     async clearAutorunSession(autorunId) {
         try {
-            const response = await fetch(`/api/autoruns/${autorunId}/clear`, {
+            const response = await this._fetch(`/api/autoruns/${autorunId}/clear`, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json'
@@ -297,7 +306,7 @@ class APIClient {
      */
     async deleteAutorun(autorunId) {
         try {
-            const response = await fetch(`/api/autoruns/${autorunId}`, {
+            const response = await this._fetch(`/api/autoruns/${autorunId}`, {
                 method: 'DELETE',
                 headers: {
                     'Content-Type': 'application/json'
@@ -316,7 +325,7 @@ class APIClient {
     }
 
     async request(url, options = {}) {
-        const response = await fetch(url, options);
+        const response = await this._fetch(url, options);
         if (!response.ok) {
             const errorText = await response.text();
             throw new Error(`HTTP ${response.status}: ${errorText}`);

@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field
 
 from ...core.config_storage import get_section, update_raw_section
 from ...core.logging import get_logger
+from ...core.secrets import mask_mapping
 from ...mcp.supervisor import get_supervisor
 
 logger = get_logger("sami.web.mcp")
@@ -38,7 +39,7 @@ async def get_mcp_settings():
     supervisor = get_supervisor()
     return {
         "success": True,
-        "settings": stored,
+        "settings": mask_mapping(stored),
         "status": supervisor.status(),
     }
 
@@ -49,7 +50,7 @@ async def update_mcp_settings(update: MCPSettingsUpdate):
     incoming = update.model_dump(exclude_none=True)
     existing.update(incoming)
     update_raw_section("mcp", existing)
-    return {"success": True, "settings": existing, "status": get_supervisor().status()}
+    return {"success": True, "settings": mask_mapping(existing), "status": get_supervisor().status()}
 
 
 @router.get("/health")

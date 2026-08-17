@@ -16,11 +16,24 @@ logger = get_logger("sami.mcp.client")
 
 
 class MCPToolClient:
-    """Thin adapter over SamiGPTMCPServer.handle_request / HTTP /rpc."""
+    """Thin adapter over SamiGPTMCPServer.handle_request / HTTPS /rpc."""
 
-    def __init__(self, host: str = "127.0.0.1", port: int = 8082) -> None:
+    def __init__(
+        self,
+        host: str = "127.0.0.1",
+        port: int = 8082,
+        api_token: Optional[str] = None,
+        verify: Any = None,
+    ) -> None:
         self.host = host
         self.port = port
+        self.api_token = api_token or ""
+        if verify is None:
+            from ..core.tls import DEFAULT_CERT_PATH
+
+            self.verify = str(DEFAULT_CERT_PATH) if DEFAULT_CERT_PATH.exists() else False
+        else:
+            self.verify = verify
 
     async def list_tools(self) -> List[Dict[str, Any]]:
         response = await self._rpc("tools/list", {})
@@ -74,14 +87,17 @@ class MCPToolClient:
             logger.warning("httpx is not installed; cannot call MCP over HTTP")
             return None
 
-        url = f"http://{self.host}:{self.port}/rpc"
+        url = f"https://{self.host}:{self.port}/rpc"
+        headers = {}
+        if self.api_token:
+            headers["Authorization"] = f"Bearer {self.api_token}"
         try:
-            async with httpx.AsyncClient(timeout=60.0) as client:
-                response = await client.post(url, json=request)
+            async with httpx.AsyncClient(timeout=60.0, verify=self.verify) as client:
+                response = await client.post(url, json=request, headers=headers)
                 response.raise_for_status()
                 if response.status_code == 204:
                     return None
                 return response.json()
         except Exception as e:
-            logger.warning("HTTP MCP call to %s failed: %s", url, e)
+            logger.warning("HTTPS MCP call to %s failed: %s", url, e)
             return None

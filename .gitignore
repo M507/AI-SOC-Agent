@@ -75,7 +75,8 @@ credentials/
 *.p12
 *.pfx
 id_rsa*
-*.crt
+# TLS certificates (auto-generated self-signed certs)
+certs/
 
 .cursor/mcp.json
 PPT.md

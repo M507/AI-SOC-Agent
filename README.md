@@ -17,7 +17,7 @@ For detailed documentation and presentation materials:
 ### Quick Start
 
 SamiGPT is started from a single entry point. That process serves the web UI
-and, by default, also starts the MCP server as a **separate HTTP listener**
+and, by default, also starts the MCP server as a **separate HTTPS listener**
 with its own settings and health check.
 
 **Steps:**
@@ -27,27 +27,39 @@ with its own settings and health check.
    source venv/bin/activate  # On Windows: venv\Scripts\activate
    ```
 
-2. **Start the application:**
+2. **Set the UI password** in `config.json` (copied from `config.json.example` on first run):
+   ```json
+   "web": {
+     "username": "admin",
+     "password": "choose-a-strong-password",
+     "session_secret": ""
+   }
+   ```
+   `session_secret` is generated automatically if left empty.
+
+3. **Start the application:**
    ```bash
    python app.py
    ```
+   The UI binds **HTTPS on `0.0.0.0:8081`**. The first start writes a self-signed certificate to `certs/`. Your browser will warn until you trust that cert or replace it with a real one.
 
    Optional flags:
    ```bash
-   python app.py --host 127.0.0.1 --port 8081
+   python app.py --port 8081
    python app.py --no-mcp    # web UI only; start MCP later from the UI
    ```
 
-3. **Open your browser:**
-   Navigate to `http://127.0.0.1:8081`.
+4. **Open your browser:**
+   Navigate to `https://<host>:8081` and sign in. Nothing in the UI, APIs, or static files is reachable without a valid session.
 
-4. **Choose an LLM provider:**
+5. **Choose an LLM provider:**
    Open **Settings** and select Cursor Agent, OpenAI, OpenRouter, Open WebUI,
    or any OpenAI-compatible endpoint. Save, then use **Test provider**.
 
-5. **Check the MCP server:**
+6. **Check the MCP server:**
    Use the **MCP** button in the header. It shows health, bound host/port,
-   registered tools, and start/stop/restart controls.
+   registered tools, and start/stop/restart controls. MCP HTTPS routes require
+   `Authorization: Bearer <mcp.api_token>` from `config.json`.
 
 #### MCP Server (stdio, for Cursor / Claude Desktop)
 
@@ -184,14 +196,14 @@ Edit `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS) o
 #### Other MCP-Compatible Tools
 
 The MCP server can also be connected to:
-- **Open WebUI** via the HTTP listener (`http://127.0.0.1:8082/rpc`) or stdio
+- **Open WebUI** via the HTTPS listener (`https://127.0.0.1:8082/rpc`) or stdio
 - **Other LLM tools** that support the Model Context Protocol
 
-HTTP endpoints when `app.py` is running (defaults):
+HTTPS endpoints when `app.py` is running (defaults). Send `Authorization: Bearer <mcp.api_token>`:
 
-- Health: `http://127.0.0.1:8082/health`
-- Tools: `http://127.0.0.1:8082/tools`
-- JSON-RPC: `POST http://127.0.0.1:8082/rpc`
+- Health: `https://127.0.0.1:8082/health`
+- Tools: `https://127.0.0.1:8082/tools`
+- JSON-RPC: `POST https://127.0.0.1:8082/rpc`
 
 ## Architecture
 

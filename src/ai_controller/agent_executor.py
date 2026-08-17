@@ -385,6 +385,7 @@ class AgentExecutor:
             mcp_client = MCPToolClient(
                 host=mcp_cfg.get("host", "127.0.0.1"),
                 port=int(mcp_cfg.get("port", 8082)),
+                api_token=mcp_cfg.get("api_token") or "",
             )
             llm_cfg = get_section("llm", {})
             result = await provider.complete(
