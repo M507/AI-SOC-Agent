@@ -120,10 +120,22 @@ class AutorunManager {
      * Attach event listeners for autorun action buttons.
      */
     attachEventListeners() {
+        const editBtn = document.getElementById('autorun-edit-btn');
         const toggleBtn = document.getElementById('autorun-toggle-btn');
         const clearBtn = document.getElementById('autorun-clear-btn');
         const exportBtn = document.getElementById('autorun-export-btn');
         const deleteBtn = document.getElementById('autorun-delete-btn');
+        const closeEditBtn = document.getElementById('close-edit-autorun-modal');
+        const cancelEditBtn = document.getElementById('cancel-edit-autorun-btn');
+        const saveEditBtn = document.getElementById('save-autorun-settings-btn');
+        const editInterval = document.getElementById('edit-autorun-interval');
+
+        if (editBtn) {
+            editBtn.addEventListener('click', () => {
+                if (!this.currentAutorunId) return;
+                this.showEditModal(this.currentAutorunId);
+            });
+        }
 
         if (toggleBtn) {
             toggleBtn.addEventListener('click', () => {
@@ -152,6 +164,16 @@ class AutorunManager {
                 this.deleteAutorun(this.currentAutorunId);
             });
         }
+        if (closeEditBtn) closeEditBtn.addEventListener('click', () => this.hideEditModal());
+        if (cancelEditBtn) cancelEditBtn.addEventListener('click', () => this.hideEditModal());
+        if (saveEditBtn) saveEditBtn.addEventListener('click', () => this.saveAutorunSettings());
+        if (editInterval) {
+            editInterval.addEventListener('input', () => this.updateEditIntervalPreview());
+        }
+        window.addEventListener('click', (event) => {
+            const modal = document.getElementById('edit-autorun-modal');
+            if (event.target === modal) this.hideEditModal();
+        });
     }
 
     /**
@@ -248,6 +270,87 @@ class AutorunManager {
         }
     }
 
+    showEditModal(autorunId) {
+        const autorun = this.autoruns.get(autorunId);
+        const modal = document.getElementById('edit-autorun-modal');
+        if (!autorun || !modal) return;
+
+        document.getElementById('edit-autorun-name').value = autorun.name || '';
+        document.getElementById('edit-autorun-command').value = autorun.command || '';
+        document.getElementById('edit-autorun-condition').value = autorun.condition_function || '';
+        document.getElementById('edit-autorun-interval').value = autorun.interval_seconds || 300;
+        if (this.controller.elasticClusters) {
+            this.controller.elasticClusters.fillSelect(
+                document.getElementById('edit-autorun-cluster-select'),
+                autorun.cluster_id
+            );
+        }
+        this.updateEditIntervalPreview();
+        modal.style.display = 'flex';
+        document.getElementById('edit-autorun-name').focus();
+    }
+
+    hideEditModal() {
+        const modal = document.getElementById('edit-autorun-modal');
+        if (modal) modal.style.display = 'none';
+    }
+
+    updateEditIntervalPreview() {
+        const interval = document.getElementById('edit-autorun-interval');
+        const preview = document.getElementById('edit-autorun-interval-preview');
+        if (interval && preview) preview.textContent = formatIntervalPreview(interval.value);
+    }
+
+    async saveAutorunSettings() {
+        const autorunId = this.currentAutorunId;
+        const autorun = autorunId ? this.autoruns.get(autorunId) : null;
+        if (!autorun) return;
+
+        const name = document.getElementById('edit-autorun-name').value.trim();
+        const command = document.getElementById('edit-autorun-command').value.trim();
+        const condition = document.getElementById('edit-autorun-condition').value || null;
+        const intervalSeconds = Number.parseInt(
+            document.getElementById('edit-autorun-interval').value,
+            10
+        );
+        if (!name || !command) {
+            if (window.toast) {
+                window.toast.info('Name and starting prompt are required.', { key: 'autorun-edit' });
+            }
+            return;
+        }
+        if (!Number.isFinite(intervalSeconds) || intervalSeconds < 5) {
+            if (window.toast) {
+                window.toast.info('Interval must be at least 5 seconds.', { key: 'autorun-edit' });
+            }
+            return;
+        }
+
+        const clusterId = this.controller.elasticClusters
+            ? this.controller.elasticClusters.selectedClusterId('edit-autorun-cluster-select')
+            : autorun.cluster_id;
+        const result = await this.controller.api.updateAutorun(autorunId, {
+            name,
+            command,
+            condition_function: condition,
+            interval_seconds: intervalSeconds,
+            cluster_id: clusterId,
+        });
+        if (!result || !result.success) {
+            if (window.toast) {
+                window.toast.error(result.error || 'Could not save autorun settings.', { key: 'autorun-edit' });
+            }
+            return;
+        }
+
+        this.hideEditModal();
+        await this.controller.loadAutoruns();
+        this.showAutorunDetails(autorunId);
+        if (window.toast) {
+            window.toast.success('Autorun settings saved.', { key: 'autorun-edit' });
+        }
+    }
+
     /**
      * Toggle enabled/disabled state for an autorun.
      */
@@ -261,7 +364,12 @@ class AutorunManager {
             const result = await this.controller.api.updateAutorun(autorunId, { enabled: newEnabled });
             if (result && result.success) {
                 if (window.toast) {
-                    window.toast.success(newEnabled ? 'Autorun enabled.' : 'Autorun disabled.', { key: 'autorun' });
+                    window.toast.success(
+                        newEnabled
+                            ? 'Autorun enabled; an immediate run has been scheduled.'
+                            : 'Autorun disabled; its timer has been stopped.',
+                        { key: 'autorun' }
+                    );
                 }
                 await this.controller.loadAutoruns();
                 this.showAutorunDetails(autorunId);

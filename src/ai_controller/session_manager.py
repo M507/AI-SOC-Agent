@@ -9,7 +9,7 @@ from __future__ import annotations
 import json
 import os
 from dataclasses import dataclass, asdict, field, fields
-from datetime import datetime
+from datetime import datetime, timedelta
 from enum import Enum
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -371,10 +371,34 @@ class SessionManager:
         autorun = self.get_autorun(autorun_id)
         if not autorun:
             raise ValueError(f"Autorun {autorun_id} not found")
-        
+
+        was_enabled = autorun.enabled
+        interval_changed = (
+            "interval_seconds" in kwargs
+            and kwargs["interval_seconds"] != autorun.interval_seconds
+        )
         for key, value in kwargs.items():
             if hasattr(autorun, key):
                 setattr(autorun, key, value)
+
+        now = datetime.now()
+        if not was_enabled and autorun.enabled:
+            # Re-enabling behaves like creation: it is immediately eligible
+            # for the scheduler, then starts a fresh interval after that run.
+            autorun.next_run = now
+            logger.info("Re-enabled autorun %s; scheduled immediate run", autorun_id)
+        elif interval_changed and autorun.enabled:
+            # An edited interval starts a new timer from the save operation.
+            autorun.next_run = now + timedelta(seconds=autorun.interval_seconds)
+            logger.info(
+                "Reset autorun %s timer to %ss after interval update",
+                autorun_id,
+                autorun.interval_seconds,
+            )
+        elif not autorun.enabled:
+            autorun.next_run = None
+            if was_enabled:
+                logger.info("Disabled autorun %s; cleared pending timer", autorun_id)
 
         if "cluster_id" in kwargs and autorun.session_id:
             session = self.get_session(autorun.session_id)

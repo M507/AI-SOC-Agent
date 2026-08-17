@@ -11,10 +11,12 @@ This module is responsible for:
 from __future__ import annotations
 
 import json
+import warnings
 from dataclasses import dataclass
 from typing import Any, Dict, Optional
 
 import requests
+from urllib3.exceptions import InsecureRequestWarning
 
 from ....core.errors import IntegrationError
 from ....core.logging import get_logger
@@ -90,9 +92,17 @@ class ElasticHttpClient:
 
         try:
             error_data = response.json()
-            error_type = error_data.get("error", {}).get("type", "Unknown")
-            error_reason = error_data.get("error", {}).get("reason", f"HTTP {response.status_code}")
-            full_message = f"{error_type}: {error_reason}"
+            error = error_data.get("error")
+            if isinstance(error, dict):
+                error_type = error.get("type", "Unknown")
+                error_reason = error.get("reason", f"HTTP {response.status_code}")
+                detail = f"{error_type}: {error_reason}"
+            else:
+                detail = str(error_data.get("message") or error or response.reason)
+            # Keep the status code in structured Elasticsearch errors. Callers
+            # use it to distinguish a missing index (eligible for fallback)
+            # from malformed queries and authentication failures.
+            full_message = f"HTTP {response.status_code}: {detail}"
         except Exception:
             full_message = f"HTTP {response.status_code}: {response.text[:200]}"
 
@@ -130,15 +140,21 @@ class ElasticHttpClient:
             if json_data:
                 logger.debug(f"  JSON payload: {json.dumps(json_data)[:200]}...")
 
-            response = requests.request(
-                method=method,
-                url=url,
-                headers=headers,
-                json=json_data,
-                params=params,
-                timeout=self.timeout_seconds,
-                verify=self.verify_ssl,
-            )
+            # verify_ssl=False is an explicit per-cluster setting (common for
+            # lab Elasticsearch). Avoid flooding autorun logs with one warning
+            # per request while retaining warnings for every other client.
+            with warnings.catch_warnings():
+                if not self.verify_ssl:
+                    warnings.simplefilter("ignore", InsecureRequestWarning)
+                response = requests.request(
+                    method=method,
+                    url=url,
+                    headers=headers,
+                    json=json_data,
+                    params=params,
+                    timeout=self.timeout_seconds,
+                    verify=self.verify_ssl,
+                )
 
             logger.debug(f"Elastic response status: {response.status_code}")
             if response.status_code >= 400:

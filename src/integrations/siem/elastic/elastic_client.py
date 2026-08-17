@@ -95,7 +95,11 @@ class ElasticSIEMClient:
             try:
                 query_dict = json.loads(query)
                 if isinstance(query_dict, dict) and "query" in query_dict:
-                    es_query = query_dict
+                    es_query = dict(query_dict)
+                    if not es_query.get("query"):
+                        es_query["query"] = {"match_all": {}}
+                elif query_dict == {}:
+                    es_query = {"query": {"match_all": {}}}
                 else:
                     # Wrap in query DSL
                     es_query = {"query": query_dict}
@@ -109,6 +113,15 @@ class ElasticSIEMClient:
                     },
                     "size": limit
                 }
+
+            # `limit` is part of this method's contract. Apply it to full DSL
+            # queries too, both to avoid an implicit Elasticsearch default and
+            # to prevent an autorun-provided body from requesting excess data.
+            try:
+                requested_size = int(es_query.get("size", limit))
+            except (TypeError, ValueError):
+                requested_size = limit
+            es_query["size"] = max(0, min(requested_size, limit))
             
             # Search across common security indices with fallback
             indices_patterns = [

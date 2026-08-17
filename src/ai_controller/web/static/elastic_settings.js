@@ -195,7 +195,7 @@ class ElasticClustersManager {
     }
 
     fillAllSelects() {
-        ['session-cluster-select', 'autorun-cluster-select'].forEach((id) => {
+        ['session-cluster-select', 'autorun-cluster-select', 'edit-autorun-cluster-select'].forEach((id) => {
             this.fillSelect(document.getElementById(id));
         });
     }

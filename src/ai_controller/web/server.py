@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -18,7 +19,7 @@ from datetime import datetime, timedelta
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from ..agent_executor import AgentExecutor, ExecutionResult
 from ..session_manager import SessionManager, Session, SessionType, SessionStatus, AutorunConfig
@@ -33,10 +34,38 @@ from .routes_integrations import router as integrations_router
 logger = get_logger("sami.ai_controller.web.server")
 
 
+class _ReloadCancelledErrorFilter(logging.Filter):
+    """Hide only the benign lifespan cancellation emitted during debug reload."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        message = record.getMessage().lower()
+        # Starlette serializes cancellation into the shutdown.failed message,
+        # so uvicorn logs it as text without exc_info.
+        serialized_cancel = (
+            "asyncio.exceptions.cancellederror" in message
+            and "starlette/routing.py" in message
+        )
+        if serialized_cancel:
+            return False
+        exc_info = record.exc_info
+        if not exc_info:
+            return True
+        exc_type = exc_info[0]
+        is_cancel = isinstance(exc_type, type) and issubclass(exc_type, asyncio.CancelledError)
+        is_lifespan = "lifespan" in message
+        return not (is_cancel and is_lifespan)
+
+
+def _install_reload_cancel_filter() -> None:
+    uvicorn_logger = logging.getLogger("uvicorn.error")
+    if not any(isinstance(item, _ReloadCancelledErrorFilter) for item in uvicorn_logger.filters):
+        uvicorn_logger.addFilter(_ReloadCancelledErrorFilter())
+
+
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     """
-    Run startup/shutdown without treating uvicorn reload as a failed lifespan.
+    Run startup/shutdown cleanly when uvicorn reloads the worker.
 
     WatchFiles cancels the worker while Starlette is blocked on the lifespan
     receive queue. Any CancelledError that escapes is sent as
@@ -117,9 +146,9 @@ class CommandRequest(BaseModel):
 
 class AutorunCreateRequest(BaseModel):
     """Request to create an autorun."""
-    name: str
-    command: str
-    interval_seconds: int
+    name: str = Field(min_length=1)
+    command: str = Field(min_length=1)
+    interval_seconds: int = Field(ge=5)
     condition_function: Optional[str] = None
     cluster_id: Optional[str] = None
 
@@ -127,8 +156,9 @@ class AutorunCreateRequest(BaseModel):
 class AutorunUpdateRequest(BaseModel):
     """Request to update an autorun."""
     enabled: Optional[bool] = None
-    interval_seconds: Optional[int] = None
-    name: Optional[str] = None
+    interval_seconds: Optional[int] = Field(default=None, ge=5)
+    name: Optional[str] = Field(default=None, min_length=1)
+    command: Optional[str] = Field(default=None, min_length=1)
     condition_function: Optional[str] = None
     cluster_id: Optional[str] = None
 
@@ -166,9 +196,12 @@ def create_app():
     Build the serving app. Used by `python app.py --debug` so each reload
     worker re-reads env and re-initializes after a file change.
     """
+    debug_ui = _env_flag("SAMI_DEBUG_UI")
+    if debug_ui:
+        _install_reload_cancel_filter()
     initialize(
         config_storage_dir=os.environ.get("SAMI_STORAGE_DIR") or None,
-        debug_ui=_env_flag("SAMI_DEBUG_UI"),
+        debug_ui=debug_ui,
         mcp_auto_start=_env_flag("SAMI_MCP_AUTO_START", default=True),
         cookie_secure=_env_flag("SAMI_COOKIE_SECURE", default=True),
     )

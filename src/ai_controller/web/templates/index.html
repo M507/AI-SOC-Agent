@@ -322,6 +322,7 @@
                             <div class="session-actions">
                                 <span id="autorun-status" class="status-badge">Enabled</span>
                                 <span id="autorun-cluster" class="cluster-pill" hidden></span>
+                                <button id="autorun-edit-btn" class="btn btn-secondary btn-sm">Edit settings</button>
                                 <button id="autorun-toggle-btn" class="btn btn-secondary btn-sm">Disable</button>
                                 <button id="autorun-clear-btn" class="btn btn-secondary btn-sm">Clear history</button>
                                 <button id="autorun-export-btn" class="btn btn-secondary btn-sm">Export</button>
@@ -441,6 +442,43 @@
         </div>
     </div>
 
+    <!-- Edit Autorun Modal -->
+    <div id="edit-autorun-modal" class="modal" style="display: none;">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>Edit Autorun Settings</h3>
+                <span class="close" id="close-edit-autorun-modal">&times;</span>
+            </div>
+            <div class="modal-body">
+                <label for="edit-autorun-name">Name:</label>
+                <input type="text" id="edit-autorun-name">
+
+                <label for="edit-autorun-cluster-select">Elastic cluster:</label>
+                <select id="edit-autorun-cluster-select">
+                    <option value="">No Elastic clusters configured</option>
+                </select>
+
+                <label for="edit-autorun-command">Starting prompt:</label>
+                <textarea id="edit-autorun-command" rows="4"></textarea>
+
+                <label for="edit-autorun-condition">Condition function:</label>
+                <select id="edit-autorun-condition">
+                    <option value="">No condition (always execute)</option>
+                    <option value="get_recent_alerts">get_recent_alerts</option>
+                    <option value="list_cases">list_cases</option>
+                </select>
+
+                <label for="edit-autorun-interval">Interval (seconds):</label>
+                <input type="number" id="edit-autorun-interval" min="5" step="5">
+                <small id="edit-autorun-interval-preview"></small>
+            </div>
+            <div class="modal-footer">
+                <button id="save-autorun-settings-btn" class="btn btn-primary">Save settings</button>
+                <button id="cancel-edit-autorun-btn" class="btn btn-secondary">Cancel</button>
+            </div>
+        </div>
+    </div>
+
     <!-- MCP skill vector editor -->
     <div id="skill-vector-modal" class="modal" style="display: none;">
         <div class="modal-content modal-wide">
@@ -481,12 +519,12 @@
     <script src="/static/terminal.js?v=1"></script>
     <script src="/static/sessions.js?v=5"></script>
     <script src="/static/pdf_export.js?v=2"></script>
-    <script src="/static/autoruns.js?v=10"></script>
+    <script src="/static/autoruns.js?v=11"></script>
     <script src="/static/modals.js?v=4"></script>
     
     <!-- Main application (depends on all modules) -->
     <script src="/static/settings.js?v=4"></script>
-    <script src="/static/elastic_settings.js?v=6"></script>
+    <script src="/static/elastic_settings.js?v=7"></script>
     <script src="/static/integrations_settings.js?v=3"></script>
     <script src="/static/app.js?v=10"></script>
 </body>
