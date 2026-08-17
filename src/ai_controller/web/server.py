@@ -28,6 +28,7 @@ from .routes_auth import router as auth_router
 from .routes_llm import router as llm_router
 from .routes_mcp import router as mcp_router
 from .routes_elastic import router as elastic_router
+from .routes_integrations import router as integrations_router
 
 logger = get_logger("sami.ai_controller.web.server")
 
@@ -37,17 +38,36 @@ async def lifespan(_app: FastAPI):
     """
     Run startup/shutdown without treating uvicorn reload as a failed lifespan.
 
-    WatchFiles kills the worker while Starlette is waiting for a shutdown
-    message. That raises CancelledError; if it escapes, uvicorn logs it as
-    ERROR even though the next worker starts cleanly.
+    WatchFiles cancels the worker while Starlette is blocked on the lifespan
+    receive queue. Any CancelledError that escapes is sent as
+    lifespan.shutdown.failed and printed as ERROR even though the next worker
+    starts cleanly. Swallow cancel, clear the pending cancel count (3.11+), and
+    finish shutdown without awaiting under cancellation.
     """
     await _web_startup()
+    cancelled = False
     try:
         yield
     except asyncio.CancelledError:
+        cancelled = True
         logger.info("Web server lifespan cancelled (reload or stop)")
+        task = asyncio.current_task()
+        if task is not None:
+            # Allow Starlette to send lifespan.shutdown.complete after we exit.
+            while task.cancelling():
+                task.uncancel()
     finally:
-        await _web_shutdown()
+        if cancelled:
+            _web_shutdown_sync()
+        else:
+            try:
+                await _web_shutdown()
+            except asyncio.CancelledError:
+                _web_shutdown_sync()
+                task = asyncio.current_task()
+                if task is not None:
+                    while task.cancelling():
+                        task.uncancel()
 
 
 # Create FastAPI app
@@ -66,6 +86,7 @@ app.include_router(auth_router)
 app.include_router(llm_router)
 app.include_router(mcp_router)
 app.include_router(elastic_router)
+app.include_router(integrations_router)
 
 # Initialize components
 executor: Optional[AgentExecutor] = None
@@ -156,6 +177,7 @@ def create_app():
 
 def uvicorn_reload_kwargs(root: Path) -> dict:
     """Watch Python sources only. UI files are read from disk on each request."""
+    web_dir = root / "src" / "ai_controller" / "web"
     return {
         "reload": True,
         "reload_delay": 1.0,
@@ -174,7 +196,13 @@ def uvicorn_reload_kwargs(root: Path) -> dict:
             "htmlcov",
             "*.pyc",
             "*.log",
+            "*.js",
+            "*.css",
+            "*.html",
+            "*.map",
             str(root / "src" / "ai_controller" / "logs"),
+            str(web_dir / "static"),
+            str(web_dir / "templates"),
         ],
     }
 
@@ -805,29 +833,38 @@ async def _start_mcp_background() -> None:
         logger.exception("Failed to auto-start MCP HTTP server")
 
 
-async def _web_shutdown():
-    """Cleanly stop background tasks."""
+def _web_shutdown_sync() -> None:
+    """Cancel background work and stop MCP without awaiting (safe under cancel)."""
     global autorun_scheduler_task, mcp_start_task
     if mcp_start_task and not mcp_start_task.done():
         mcp_start_task.cancel()
-        try:
-            await mcp_start_task
-        except asyncio.CancelledError:
-            pass
     mcp_start_task = None
-    if autorun_scheduler_task:
+    if autorun_scheduler_task and not autorun_scheduler_task.done():
         autorun_scheduler_task.cancel()
-        try:
-            await autorun_scheduler_task
-        except asyncio.CancelledError:
-            pass
-        autorun_scheduler_task = None
+    autorun_scheduler_task = None
     try:
         from ...mcp.supervisor import get_supervisor
 
         get_supervisor().stop()
     except Exception:
         logger.warning("Error stopping MCP HTTP server during shutdown", exc_info=True)
+
+
+async def _web_shutdown():
+    """Cleanly stop background tasks."""
+    global autorun_scheduler_task, mcp_start_task
+    mcp_task = mcp_start_task
+    scheduler_task = autorun_scheduler_task
+    _web_shutdown_sync()
+    for task in (mcp_task, scheduler_task):
+        if task is None:
+            continue
+        try:
+            await asyncio.shield(task)
+        except asyncio.CancelledError:
+            pass
+        except Exception:
+            logger.debug("Background task ended with error during shutdown", exc_info=True)
 
 
 # Determine paths

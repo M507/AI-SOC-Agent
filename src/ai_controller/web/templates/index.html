@@ -13,7 +13,7 @@
         <link rel="stylesheet" href="/static/css/terminal.css?v=2">
         <link rel="stylesheet" href="/static/css/autorun.css?v=5">
         <link rel="stylesheet" href="/static/css/modal.css?v=4">
-        <link rel="stylesheet" href="/static/css/settings.css?v=9">
+        <link rel="stylesheet" href="/static/css/settings.css?v=10">
         <link rel="stylesheet" href="/static/css/toast.css?v=1">
         <link rel="stylesheet" href="/static/css/scrollbar.css?v=2">
     </head>
@@ -71,6 +71,7 @@
                                 <button class="tab active" type="button" data-settings-page="llm">LLM</button>
                                 <button class="tab" type="button" data-settings-page="elastic">Elastic</button>
                                 <button class="tab" type="button" data-settings-page="ui">UI</button>
+                                <button class="tab" type="button" data-settings-page="integrations">Integrations</button>
                             </div>
                         </div>
                         <div class="tab-group" id="mcp-tab-group" style="display: none;">
@@ -234,6 +235,32 @@
                                     When enabled, the full JSON result object is rendered in the terminal.
                                 </p>
                             </section>
+                        </div>
+                    </div>
+                    <div id="settings-integrations-content" class="settings-content" data-settings-page-content="integrations" style="display: none;">
+                        <div class="session-header">
+                            <div>
+                                <h2>Integrations</h2>
+                                <p class="settings-header-copy">Check configuration and connectivity across the services SamiGPT depends on.</p>
+                            </div>
+                            <div class="session-actions">
+                                <span id="integrations-summary-value" class="integration-summary">— configured</span>
+                                <button type="button" id="integrations-refresh-btn" class="btn btn-secondary btn-sm">Refresh</button>
+                            </div>
+                        </div>
+                        <div class="settings-body">
+                            <section class="integration-overview" aria-labelledby="integrations-overview-title">
+                                <div>
+                                    <h3 id="integrations-overview-title">Connection center</h3>
+                                    <p>Tests run only when you request them. Credentials stay on the server and are never displayed here.</p>
+                                </div>
+                                <div class="integration-legend" aria-label="Status legend">
+                                    <span><i class="legend-dot is-configured"></i>Configured</span>
+                                    <span><i class="legend-dot is-unconfigured"></i>Needs setup</span>
+                                </div>
+                            </section>
+                            <p id="integrations-page-status" class="settings-status" role="status" aria-live="polite" hidden></p>
+                            <div id="integrations-grid" class="integrations-grid" aria-live="polite"></div>
                         </div>
                     </div>
                     <div id="mcp-content" class="settings-content" style="display: none;">
@@ -447,7 +474,7 @@
     <script src="/static/toast.js?v=1"></script>
     
     <!-- API client (no dependencies) -->
-    <script src="/static/api.js?v=7"></script>
+    <script src="/static/api.js?v=8"></script>
     
     <!-- Component modules (depend on utils) -->
     <script src="/static/websocket.js?v=1"></script>
@@ -460,7 +487,8 @@
     <!-- Main application (depends on all modules) -->
     <script src="/static/settings.js?v=4"></script>
     <script src="/static/elastic_settings.js?v=6"></script>
-    <script src="/static/app.js?v=9"></script>
+    <script src="/static/integrations_settings.js?v=1"></script>
+    <script src="/static/app.js?v=10"></script>
 </body>
 </html>
 

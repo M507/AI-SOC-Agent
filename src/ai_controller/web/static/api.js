@@ -531,4 +531,22 @@ class APIClient {
             return { success: false, error: error.message };
         }
     }
+
+    async getIntegrations() {
+        try {
+            return await this.request('/api/integrations');
+        } catch (error) {
+            return { success: false, integrations: [], error: error.message };
+        }
+    }
+
+    async testIntegration(integrationId) {
+        try {
+            return await this.request(`/api/integrations/${encodeURIComponent(integrationId)}/test`, {
+                method: 'POST',
+            });
+        } catch (error) {
+            return { success: false, ok: false, level: 'error', error: error.message, message: error.message };
+        }
+    }
 }

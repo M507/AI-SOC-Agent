@@ -18,6 +18,7 @@ class AIController {
         this.modals = new ModalManager(this);
         this.settingsManager = new SettingsManager(this);
         this.elasticClusters = new ElasticClustersManager(this);
+        this.integrationsSettings = new IntegrationsSettingsManager(this);
         this.mcpPanel = new MCPPanel(this);
         
         this.init();
@@ -28,6 +29,7 @@ class AIController {
         this.loadConfig();
         this.settingsManager.load();
         this.elasticClusters.load();
+        this.integrationsSettings.load();
         this.mcpPanel.refresh();
         // Default view is manual sessions; load initial data
         this.loadSessions('manual');
@@ -262,7 +264,7 @@ class AIController {
             }
         });
         
-        // Settings sub-tabs (LLM, UI, and any future pages under Settings)
+        // Settings sub-tabs (LLM, Elastic, UI, Integrations, and future pages)
         const settingsTabs = document.getElementById('settings-tabs');
         if (settingsTabs) {
             settingsTabs.addEventListener('click', (event) => {
@@ -490,6 +492,9 @@ class AIController {
             this.settingsManager.load();
             if (this.elasticClusters) {
                 this.elasticClusters.load();
+            }
+            if (this.integrationsSettings) {
+                this.integrationsSettings.load();
             }
 
             if (this.activeSessionId) {

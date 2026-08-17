@@ -169,14 +169,49 @@ def test_lifespan_swallows_reload_cancel(monkeypatch):
         calls.append("start")
 
     async def shutdown():
-        calls.append("stop")
+        calls.append("async-stop")
+
+    def shutdown_sync():
+        calls.append("sync-stop")
 
     monkeypatch.setattr(web_server, "_web_startup", startup)
     monkeypatch.setattr(web_server, "_web_shutdown", shutdown)
+    monkeypatch.setattr(web_server, "_web_shutdown_sync", shutdown_sync)
 
-    async def _run():
+    async def _run_direct_cancel():
         async with web_server.lifespan(web_server.app):
             raise asyncio.CancelledError
 
-    asyncio.run(_run())
-    assert calls == ["start", "stop"]
+    asyncio.run(_run_direct_cancel())
+    assert calls == ["start", "sync-stop"]
+
+    calls.clear()
+
+    async def _run_task_cancel():
+        started = asyncio.Event()
+
+        async def body():
+            async with web_server.lifespan(web_server.app):
+                started.set()
+                await asyncio.Future()
+
+        task = asyncio.create_task(body())
+        await started.wait()
+        task.cancel()
+        await task
+
+    asyncio.run(_run_task_cancel())
+    assert calls == ["start", "sync-stop"]
+
+
+def test_reload_excludes_ui_assets():
+    from pathlib import Path
+
+    from src.ai_controller.web.server import uvicorn_reload_kwargs
+
+    kwargs = uvicorn_reload_kwargs(Path("/tmp/proj"))
+    excludes = kwargs["reload_excludes"]
+    assert "*.js" in excludes
+    assert "*.html" in excludes
+    assert "*.css" in excludes
+    assert str(Path("/tmp/proj") / "src" / "ai_controller" / "web" / "static") in excludes
