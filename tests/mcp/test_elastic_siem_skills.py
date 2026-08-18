@@ -48,6 +48,19 @@ class FakeSIEM:
             }
         ]
 
+    def create_security_case(self, **kwargs):
+        return {
+            "case_id": "elastic-case-1",
+            "title": kwargs.get("title") or "Unauthorized activity",
+            "description": kwargs.get("description") or "full alert",
+            "severity": kwargs.get("severity") or "high",
+            "status": "open",
+            "tags": kwargs.get("tags") or [],
+            "alert_id": kwargs.get("alert_id"),
+            "alert_attached": True,
+            "case": {"id": "elastic-case-1"},
+        }
+
 
 def _mcp_client(siem=None) -> TestClient:
     server = SamiGPTMCPServer(siem_client=siem if siem is not None else FakeSIEM())
@@ -68,6 +81,7 @@ def test_catalog_lists_elk_and_iris_skill_groups():
     assert [skill["id"] for skill in iris["skills"]] == list(CASE_SKILLS)
     assert all(skill["label"] and skill["label"] != skill["id"] for skill in elk["skills"])
     assert SKILL_TO_SOLUTIONS["create_case"] == ("IRIS", "TH")
+    assert SKILL_TO_SOLUTIONS["create_elastic_case"] == ("SIEM",)
     assert SKILL_TO_SOLUTIONS["get_recent_alerts"] == ("SIEM",)
 
 
@@ -127,6 +141,39 @@ def test_mcp_search_security_events_returns_results(monkeypatch):
     text = body["result"]["content"][0]["text"]
     assert "evt-1" in text
     assert "success" in text
+
+
+def test_mcp_create_elastic_case_runs_when_siem_enabled(monkeypatch):
+    monkeypatch.setattr(
+        "src.core.elastic_clusters.skill_vector_for_cluster",
+        lambda cluster_id=None: "MSV:1/IRIS:N/TH:N/SIEM:Y",
+    )
+    client = _mcp_client()
+    names = {tool["name"] for tool in client.get("/tools", headers=AUTH).json().get("tools") or []}
+    assert "create_elastic_case" in names
+    assert "create_case" not in names
+    response = client.post(
+        "/rpc",
+        headers=AUTH,
+        json={
+            "jsonrpc": "2.0",
+            "id": 10,
+            "method": "tools/call",
+            "params": {
+                "name": "create_elastic_case",
+                "arguments": {
+                    "alert_id": "alert-22",
+                    "description": "Analyst said this was not them.",
+                    "username": "sami",
+                    "source_ip": "8.8.8.8",
+                },
+            },
+        },
+    )
+    assert response.status_code == 200, response.text
+    text = response.json()["result"]["content"][0]["text"]
+    assert "elastic-case-1" in text
+    assert "elastic" in text
 
 
 def test_mcp_get_recent_alerts_groups_uninvestigated(monkeypatch):

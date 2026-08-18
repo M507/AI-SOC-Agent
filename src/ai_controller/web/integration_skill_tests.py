@@ -55,6 +55,7 @@ NEEDS_REAL_FIXTURE = {
     "list_rule_errors": "Requires a real detection-rule ID.",
     "get_endpoint_summary": "Requires a real endpoint ID.",
     "get_detection_details": "Requires a real detection ID.",
+    "create_elastic_case": "Creates a persistent Elastic Security case; covered by unit tests instead of the UI probe.",
     "add_case_evidence": "Uploads a file that may outlive the case; skipped because cleanup cannot be guaranteed.",
     "assign_case": "Requires a valid platform user; a dummy assignee is not safe.",
 }

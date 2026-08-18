@@ -47,6 +47,7 @@ from src.orchestrator.tools_siem import (
     close_alert,
     tag_alert,
     add_alert_note,
+    create_elastic_case,
 )
 
 def run_tool_test(tool_name: str, func, *args, **kwargs):
@@ -765,6 +766,38 @@ Recommendations for Detection Rule Improvement:
         limit=10,
         client=siem_client
     )
+    
+    # Elastic Security cases (not IRIS / TheHive)
+    print("\n" + "="*80)
+    print("ELASTIC SECURITY CASES")
+    print("="*80)
+    created_case_id = None
+    try:
+        case_result = create_elastic_case(
+            title="SamiGPT skill test — delete me",
+            description="Temporary case from tests/integrations/siem/elastic/test_siem_tools.py",
+            alert_id=test_alert_id,
+            tags=["sami-skill-test"],
+            severity="low",
+            identity={"activity": "integration-test"} if test_alert_id else None,
+            client=siem_client,
+        )
+        created_case_id = case_result.get("case_id")
+        results["create_elastic_case"] = bool(case_result.get("success") and created_case_id)
+        print(f"✓ create_elastic_case case_id={created_case_id} alert_attached={case_result.get('alert_attached')}")
+        if test_alert_id and test_alert_id not in (case_result.get("description") or ""):
+            print(f"✗ case description did not include alert {test_alert_id}")
+            results["create_elastic_case"] = False
+    except Exception as e:
+        print(f"✗ create_elastic_case FAILED: {type(e).__name__}: {e}")
+        results["create_elastic_case"] = False
+    finally:
+        if created_case_id:
+            try:
+                siem_client._cases_http().delete("/api/cases", json_data={"ids": [created_case_id]})
+                print(f"✓ deleted Elastic case {created_case_id}")
+            except Exception as e:
+                print(f"✗ failed to delete Elastic case {created_case_id}: {e}")
     
     # Summary
     print("\n" + "="*80)

@@ -317,8 +317,13 @@ class ApprovalQueue:
                     "title": f"Unauthorized activity: {payload.get('username') or 'user'}",
                     "description": summary or "Analyst said this was not them.",
                     "priority": "high",
+                    "username": payload.get("username"),
+                    "source_ip": payload.get("source_ip"),
+                    "hostname": payload.get("hostname"),
+                    "timestamp": payload.get("timestamp"),
+                    "activity": payload.get("activity"),
                 },
-                summary="Tag the alert as true positive and open a case.",
+                summary="Tag the alert as true positive and open an Elastic Security case with the full alert.",
             ),
         }
         if not raw:

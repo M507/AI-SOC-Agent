@@ -28,7 +28,8 @@ DEFAULT_SYSTEM_PROMPT = (
     "record your working assessment; that is your verdict, not closing the alert. "
     "For suspicious logins or 'is this you?' "
     "checks, file action_type=identity_verify with a clear question and follow_ups for "
-    "yes (acknowledge / close as benign) and no (escalate)."
+    "yes (acknowledge / close as benign) and no (escalate to an Elastic Security case "
+    "via create_elastic_case — not IRIS or TheHive)."
 )
 
 # Open WebUI's /api/v1 pipeline accepts requests containing `tools` but never

@@ -92,7 +92,7 @@ ACTION_CATALOG: Tuple[ActionSpec, ...] = (
         integration="siem",
         asks_question=True,
         default_follow_ups=("yes", "no"),
-        notes="After Yes: acknowledge (close as benign). After No: escalate (case + true-positive tag).",
+        notes="After Yes: acknowledge (close as benign). After No: escalate (Elastic Security case + true-positive tag).",
         fields=_fields(
             FieldSpec("alert_id", "Alert ID", False),
             FieldSpec("username", "User", True),
@@ -234,12 +234,12 @@ ACTION_CATALOG: Tuple[ActionSpec, ...] = (
     ActionSpec(
         action_type="escalate",
         label="Escalate",
-        description="Treat as a true positive: tag the alert and open or update a case.",
-        category="case",
+        description="Treat as a true positive: tag the alert and open an Elastic Security case.",
+        category="siem",
         risk="medium",
         execution="ready",
-        integration="case",
-        notes="Tags the SIEM alert as TP when possible and creates a case if case management is configured.",
+        integration="siem",
+        notes="Tags the SIEM alert as TP and opens a case in Elastic Security (not IRIS/TheHive), including the full alert.",
         fields=_fields(
             FieldSpec("alert_id", "Alert ID", False),
             FieldSpec("title", "Case title", False),

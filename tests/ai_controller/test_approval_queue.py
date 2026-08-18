@@ -11,6 +11,7 @@ class _FakeSIEM:
         self.closed = []
         self.verdicts = []
         self.tags = []
+        self.cases = []
 
     def close_alert(self, alert_id, reason=None, comment=None):
         self.closed.append((alert_id, reason, comment))
@@ -23,6 +24,22 @@ class _FakeSIEM:
     def tag_alert(self, alert_id, tag):
         self.tags.append((alert_id, tag))
         return {"success": True, "alert_id": alert_id, "tag": tag}
+
+    def create_security_case(self, title=None, description=None, severity="high", tags=None, alert_id=None, identity=None):
+        case = {
+            "case_id": "elastic-case-1",
+            "title": title,
+            "description": description,
+            "severity": severity,
+            "tags": tags or [],
+            "alert_id": alert_id,
+            "identity": identity,
+            "alert_attached": True,
+            "status": "open",
+            "case": {"id": "elastic-case-1"},
+        }
+        self.cases.append(case)
+        return case
 
 
 def test_catalog_covers_soc_actions():
@@ -96,6 +113,51 @@ def test_identity_yes_closes_as_benign(tmp_path, monkeypatch):
     child = queue.get(done.child_request_ids[0])
     assert child.action_type == "close_alert"
     assert child.status is RequestStatus.EXECUTED
+
+
+def test_identity_no_opens_elastic_case_not_iris(tmp_path, monkeypatch):
+    queue = ApprovalQueue(str(tmp_path))
+    siem = _FakeSIEM()
+
+    class _IrisMustNotRun:
+        def create_case(self, *args, **kwargs):
+            raise AssertionError("Is this you? must not open an IRIS/TheHive case")
+
+    monkeypatch.setattr(
+        "src.ai_controller.approval_queue.service.resolve_clients",
+        lambda cluster_id=None: ClientBundle(cluster_id="lab", siem=siem, case=_IrisMustNotRun()),
+    )
+    created = queue.create(
+        "identity_verify",
+        "VPN login from 8.8.8.8",
+        "New ASN for this user.",
+        payload={
+            "username": "sami",
+            "alert_id": "alert-22",
+            "source_ip": "8.8.8.8",
+            "hostname": "vpn-gw",
+            "activity": "VPN login",
+            "timestamp": "2026-08-18T12:00:00Z",
+        },
+        cluster_id="lab",
+    )
+    done = queue.answer(created.id, "no")
+    assert done.decision.answer == "no"
+    child = queue.get(done.child_request_ids[0])
+    assert child.action_type == "escalate"
+    assert child.status is RequestStatus.EXECUTED
+    assert child.payload["username"] == "sami"
+    assert child.payload["source_ip"] == "8.8.8.8"
+    assert siem.tags == [("alert-22", "TP")]
+    assert siem.verdicts[0][:2] == ("alert-22", "true_positive")
+    assert len(siem.cases) == 1
+    opened = siem.cases[0]
+    assert opened["alert_id"] == "alert-22"
+    assert opened["identity"]["username"] == "sami"
+    assert opened["identity"]["source_ip"] == "8.8.8.8"
+    assert "not them" in (opened["description"] or "").lower() or "not the user" in (
+        opened["description"] or ""
+    ).lower() or "New ASN" in (opened["description"] or "")
 
 
 def test_isolate_waits_for_edr(tmp_path):

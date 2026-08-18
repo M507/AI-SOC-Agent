@@ -307,7 +307,8 @@ class SamiGPTMCPServer:
                 "Use this for irreversible or user-gated work: closing alerts, isolating hosts, "
                 "fine-tune recommendations, and 'is this you?' identity checks. Do not claim the "
                 "action already happened — it waits for approval. For identity_verify, set question "
-                "and follow_ups.yes / follow_ups.no to the next action (acknowledge/close vs escalate)."
+                "and follow_ups.yes / follow_ups.no to the next action (acknowledge/close vs escalate "
+                "to an Elastic Security case). Do not open IRIS or TheHive cases for this flow."
             ),
             "inputSchema": {
                 "type": "object",
@@ -1206,7 +1207,7 @@ class SamiGPTMCPServer:
                 "Configure Elastic or other SIEM in config.json to enable SIEM tools."
             )
             return
-        self._mcp_logger.info(f"Registering {26} SIEM tools")
+        self._mcp_logger.info("Registering SIEM tools")
 
         self.tools["search_security_events"] = {
             "name": "search_security_events",
@@ -1673,6 +1674,53 @@ class SamiGPTMCPServer:
                     },
                 },
                 "required": ["alert_id"],
+            },
+        }
+
+        self.tools["create_elastic_case"] = {
+            "name": "create_elastic_case",
+            "description": (
+                "Open a case in Elastic Security (Kibana Cases) on the bound cluster. "
+                "Does not use IRIS or TheHive. Loads the full SIEM alert (title, rule, "
+                "entities, triggering events, comments) into the case and attaches the alert. "
+                "Use after an 'is this you?' No answer, or when escalating a true positive "
+                "that should be tracked in Elastic."
+            ),
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "alert_id": {
+                        "type": "string",
+                        "description": "SIEM alert ID to include and attach",
+                    },
+                    "title": {
+                        "type": "string",
+                        "description": "Optional case title. Default is built from the alert and primary entity.",
+                    },
+                    "description": {
+                        "type": "string",
+                        "description": "Investigation notes. The full alert is always appended.",
+                    },
+                    "severity": {
+                        "type": "string",
+                        "description": "Case severity: low, medium, high, critical",
+                        "enum": ["low", "medium", "high", "critical"],
+                    },
+                    "tags": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Extra tags (sami-gpt and escalated are added automatically)",
+                    },
+                    "username": {
+                        "type": "string",
+                        "description": "User from an identity check, included in the case body",
+                    },
+                    "source_ip": {"type": "string"},
+                    "hostname": {"type": "string"},
+                    "timestamp": {"type": "string"},
+                    "activity": {"type": "string"},
+                },
+                "required": [],
             },
         }
 
@@ -3377,6 +3425,23 @@ To be populated during investigation.
                 alert_id=args["alert_id"],
                 reason=args.get("reason"),
                 comment=args.get("comment"),
+                client=self.siem_client,
+            )
+            self._mcp_logger.debug(f"Tool {tool_name} completed successfully")
+            return result
+        elif tool_name == "create_elastic_case" and self.siem_client:
+            identity = {
+                key: args[key]
+                for key in ("username", "source_ip", "hostname", "timestamp", "activity")
+                if args.get(key)
+            }
+            result = tools_siem.create_elastic_case(
+                title=args.get("title"),
+                description=args.get("description"),
+                alert_id=args.get("alert_id"),
+                severity=args.get("severity") or "high",
+                tags=args.get("tags"),
+                identity=identity or None,
                 client=self.siem_client,
             )
             self._mcp_logger.debug(f"Tool {tool_name} completed successfully")

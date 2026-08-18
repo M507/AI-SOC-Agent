@@ -7,7 +7,7 @@ LLM-friendly error handling and return values.
 
 from __future__ import annotations
 
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from ..api.siem import SIEMClient
 from ..core.errors import IntegrationError
@@ -1705,5 +1705,65 @@ def get_email_events(
         }
     except Exception as e:
         raise IntegrationError(f"Failed to get email events: {str(e)}") from e
+
+
+def create_elastic_case(
+    title: Optional[str] = None,
+    description: Optional[str] = None,
+    alert_id: Optional[str] = None,
+    severity: str = "high",
+    tags: Optional[List[str]] = None,
+    identity: Optional[Dict[str, Any]] = None,
+    client: SIEMClient = None,  # type: ignore
+) -> Dict[str, Any]:
+    """
+    Open a case in Elastic Security (Kibana Cases), not IRIS or TheHive.
+
+    Tool schema:
+    - name: create_elastic_case
+    - description: Create an Elastic Security case for the bound cluster. Loads the
+      full SIEM alert (entities, events, comments) into the case description and
+      attaches the alert. Use this after an identity check is answered No, or when
+      escalating a true positive that should live in Elastic rather than IRIS/TheHive.
+    - parameters:
+      - title (str, optional): Case title. Default is built from the alert.
+      - description (str, optional): Investigation notes prepended to the alert body.
+      - alert_id (str, optional): SIEM alert to load and attach.
+      - severity (str, optional): low, medium, high, critical. Default: high.
+      - tags (list[str], optional): Extra case tags.
+    """
+    if client is None:
+        raise IntegrationError("SIEM client not provided")
+    if not hasattr(client, "create_security_case"):
+        raise IntegrationError("SIEM client does not support Elastic Security cases")
+
+    try:
+        tag_list = tags
+        if isinstance(tags, str):
+            tag_list = [item.strip() for item in tags.split(",") if item.strip()]
+        result = client.create_security_case(
+            title=title,
+            description=description,
+            severity=severity,
+            tags=tag_list,
+            alert_id=alert_id,
+            identity=identity,
+        )
+        return {
+            "success": True,
+            "provider": "elastic",
+            "case_id": result.get("case_id"),
+            "title": result.get("title"),
+            "description": result.get("description"),
+            "severity": result.get("severity"),
+            "status": result.get("status"),
+            "tags": result.get("tags") or [],
+            "alert_id": result.get("alert_id") or alert_id,
+            "alert_attached": result.get("alert_attached"),
+            "attach_error": result.get("attach_error"),
+            "case": result.get("case"),
+        }
+    except Exception as e:
+        raise IntegrationError(f"Failed to create Elastic Security case: {str(e)}") from e
 
 

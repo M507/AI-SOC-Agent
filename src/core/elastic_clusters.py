@@ -65,6 +65,7 @@ class ElasticCluster:
     timeout_seconds: int = 30
     verify_ssl: bool = True
     skill_vector: str = ""
+    kibana_url: Optional[str] = None
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -77,6 +78,7 @@ class ElasticCluster:
             "timeout_seconds": int(self.timeout_seconds or 30),
             "verify_ssl": bool(self.verify_ssl),
             "skill_vector": self.skill_vector or DEFAULT_SKILL_VECTOR,
+            "kibana_url": self.kibana_url or "",
         }
 
     def auth_type(self) -> str:
@@ -168,6 +170,7 @@ def _normalize_cluster(raw: Dict[str, Any]) -> ElasticCluster:
     if isinstance(password, str):
         password = password.strip() or None
     skill_vector = str(raw.get("skill_vector") or "").strip()
+    kibana_url = str(raw.get("kibana_url") or "").strip().rstrip("/") or None
     return ElasticCluster(
         id=cluster_id,
         name=name,
@@ -178,6 +181,7 @@ def _normalize_cluster(raw: Dict[str, Any]) -> ElasticCluster:
         timeout_seconds=timeout_seconds,
         verify_ssl=bool(raw.get("verify_ssl", True)),
         skill_vector=skill_vector,
+        kibana_url=kibana_url,
     )
 
 
@@ -292,6 +296,19 @@ def skill_vector_for_cluster(cluster_id: Optional[str] = None) -> str:
     return canonicalize(raw, strict=False, fallback=DEFAULT_SKILL_VECTOR)
 
 
+def derive_kibana_url(base_url: str, kibana_url: Optional[str] = None) -> str:
+    """Cases API lives on Kibana. Prefer an explicit URL, else map :9200 → :5601."""
+    explicit = (kibana_url or "").strip().rstrip("/")
+    if explicit:
+        return explicit
+    parsed = urlparse(base_url if "://" in (base_url or "") else f"https://{base_url}")
+    host = parsed.hostname or ""
+    scheme = parsed.scheme or "https"
+    if parsed.port == 9200 and host:
+        return f"{scheme}://{host}:5601"
+    return (base_url or "").rstrip("/")
+
+
 def client_for_cluster(cluster: ElasticCluster):
     from ..integrations.siem.elastic.elastic_client import ElasticSIEMClient
 
@@ -302,6 +319,7 @@ def client_for_cluster(cluster: ElasticCluster):
         password=cluster.password,
         timeout_seconds=cluster.timeout_seconds,
         verify_ssl=cluster.verify_ssl,
+        kibana_url=derive_kibana_url(cluster.base_url, cluster.kibana_url),
     )
 
 

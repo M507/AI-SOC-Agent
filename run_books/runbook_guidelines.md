@@ -16,7 +16,7 @@ Irreversible MCP tools **file a request** instead of executing:
 
 *   `close_alert`, `isolate_endpoint`, `release_endpoint_isolation`, `kill_process_on_endpoint`, `collect_forensic_artifacts`, `create_fine_tuning_recommendation`, `create_visibility_recommendation`
 *   `update_alert_verdict` is **not** gated. It is the AI's working assessment and runs immediately. It does not close the alert.
-*   `create_approval_request` is for identity checks ("is this you?") and any custom follow-up (ACK vs escalate).
+*   `create_approval_request` is for identity checks ("is this you?") and any custom follow-up (ACK vs escalate to an Elastic Security case).
 *   After calling a gated tool, tell the analyst the action is **pending in Requests**. Do not claim it already happened.
 
 ## SOC Tier Fundamental Principles

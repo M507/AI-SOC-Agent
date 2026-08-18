@@ -4,7 +4,7 @@ Analyst approval queue in the SamiGPT web UI (**Views → Requests**).
 
 The AI files a request with the payload needed to run later. Irreversible MCP
 tools (`close_alert`, isolate, kill process, fine-tune, …) are queued here
-instead of executing immediately. Close / escalate run against the
+instead of executing immediately. Close / escalate / Elastic Security cases run against the
 **Elastic cluster bound to the request**.
 
 `update_alert_verdict` is **not** an approval item. It is the AI's working
@@ -27,12 +27,12 @@ are **not** auto-run. They become a second pending request.
 | Action | Payload stored | On approve | Status |
 |---|---|---|---|
 | **Close alert** | `alert_id`, reason, comment, cluster | Elastic `close_alert` | **Done** |
-| **Is this you?** | user, IP, host, time, question | **Yes** → ACK (close as benign TP). **No** → escalate (TP tag + case) | **Done** (follow-up close uses SIEM; case needs IRIS/TheHive) |
+| **Is this you?** | user, IP, host, time, question | **Yes** → ACK (close as benign TP). **No** → escalate (TP tag + Elastic Security case with full alert) | **Done** |
 | **Fine-tune** | title, description, rule/alert | Engineering board if Trello/ClickUp/GitHub is configured | **Queued locally**; board push needs ENG |
 | **Visibility gap** | title, description, missing source | Same as fine-tune | **Queued locally**; board push needs ENG |
 | **Open case** | title, description, priority, alert | IRIS / TheHive `create_case` | **Ready if configured** (case management) |
 | **Close case** | `case_id`, comment | Case status → closed | **Ready if configured** (case management) |
-| **Escalate** | alert, notes, priority | TP tag + verdict + case | **Done** for SIEM steps; case needs IRIS/TheHive |
+| **Escalate** | alert, notes, priority | TP tag + verdict + Elastic Security case | **Done** (Kibana Cases API; cluster API key must be valid for Kibana) |
 | **Isolate endpoint** | `endpoint_id`, hostname, reason | EDR isolate | **Needs API** (EDR / Elastic Defend) |
 | **Release isolation** | `endpoint_id` | EDR release | **Needs API** (EDR) |
 | **Kill process** | `endpoint_id`, PID | EDR kill | **Needs API** (EDR) |

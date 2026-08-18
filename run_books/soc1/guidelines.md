@@ -39,7 +39,7 @@ SOC1 **recommends** closures; an analyst must approve them in the SamiGPT **Requ
 - Call `update_alert_verdict` immediately with your working assessment (FP / BTP / TP / uncertain / in-progress). That is **your** verdict and does **not** need approval. It does **not** close the alert.
 - Call `close_alert` when the alert itself should be closed. That **queues** a request. Do not tell the analyst the alert is already closed.
 - Call `create_fine_tuning_recommendation` to file a detection-tuning request (also queued).
-- For suspicious logins or "is this you?" checks, use `create_approval_request` with `action_type=identity_verify` and yes/no follow-ups (ACK vs escalate).
+- For suspicious logins or "is this you?" checks, use `create_approval_request` with `action_type=identity_verify` and yes/no follow-ups (ACK vs escalate to an Elastic Security case with `create_elastic_case`). Do not open IRIS or TheHive cases for this flow.
 
 ## Main Objectives
 

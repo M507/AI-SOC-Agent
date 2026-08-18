@@ -186,3 +186,7 @@ class ElasticHttpClient:
         """POST request."""
         return self.request("POST", endpoint, json_data=json_data)
 
+    def delete(self, endpoint: str, json_data: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        """DELETE request."""
+        return self.request("DELETE", endpoint, json_data=json_data)
+

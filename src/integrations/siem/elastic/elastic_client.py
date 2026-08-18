@@ -35,8 +35,13 @@ class ElasticSIEMClient:
     This implementation uses Elasticsearch query DSL for searching security events.
     """
 
-    def __init__(self, http_client: ElasticHttpClient) -> None:
+    def __init__(
+        self,
+        http_client: ElasticHttpClient,
+        kibana_http: Optional[ElasticHttpClient] = None,
+    ) -> None:
         self._http = http_client
+        self._kibana_http = kibana_http
 
     @classmethod
     def from_config(cls, config: SamiConfig) -> "ElasticSIEMClient":
@@ -65,6 +70,7 @@ class ElasticSIEMClient:
         password: Optional[str] = None,
         timeout_seconds: int = 30,
         verify_ssl: bool = True,
+        kibana_url: Optional[str] = None,
     ) -> "ElasticSIEMClient":
         """Build a client from explicit cluster credentials."""
         http_client = ElasticHttpClient(
@@ -75,7 +81,18 @@ class ElasticSIEMClient:
             timeout_seconds=timeout_seconds,
             verify_ssl=verify_ssl,
         )
-        return cls(http_client=http_client)
+        kibana_http = None
+        resolved_kibana = (kibana_url or "").strip().rstrip("/")
+        if resolved_kibana and resolved_kibana != base_url.rstrip("/"):
+            kibana_http = ElasticHttpClient(
+                base_url=resolved_kibana,
+                api_key=api_key,
+                username=username,
+                password=password,
+                timeout_seconds=timeout_seconds,
+                verify_ssl=verify_ssl,
+            )
+        return cls(http_client=http_client, kibana_http=kibana_http)
 
     def search_security_events(
         self,
@@ -1256,6 +1273,176 @@ class ElasticSIEMClient:
         except Exception as e:
             logger.exception(f"Error getting raw alert document {alert_id}: {e}")
             raise IntegrationError(f"Failed to get raw alert document: {e}") from e
+
+    def _cases_http(self) -> ElasticHttpClient:
+        if self._kibana_http is not None:
+            return self._kibana_http
+        from ....core.elastic_clusters import derive_kibana_url
+
+        kibana_url = derive_kibana_url(self._http.base_url)
+        if kibana_url.rstrip("/") == (self._http.base_url or "").rstrip("/"):
+            return self._http
+        return ElasticHttpClient(
+            base_url=kibana_url,
+            api_key=self._http.api_key,
+            username=self._http.username,
+            password=self._http.password,
+            timeout_seconds=self._http.timeout_seconds,
+            verify_ssl=self._http.verify_ssl,
+        )
+
+    def _search_alert_hit(self, alert_id: str) -> Dict[str, Any]:
+        query = {"query": {"ids": {"values": [alert_id]}}}
+        indices_patterns = [
+            "alerts-*,.siem-signals-*,logs-endpoint.alerts-*",
+            "alerts-*",
+            "_all",
+        ]
+        response = self._search_with_fallback(indices_patterns, query)
+        hits = response.get("hits", {}).get("hits", [])
+        if not hits:
+            raise IntegrationError(f"Alert {alert_id} not found")
+        return hits[0]
+
+    def create_security_case(
+        self,
+        title: Optional[str] = None,
+        description: Optional[str] = None,
+        severity: str = "high",
+        tags: Optional[List[str]] = None,
+        alert_id: Optional[str] = None,
+        identity: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """
+        Open a case in Elastic Security (Kibana Cases API), not IRIS/TheHive.
+
+        Pulls the full alert (entities, events, comments) into the case body.
+        """
+        from .case_builder import (
+            build_elastic_case_description,
+            default_case_title,
+            kibana_severity,
+        )
+
+        alert: Optional[Dict[str, Any]] = None
+        alert_index: Optional[str] = None
+        raw_source: Dict[str, Any] = {}
+        if alert_id:
+            try:
+                hit = self._search_alert_hit(str(alert_id))
+                alert_index = hit.get("_index")
+                raw_source = hit.get("_source") or {}
+                alert = self.get_security_alert_by_id(str(alert_id), include_detections=True)
+            except Exception as exc:
+                logger.warning("Could not load alert %s for Elastic case: %s", alert_id, exc)
+                alert = {
+                    "id": str(alert_id),
+                    "title": title or "",
+                    "description": f"Alert {alert_id} could not be loaded: {exc}",
+                }
+
+        case_title = (title or "").strip() or default_case_title(
+            alert=alert, identity=identity
+        )
+        case_description = build_elastic_case_description(
+            notes=description or "",
+            alert=alert,
+            identity=identity,
+        )
+        case_tags = []
+        for item in ["sami-gpt", "escalated", *(tags or [])]:
+            text = str(item).strip()
+            if text and text not in case_tags:
+                case_tags.append(text)
+        if identity:
+            if "identity-verify" not in case_tags:
+                case_tags.append("identity-verify")
+
+        payload = {
+            "title": case_title,
+            "description": case_description,
+            "tags": case_tags,
+            "severity": kibana_severity(
+                severity or (alert or {}).get("severity") or (alert or {}).get("priority")
+            ),
+            "connector": {
+                "id": "none",
+                "name": "none",
+                "type": ".none",
+                "fields": None,
+            },
+            "settings": {"syncAlerts": True},
+            "owner": "securitySolution",
+        }
+
+        kibana = self._cases_http()
+        try:
+            created = kibana.post("/api/cases", json_data=payload)
+        except IntegrationError as exc:
+            hint = ""
+            if "401" in str(exc) or "Unauthorized" in str(exc):
+                hint = (
+                    " The cluster API key was accepted by Elasticsearch but rejected by Kibana Cases. "
+                    "Use a Kibana API key with cases privileges, or set kibana_url on the cluster."
+                )
+            raise IntegrationError(f"Failed to open Elastic Security case:{hint} {exc}") from exc
+        case_id = created.get("id") or created.get("case_id")
+        if not case_id:
+            raise IntegrationError(f"Elastic Cases API did not return a case id: {created}")
+
+        attached = False
+        attach_error = None
+        if alert_id and alert_index:
+            try:
+                rule = raw_source.get("kibana.alert.rule") or {}
+                if not isinstance(rule, dict):
+                    rule = {}
+                signal_rule = (raw_source.get("signal") or {}).get("rule") or {}
+                if not isinstance(signal_rule, dict):
+                    signal_rule = {}
+                kibana.post(
+                    f"/api/cases/{case_id}/comments",
+                    json_data={
+                        "type": "alert",
+                        "alertId": [str(alert_id)],
+                        "index": [str(alert_index)],
+                        "owner": "securitySolution",
+                        "rule": {
+                            "id": (
+                                raw_source.get("kibana.alert.rule.uuid")
+                                or rule.get("uuid")
+                                or signal_rule.get("id")
+                                or ""
+                            ),
+                            "name": (
+                                raw_source.get("kibana.alert.rule.name")
+                                or rule.get("name")
+                                or signal_rule.get("name")
+                                or (alert or {}).get("title")
+                                or ""
+                            ),
+                        },
+                    },
+                )
+                attached = True
+            except Exception as exc:
+                attach_error = str(exc)
+                logger.warning("Created Elastic case %s but failed to attach alert %s: %s", case_id, alert_id, exc)
+
+        return {
+            "success": True,
+            "provider": "elastic",
+            "case_id": case_id,
+            "title": created.get("title") or case_title,
+            "description": created.get("description") or case_description,
+            "severity": created.get("severity") or payload["severity"],
+            "status": created.get("status") or "open",
+            "tags": created.get("tags") or case_tags,
+            "alert_id": alert_id,
+            "alert_attached": attached,
+            "attach_error": attach_error,
+            "case": created,
+        }
 
     def close_alert(
         self,

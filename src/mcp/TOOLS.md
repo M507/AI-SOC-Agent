@@ -17,7 +17,9 @@ These tools **file a request** and do not run until an analyst approves them in 
 
 `update_alert_verdict` is **not** gated. It records the AI's working assessment immediately and does not close the alert.
 
-`create_approval_request` is used for identity checks ("is this you?") and custom follow-ups.
+`create_approval_request` is used for identity checks ("is this you?") and custom follow-ups. A **No** answer opens an Elastic Security case (`create_elastic_case`), not IRIS or TheHive.
+
+`create_elastic_case` runs immediately against the bound Elastic cluster.
 
 ## Table of Contents
 
@@ -2625,6 +2627,46 @@ Request closing a security alert (false positive or benign true positive). **Que
 - Mark benign true positives as resolved
 - Document closure reasons for audit purposes
 - Reduce alert noise in the SIEM
+
+---
+
+### `create_elastic_case`
+
+Open a case in **Elastic Security** (Kibana Cases API) on the bound cluster. This does **not** use IRIS or TheHive. The full SIEM alert (title, rule text, entities, triggering events, comments) is written into the case description and the alert is attached when possible.
+
+Runs immediately (not queued). Used when an analyst answers **No** to “Is this you?”, and whenever a true positive should be tracked in Elastic.
+
+**Parameters:**
+- `alert_id` (string, optional): SIEM alert to load and attach
+- `title` (string, optional): Case title. Default is `[activity/rule] - [user/host] - [date]`
+- `description` (string, optional): Investigation notes. The full alert is always appended.
+- `severity` (string, optional): `low`, `medium`, `high`, `critical`. Default: `high`
+- `tags` (array, optional): Extra tags (`sami-gpt` and `escalated` are added automatically)
+- `username`, `source_ip`, `hostname`, `timestamp`, `activity` (optional): Identity-check context
+
+**Returns:**
+- `success` (boolean)
+- `provider` (string): `elastic`
+- `case_id` (string): Elastic case id
+- `title`, `description`, `severity`, `status`, `tags`
+- `alert_id` (string)
+- `alert_attached` (boolean): whether the alert was linked on the case
+- `case` (object): raw Cases API response
+
+**Usage Example:**
+```json
+{
+  "name": "create_elastic_case",
+  "arguments": {
+    "alert_id": "alert-123",
+    "description": "Analyst confirmed this VPN login was not the user.",
+    "username": "sami",
+    "source_ip": "8.8.8.8",
+    "activity": "VPN login",
+    "severity": "high"
+  }
+}
+```
 
 ---
 

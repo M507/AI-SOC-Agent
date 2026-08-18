@@ -193,9 +193,19 @@ class EscalateHandler:
     def execute(self, request: ApprovalRequest, clients: ClientBundle) -> Dict[str, Any]:
         results: Dict[str, Any] = {"success": True, "steps": []}
         alert_id = request.payload.get("alert_id")
-        if alert_id and clients.siem is not None:
-            from ...orchestrator import tools_siem
+        if clients.siem is None:
+            results["steps"].append(
+                _missing("siem", "No SIEM client for this cluster. Escalation payload is stored.")
+            )
+            results["success"] = False
+            results["needs_integration"] = True
+            results["integration"] = "siem"
+            results["message"] = "No SIEM client for this cluster. Escalation payload is stored."
+            return results
 
+        from ...orchestrator import tools_siem
+
+        if alert_id:
             try:
                 results["steps"].append(
                     tools_siem.tag_alert(alert_id=str(alert_id), tag="TP", client=clients.siem)
@@ -214,26 +224,30 @@ class EscalateHandler:
             except Exception as exc:
                 results["steps"].append({"success": False, "step": "update_alert_verdict", "error": str(exc)})
 
-        if clients.case is not None:
-            from ...orchestrator import tools_case
-
-            title = request.payload.get("title") or request.title or "Escalated investigation"
-            description = request.payload.get("description") or request.rationale or request.summary
+        identity = {
+            key: request.payload.get(key)
+            for key in ("username", "source_ip", "hostname", "timestamp", "activity")
+            if request.payload.get(key)
+        }
+        tags = request.payload.get("tags")
+        if isinstance(tags, str):
+            tags = [item.strip() for item in tags.split(",") if item.strip()]
+        try:
             results["steps"].append(
-                tools_case.create_case(
-                    title=str(title),
-                    description=str(description),
-                    priority=str(request.payload.get("priority") or "high"),
-                    tags=["escalated", "sami-approval"],
-                    alert_id=alert_id,
-                    client=clients.case,
+                tools_siem.create_elastic_case(
+                    title=request.payload.get("title") or request.title,
+                    description=request.payload.get("description") or request.rationale or request.summary,
+                    alert_id=str(alert_id) if alert_id else None,
+                    severity=str(request.payload.get("priority") or request.payload.get("severity") or "high"),
+                    tags=list(tags or []) + ["identity-verify"] if identity else tags,
+                    identity=identity or None,
+                    client=clients.siem,
                 )
             )
-        else:
-            results["steps"].append(
-                _missing("case", "Alert tagged when possible. Open a case manually or connect IRIS/TheHive.")
-            )
-        results["success"] = True
+        except Exception as exc:
+            results["steps"].append({"success": False, "step": "create_elastic_case", "error": str(exc)})
+            results["success"] = False
+            results["error"] = str(exc)
         return results
 
 

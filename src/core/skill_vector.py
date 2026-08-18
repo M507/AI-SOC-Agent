@@ -71,6 +71,7 @@ _LABEL_OVERRIDES = {
     "get_all_uncertain_alerts_for_host": "Uncertain alerts for a host",
     "create_fine_tuning_recommendation": "Create a fine-tuning recommendation",
     "create_visibility_recommendation": "Create a visibility recommendation",
+    "create_elastic_case": "Create Elastic Security case",
 }
 
 
@@ -134,6 +135,7 @@ SIEM_SKILLS: Tuple[str, ...] = (
     "update_alert_verdict",
     "tag_alert",
     "add_alert_note",
+    "create_elastic_case",
     "lookup_entity",
     "get_ioc_matches",
     "get_threat_intel",
