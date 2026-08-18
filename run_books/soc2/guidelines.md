@@ -130,6 +130,12 @@ To avoid duplicated effort between SOC tiers and to make every investigation ste
 
 These practices ensure that **every unit of work has a corresponding task**, that future investigations can see exactly *why* a step was taken, and that SOC3 can reuse SOC2’s logic instead of rediscovering it.
 
+## Analyst approval
+
+SOC2 does **not** contain. If isolation or process kill is needed, create a SOC3 task **and/or** file `create_approval_request` (`isolate_endpoint` / `kill_process`). Calling `isolate_endpoint` directly still only queues a Requests item.
+
+`update_alert_verdict` is the AI working assessment and runs immediately. `close_alert` queues official closure.
+
 ## Out of Scope (What SOC2 Does NOT Do)
 
 - **No starting from raw alerts**:

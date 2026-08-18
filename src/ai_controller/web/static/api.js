@@ -621,4 +621,45 @@ class APIClient {
             return { success: false, skills: [], error: error.message };
         }
     }
+
+    async listRequests(status = null) {
+        try {
+            const query = status ? `?status=${encodeURIComponent(status)}` : '';
+            return await this.request(`/api/requests${query}`);
+        } catch (error) {
+            return { success: false, requests: [], counts: { pending: 0, all: 0 }, error: error.message };
+        }
+    }
+
+    async getRequestCatalog() {
+        try {
+            return await this.request('/api/requests/catalog');
+        } catch (error) {
+            return { success: false, actions: [], error: error.message };
+        }
+    }
+
+    async approveRequest(requestId, comment = '') {
+        return this._requestDecision(`/api/requests/${encodeURIComponent(requestId)}/approve`, { comment });
+    }
+
+    async denyRequest(requestId, comment = '') {
+        return this._requestDecision(`/api/requests/${encodeURIComponent(requestId)}/deny`, { comment });
+    }
+
+    async answerRequest(requestId, answer, comment = '') {
+        return this._requestDecision(`/api/requests/${encodeURIComponent(requestId)}/answer`, { answer, comment });
+    }
+
+    async _requestDecision(url, body) {
+        try {
+            return await this.request(url, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(body),
+            });
+        } catch (error) {
+            return { success: false, error: error.message };
+        }
+    }
 }

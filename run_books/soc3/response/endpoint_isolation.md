@@ -67,17 +67,16 @@ This runbook explicitly **requires**:
     *   Verify endpoint details: hostname, platform, current status, isolation status.
     *   **Warning:** If endpoint is already isolated, document and skip isolation step.
 
-3.  **Execute Isolation:**
+3.  **Request Isolation:**
     *   Use `isolate_endpoint` with `endpoint_id=${ENDPOINT_ID}`.
-    *   Wait for confirmation of isolation completion.
-    *   Set `${ISOLATION_STATUS}` = "Endpoint isolated successfully" or "Isolation failed: [error]".
+    *   The tool files a Requests-view approval. Set `${ISOLATION_STATUS}` = "Isolation requested (pending analyst approval, request_id=...)" — do not wait for the host to drop offline in this step.
 
-4.  **Verify Isolation:**
-    *   Use `get_endpoint_summary` with `endpoint_id=${ENDPOINT_ID}` to verify `is_isolated` status is `true`.
-    *   Confirm endpoint is disconnected from network.
+4.  **Verify Isolation (after approval):**
+    *   Do not treat the endpoint as isolated until an analyst has approved the request.
+    *   After approval, use `get_endpoint_summary` with `endpoint_id=${ENDPOINT_ID}` to verify `is_isolated` is `true`.
 
 5.  **Document Isolation:**
-    *   Prepare isolation comment: `ISOLATION_COMMENT = "SOC3 (IR Expert) Endpoint Isolation for Case ${CASE_ID}: Endpoint ID: ${ENDPOINT_ID}. Reason: ${ISOLATION_REASON}. **Evidence Reviewed:** [summary of SOC1/SOC2 findings that confirmed malicious activity]. Isolation Status: ${ISOLATION_STATUS}. Infrastructure Context (KB): [...]. Isolated at: [timestamp]. **Note:** Endpoint is now isolated from network. Forensic collection and remediation should follow."`
+    *   Prepare isolation comment: `ISOLATION_COMMENT = "SOC3 (IR Expert) Endpoint Isolation for Case ${CASE_ID}: Endpoint ID: ${ENDPOINT_ID}. Reason: ${ISOLATION_REASON}. **Evidence Reviewed:** [summary of SOC1/SOC2 findings that confirmed malicious activity]. Isolation Status: ${ISOLATION_STATUS}. Infrastructure Context (KB): [...]. **Note:** Isolation is pending analyst approval in Requests until verified."`
     *   Include knowledge base findings (endpoint context, network topology insights) in the comment.
     *   Document what evidence was reviewed and why malicious activity was confirmed.
     *   Use `add_case_comment` with `case_id=${CASE_ID}` and `content=${ISOLATION_COMMENT}`.

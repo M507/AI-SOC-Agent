@@ -61,9 +61,10 @@ This runbook covers:
     *   *(Note: Skip this step if closure reason is "Benign True Positive" or "Duplicate".)*
 
 5.  **Close Alert and Case:**
-    *   **Close the alert**: Use `close_alert` with `alert_id=${ALERT_ID}`, `reason=${CLOSURE_REASON}`, and `comment=${CLOSURE_COMMENT}`.
-    *   **If case exists**: Use `update_case_status` with `case_id=${CASE_ID}` and `status="closed"`.
-    *   Set `${CLOSURE_STATUS}` = "Alert and case closed successfully".
+    *   **AI verdict**: Use `update_alert_verdict` immediately with the working assessment (no approval).
+    *   **Close the alert**: Use `close_alert` with `alert_id=${ALERT_ID}`, `reason=${CLOSURE_REASON}`, and `comment=${CLOSURE_COMMENT}`. This queues analyst approval in Requests — do not claim the alert is already closed.
+    *   **If case exists**: Use `update_case_status` with `case_id=${CASE_ID}` and `status="closed"` only after the close request is appropriate; prefer documenting that closure is pending approval.
+    *   Set `${CLOSURE_STATUS}` = "Close requested (pending analyst approval)".
 
 6.  **Completion:**
     *   Verify case status is "closed".

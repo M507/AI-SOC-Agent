@@ -48,6 +48,12 @@ from .runbook_manager import RunbookManager
 
 logger = get_logger(__name__)
 
+# Appended to irreversible MCP tools. The server queues these for the Requests view.
+_QUEUED_FOR_ANALYST = (
+    " Files a request in the SamiGPT Requests view and does not run until an analyst "
+    "approves it. Tell the analyst it is pending in Requests; do not claim the action already happened."
+)
+
 
 def configure_mcp_logging(log_dir: str = "logs") -> None:
     """
@@ -286,6 +292,69 @@ class SamiGPTMCPServer:
         self._register_kb_tools()
         # Engineering tools (Trello)
         self._register_eng_tools()
+        self._register_approval_tools()
+
+    def _register_approval_tools(self) -> None:
+        """File analyst-approval requests instead of executing irreversible work."""
+        from ..ai_controller.approval_queue.catalog import list_action_specs
+
+        action_types = [spec.action_type for spec in list_action_specs()]
+        self._mcp_logger.info("Registering approval-queue tools")
+        self.tools["create_approval_request"] = {
+            "name": "create_approval_request",
+            "description": (
+                "File an action for a human analyst to approve in the SamiGPT Requests view. "
+                "Use this for irreversible or user-gated work: closing alerts, isolating hosts, "
+                "fine-tune recommendations, and 'is this you?' identity checks. Do not claim the "
+                "action already happened — it waits for approval. For identity_verify, set question "
+                "and follow_ups.yes / follow_ups.no to the next action (acknowledge/close vs escalate)."
+            ),
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "action_type": {
+                        "type": "string",
+                        "enum": action_types,
+                        "description": "The action the analyst should approve",
+                    },
+                    "title": {
+                        "type": "string",
+                        "description": "Short analyst-facing title",
+                    },
+                    "summary": {
+                        "type": "string",
+                        "description": "One-paragraph what/why, shown in the Requests list",
+                    },
+                    "rationale": {
+                        "type": "string",
+                        "description": "Investigation notes, evidence, and why this action is recommended",
+                    },
+                    "payload": {
+                        "type": "object",
+                        "description": (
+                            "All fields needed to execute later (alert_id, endpoint_id, username, "
+                            "reason, comment, title, description, ...). Store everything now."
+                        ),
+                    },
+                    "question": {
+                        "type": "string",
+                        "description": "Required for identity_verify: the yes/no question for the analyst",
+                    },
+                    "follow_ups": {
+                        "type": "object",
+                        "description": (
+                            "For identity_verify: {yes: {id, label, action_type, payload}, "
+                            "no: {...}}. Defaults to close-as-benign on yes and escalate on no."
+                        ),
+                    },
+                    "session_id": {
+                        "type": "string",
+                        "description": "Optional originating SamiGPT session id",
+                    },
+                },
+                "required": ["action_type", "title", "summary"],
+            },
+        }
 
     def _register_kb_tools(self) -> None:
         """
@@ -350,7 +419,10 @@ class SamiGPTMCPServer:
 
         self.tools["create_fine_tuning_recommendation"] = {
             "name": "create_fine_tuning_recommendation",
-            "description": "Create a fine-tuning recommendation on the fine-tuning board (supports Trello, ClickUp, and GitHub)",
+            "description": (
+                "Request a fine-tuning recommendation on the detection-engineering board."
+                + _QUEUED_FOR_ANALYST
+            ),
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -387,7 +459,10 @@ class SamiGPTMCPServer:
 
         self.tools["create_visibility_recommendation"] = {
             "name": "create_visibility_recommendation",
-            "description": "Create a visibility/engineering recommendation on the engineering board (supports Trello, ClickUp, and GitHub)",
+            "description": (
+                "Request a visibility/engineering recommendation on the engineering board."
+                + _QUEUED_FOR_ANALYST
+            ),
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -1576,7 +1651,11 @@ class SamiGPTMCPServer:
 
         self.tools["close_alert"] = {
             "name": "close_alert",
-            "description": "Close a security alert in the SIEM platform. Use this when an alert has been determined to be a false positive or benign true positive during triage.",
+            "description": (
+                "Request closing a SIEM alert (false positive or benign true positive)."
+                + _QUEUED_FOR_ANALYST
+                + " Use update_alert_verdict immediately for your working assessment; that does not close the alert."
+            ),
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -1599,7 +1678,12 @@ class SamiGPTMCPServer:
 
         self.tools["update_alert_verdict"] = {
             "name": "update_alert_verdict",
-            "description": "Update the verdict for a security alert. Use this to set or update the verdict field (e.g., 'in-progress', 'false_positive', 'benign_true_positive', 'true_positive', 'uncertain'). This is the preferred method for setting verdicts as it clearly indicates the intent to update the verdict rather than close the alert.",
+            "description": (
+                "Record the AI's working verdict on an alert (in-progress, false_positive, "
+                "benign_true_positive, true_positive, uncertain). This is the investigator's "
+                "assessment, not a close of the alert, and does not wait for analyst approval. "
+                "Use close_alert (queued for the Requests view) when the alert itself should be closed."
+            ),
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -1833,10 +1917,10 @@ class SamiGPTMCPServer:
         Available tools:
         - get_endpoint_summary: Get endpoint overview (hostname, platform, isolation status)
         - get_detection_details: Get detailed detection information
-        - isolate_endpoint: Isolate endpoint from network (CRITICAL ACTION - use with caution)
-        - release_endpoint_isolation: Release endpoint from isolation
-        - kill_process_on_endpoint: Terminate process on endpoint (DISRUPTIVE - use with caution)
-        - collect_forensic_artifacts: Initiate forensic artifact collection
+        - isolate_endpoint: Request isolation (queued for Requests)
+        - release_endpoint_isolation: Request release from isolation (queued)
+        - kill_process_on_endpoint: Request process kill (queued)
+        - collect_forensic_artifacts: Request forensic collection (queued)
         
         See TOOLS.md for detailed documentation and usage examples.
         """
@@ -1880,7 +1964,10 @@ class SamiGPTMCPServer:
 
         self.tools["isolate_endpoint"] = {
             "name": "isolate_endpoint",
-            "description": "Isolate an endpoint from the network to prevent further compromise or lateral movement. This is a critical response action.",
+            "description": (
+                "Request isolating an endpoint from the network to stop further compromise or lateral movement."
+                + _QUEUED_FOR_ANALYST
+            ),
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -1895,7 +1982,10 @@ class SamiGPTMCPServer:
 
         self.tools["release_endpoint_isolation"] = {
             "name": "release_endpoint_isolation",
-            "description": "Release an endpoint from network isolation, restoring normal network connectivity.",
+            "description": (
+                "Request releasing an endpoint from network isolation."
+                + _QUEUED_FOR_ANALYST
+            ),
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -1910,7 +2000,10 @@ class SamiGPTMCPServer:
 
         self.tools["kill_process_on_endpoint"] = {
             "name": "kill_process_on_endpoint",
-            "description": "Terminate a specific process running on an endpoint by its process ID. Use with caution as this is a disruptive action.",
+            "description": (
+                "Request terminating a process on an endpoint by PID."
+                + _QUEUED_FOR_ANALYST
+            ),
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -1929,7 +2022,10 @@ class SamiGPTMCPServer:
 
         self.tools["collect_forensic_artifacts"] = {
             "name": "collect_forensic_artifacts",
-            "description": "Initiate collection of forensic artifacts from an endpoint, such as process lists, network connections, file system artifacts, etc.",
+            "description": (
+                "Request forensic artifact collection from an endpoint (processes, network, filesystem, etc.)."
+                + _QUEUED_FOR_ANALYST
+            ),
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -2074,7 +2170,12 @@ class SamiGPTMCPServer:
         
         self.tools["execute_runbook"] = {
             "name": "execute_runbook",
-            "description": "Execute an investigation runbook. The runbook content will be provided as context for you to follow step-by-step. Use the appropriate MCP tools for each step as specified in the runbook.",
+            "description": (
+                "Execute an investigation runbook. The runbook content will be provided as context "
+                "for you to follow step-by-step. Use the appropriate MCP tools for each step. "
+                "Irreversible tools (close_alert, isolate, kill, forensics, fine-tune) file a "
+                "Requests-view approval and do not run until an analyst approves them."
+            ),
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -2404,16 +2505,22 @@ To be populated during investigation.
                 if is_triage_runbook:
                     execution_instructions += (
                         "IMPORTANT: Follow Step 2a (Quick Assessment) in the runbook FIRST. "
-                        "Only create a case using create_case tool if the quick assessment determines "
+                        "Only create a case using create_case if the quick assessment determines "
                         "that case creation is needed (uncertain, suspicious, or requires tracking). "
-                        "If the alert is clearly FP/BTP with high confidence, close the alert directly "
-                        "using close_alert without creating a case. "
+                        "Record your working assessment immediately with update_alert_verdict "
+                        "(no approval). If the alert should be closed as FP/BTP, call close_alert — "
+                        "that files a Requests-view approval and does not close until an analyst approves. "
+                        "Do not tell the analyst the alert is already closed."
                     )
                 else:
                     execution_instructions += "IMPORTANT: Create a case using create_case tool if one doesn't exist, following the case standard in standards/case_standard.md. "
         
         execution_instructions += (
             f"Follow the workflow steps in the runbook below. Use the appropriate MCP tools for each step. "
+            f"Irreversible actions (close_alert, isolate_endpoint, kill_process_on_endpoint, "
+            f"collect_forensic_artifacts, create_fine_tuning_recommendation, "
+            f"create_visibility_recommendation) are queued for analyst "
+            f"approval in the SamiGPT Requests view — report them as pending, not completed. "
             f"Document your progress and findings in case comments as specified in the runbook. "
             f"Attach all observables (IOCs) to the case using attach_observable_to_case. "
             f"Follow the case standard format for all documentation."
@@ -2880,6 +2987,23 @@ To be populated during investigation.
                 f"Skill '{tool_name}' is disabled for this Elastic cluster",
             )
 
+        from ..ai_controller.approval_queue.mcp_bridge import enqueue_gated_tool
+        from .cluster_context import get_elastic_cluster_id
+
+        queued = enqueue_gated_tool(tool_name, tool_args, cluster_id=get_elastic_cluster_id())
+        if queued:
+            result_text = json.dumps(queued, indent=2)
+            self._mcp_logger.info(
+                "RESPONSE [id=%s] tool=%s queued for approval: %s",
+                request_id,
+                tool_name,
+                queued.get("request_id"),
+            )
+            return self._create_response(
+                request_id,
+                result={"content": [{"type": "text", "text": result_text}]},
+            )
+
         # Execute the tool
         self._mcp_logger.info(
             f"EXECUTING [id={request_id}] tool={tool_name}, args={json.dumps(tool_args)[:500]}"
@@ -2931,7 +3055,26 @@ To be populated during investigation.
         self._mcp_logger.debug(
             f"Executing tool: {tool_name} with args: {json.dumps(args)[:500]}"
         )
-        
+
+        if tool_name == "create_approval_request":
+            from ..ai_controller.approval_queue.mcp_bridge import create_request_from_tool_args
+            from .cluster_context import get_elastic_cluster_id
+
+            payload = args.get("payload")
+            if isinstance(payload, str):
+                try:
+                    args = dict(args)
+                    args["payload"] = json.loads(payload)
+                except json.JSONDecodeError:
+                    pass
+            result = create_request_from_tool_args(args, cluster_id=get_elastic_cluster_id())
+            self._mcp_logger.info(
+                "Tool %s filed approval request %s",
+                tool_name,
+                result.get("request_id"),
+            )
+            return result
+
         # Case management tools
         if tool_name == "create_case" and self.case_client:
             result = tools_case.create_case(

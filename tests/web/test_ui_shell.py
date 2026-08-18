@@ -40,6 +40,17 @@ def test_autorun_panel_is_not_forced_visible():
     assert "hidden" in opening_tag
 
 
+def test_requests_view_is_in_the_shell():
+    html = INDEX.read_text(encoding="utf-8")
+    app_js = APP_JS.read_text(encoding="utf-8")
+    assert 'id="nav-requests"' in html
+    assert 'id="requests-content"' in html
+    assert "requests.js" in html
+    assert "requests.css" in html
+    assert "setActiveSection('requests')" in app_js
+    assert "RequestsManager" in app_js
+
+
 def test_mcp_readiness_banner_is_actionable_and_accessible():
     html = INDEX.read_text(encoding="utf-8")
     app_js = APP_JS.read_text(encoding="utf-8")

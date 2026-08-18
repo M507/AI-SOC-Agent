@@ -11,6 +11,14 @@ This document provides comprehensive documentation for all tools available in th
 
 This ensures clear distinction between case management operations and SIEM alert operations.
 
+## Analyst approval (Requests view)
+
+These tools **file a request** and do not run until an analyst approves them in the SamiGPT Requests view: `close_alert`, `isolate_endpoint`, `release_endpoint_isolation`, `kill_process_on_endpoint`, `collect_forensic_artifacts`, `create_fine_tuning_recommendation`, `create_visibility_recommendation`.
+
+`update_alert_verdict` is **not** gated. It records the AI's working assessment immediately and does not close the alert.
+
+`create_approval_request` is used for identity checks ("is this you?") and custom follow-ups.
+
 ## Table of Contents
 
 - [Case Management Tools](#case-management-tools)
@@ -1995,19 +2003,15 @@ Retrieve detailed information about a specific detection including type, severit
 
 ### `isolate_endpoint`
 
-Isolate an endpoint from the network to prevent further compromise or lateral movement. **This is a critical response action.**
+Request isolating an endpoint from the network. **Queued for analyst approval** — the host is not isolated until Requests is approved.
 
 **Parameters:**
 - `endpoint_id` (string, required): The endpoint ID to isolate
 
 **Returns:**
-- `success` (boolean): Whether the operation succeeded
-- `action` (object): Action details including:
-  - `endpoint_id` (string): Endpoint identifier
-  - `result` (string): Action result status
-  - `requested_at` (string): ISO timestamp of request
-  - `completed_at` (string): ISO timestamp of completion (if completed)
-  - `message` (string): Status message
+- `queued` (boolean): `true` when isolation was filed for approval
+- `request_id` (string): Requests-view id
+- `message` (string): Analyst-facing status (pending approval)
 
 **Usage Example:**
 ```json
@@ -2031,19 +2035,15 @@ Isolate an endpoint from the network to prevent further compromise or lateral mo
 
 ### `release_endpoint_isolation`
 
-Release an endpoint from network isolation, restoring normal network connectivity.
+Request releasing an endpoint from network isolation. **Queued for analyst approval** — connectivity is not restored until Requests is approved.
 
 **Parameters:**
 - `endpoint_id` (string, required): The endpoint ID to release
 
 **Returns:**
-- `success` (boolean): Whether the operation succeeded
-- `action` (object): Action details including:
-  - `endpoint_id` (string): Endpoint identifier
-  - `result` (string): Action result status
-  - `requested_at` (string): ISO timestamp of request
-  - `completed_at` (string): ISO timestamp of completion (if completed)
-  - `message` (string): Status message
+- `queued` (boolean): `true` when release was filed for approval
+- `request_id` (string): Requests-view id
+- `message` (string): Analyst-facing status (pending approval)
 
 **Usage Example:**
 ```json
@@ -2065,21 +2065,16 @@ Release an endpoint from network isolation, restoring normal network connectivit
 
 ### `kill_process_on_endpoint`
 
-Terminate a specific process running on an endpoint by its process ID. **Use with caution as this is a disruptive action.**
+Request terminating a process on an endpoint by PID. **Queued for analyst approval** — the process is not killed until Requests is approved.
 
 **Parameters:**
 - `endpoint_id` (string, required): The endpoint ID
 - `pid` (integer, required): The process ID to kill
 
 **Returns:**
-- `success` (boolean): Whether the operation succeeded
-- `action` (object): Action details including:
-  - `endpoint_id` (string): Endpoint identifier
-  - `pid` (integer): Process ID
-  - `result` (string): Action result status
-  - `requested_at` (string): ISO timestamp of request
-  - `completed_at` (string): ISO timestamp of completion (if completed)
-  - `message` (string): Status message
+- `queued` (boolean): `true` when the kill was filed for approval
+- `request_id` (string): Requests-view id
+- `message` (string): Analyst-facing status (pending approval)
 
 **Usage Example:**
 ```json
@@ -2098,13 +2093,13 @@ Terminate a specific process running on an endpoint by its process ID. **Use wit
 - Kill malware processes
 - Emergency response
 
-**⚠️ Warning:** This will terminate the specified process immediately. Use with caution.
+**Note:** Do not tell the analyst the process is already dead. Report the Requests `request_id`.
 
 ---
 
 ### `collect_forensic_artifacts`
 
-Initiate collection of forensic artifacts from an endpoint, such as process lists, network connections, file system artifacts, etc.
+Request forensic artifact collection from an endpoint. **Queued for analyst approval** — collection does not start until Requests is approved.
 
 **Parameters:**
 - `endpoint_id` (string, required): The endpoint ID
@@ -2117,14 +2112,9 @@ Initiate collection of forensic artifacts from an endpoint, such as process list
   - `logs`: System logs
 
 **Returns:**
-- `success` (boolean): Whether the operation succeeded
-- `request` (object): Collection request details including:
-  - `endpoint_id` (string): Endpoint identifier
-  - `artifact_types` (array): Types requested
-  - `result` (string): Request result status
-  - `requested_at` (string): ISO timestamp of request
-  - `completed_at` (string): ISO timestamp of completion (if completed)
-  - `message` (string): Status message
+- `queued` (boolean): `true` when collection was filed for approval
+- `request_id` (string): Requests-view id
+- `message` (string): Analyst-facing status (pending approval)
 
 **Usage Example:**
 ```json
@@ -2153,7 +2143,7 @@ Engineering tools enable creating and managing recommendations for fine-tuning d
 
 ### `create_fine_tuning_recommendation`
 
-Create a fine-tuning recommendation task on the fine-tuning board. This is used to track improvements needed to reduce false positives or enhance detection rules.
+Request a fine-tuning recommendation on the detection-engineering board. **Queued for analyst approval** — the board item is not created until Requests is approved.
 
 **Parameters:**
 - `title` (string, required): Task/card title
@@ -2193,7 +2183,7 @@ Create a fine-tuning recommendation task on the fine-tuning board. This is used 
 
 ### `create_visibility_recommendation`
 
-Create a visibility/engineering recommendation task on the engineering board. This is used to track improvements needed to enhance security visibility or detection capabilities.
+Request a visibility/engineering recommendation on the engineering board. **Queued for analyst approval** — the board item is not created until Requests is approved.
 
 **Parameters:**
 - `title` (string, required): Task/card title
@@ -2516,8 +2506,8 @@ Execute an investigation rule/workflow that chains together multiple skills.
 **Example 2: Respond to Endpoint Detection**
 1. Use `get_detection_details` to understand the threat
 2. Use `get_endpoint_summary` to check endpoint status
-3. Use `isolate_endpoint` if threat is active
-4. Use `collect_forensic_artifacts` to gather evidence
+3. Use `isolate_endpoint` to file a Requests approval if the threat is active — do not claim the host is already isolated
+4. Use `collect_forensic_artifacts` to file a forensics request
 5. Use `get_file_report` to analyze associated files
 6. Create case and document with case management tools
 
@@ -2606,7 +2596,7 @@ Use `list_rules` to check available rules, and check tool availability through t
 
 ### `close_alert`
 
-Close a security alert in the SIEM platform. Use this when an alert has been determined to be a false positive or benign true positive during triage.
+Request closing a security alert (false positive or benign true positive). **Queued for analyst approval** in the SamiGPT Requests view — the alert is not closed until approved. Use `update_alert_verdict` immediately for the AI working assessment.
 
 **Parameters:**
 - `alert_id` (string, required): The ID of the alert to close
@@ -2614,12 +2604,9 @@ Close a security alert in the SIEM platform. Use this when an alert has been det
 - `comment` (string, optional): Comment explaining why the alert is being closed
 
 **Returns:**
-- `success` (boolean): Whether the operation succeeded
-- `alert_id` (string): The ID of the alert that was closed
-- `status` (string): The new status of the alert (typically "closed")
-- `reason` (string): Reason for closing
-- `comment` (string): Comment provided
-- `alert` (object): Updated alert details
+- `queued` (boolean): `true` when the close was filed for approval
+- `request_id` (string): Requests-view id
+- `message` (string): Analyst-facing status (pending approval)
 
 **Usage Example:**
 ```json
@@ -2683,7 +2670,7 @@ Update the verdict for a security alert. Use this to set or update the verdict f
 - Document verdict with explanatory comments
 - Track investigation status through verdict field
 
-**Note:** This is the preferred method for setting verdicts as it clearly indicates the intent to update the verdict rather than close the alert. Use `close_alert` when you want to close the alert entirely.
+**Note:** This is the preferred method for the AI working assessment. It runs immediately and does **not** close the alert. Use `close_alert` to file official closure for analyst approval.
 
 ---
 

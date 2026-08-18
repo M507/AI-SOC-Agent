@@ -31,6 +31,7 @@ from .routes_llm import router as llm_router
 from .routes_mcp import router as mcp_router
 from .routes_elastic import router as elastic_router
 from .routes_integrations import router as integrations_router
+from .routes_requests import router as requests_router
 
 logger = get_logger("sami.ai_controller.web.server")
 
@@ -117,6 +118,7 @@ app.include_router(llm_router)
 app.include_router(mcp_router)
 app.include_router(elastic_router)
 app.include_router(integrations_router)
+app.include_router(requests_router)
 
 # Initialize components
 executor: Optional[AgentExecutor] = None
@@ -252,10 +254,11 @@ def initialize(
     
     try:
         init_auth(cookie_secure=cookie_secure)
-        if config_storage_dir:
-            session_manager = SessionManager(storage_dir=config_storage_dir)
-        else:
-            session_manager = SessionManager()
+        storage_dir = config_storage_dir or "data/ai_controller"
+        from ..approval_queue import init_queue
+
+        init_queue(storage_dir)
+        session_manager = SessionManager(storage_dir=storage_dir)
         
         # Load config for executor
         from ...core.config_storage import load_config_from_file

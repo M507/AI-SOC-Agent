@@ -68,10 +68,10 @@ This runbook explicitly **requires**:
     *   Verify endpoint details: hostname, platform, current status.
     *   **Note:** If endpoint is isolated, process termination may still be needed.
 
-3.  **Execute Process Termination:**
+3.  **Request Process Termination:**
     *   Use `kill_process_on_endpoint` with `endpoint_id=${ENDPOINT_ID}` and `pid=${PROCESS_ID}`.
-    *   Wait for confirmation of termination completion.
-    *   Set `${TERMINATION_STATUS}` = "Process terminated successfully" or "Termination failed: [error]".
+    *   The tool files a Requests-view approval. Set `${TERMINATION_STATUS}` = "Kill requested (pending analyst approval, request_id=...)".
+    *   Do not claim the process is already dead.
 
 4.  **Verify Termination:**
     *   **Note:** Verification may require additional endpoint queries or forensic collection.

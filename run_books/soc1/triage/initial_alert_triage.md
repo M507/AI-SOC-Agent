@@ -243,8 +243,8 @@ Outputs:
 3. Quick decision on whether the alert is a clear FP/BTP candidate or needs deeper case strategy.
 
 
-STEP 4.3 – DIRECT CLOSURE ACTIONS (FP/BTP, NO CASE)
-This step executes only if the decision in Step 4 is to close directly as FP or BTP.
+STEP 4.3 – FP/BTP CLOSURE REQUEST (NO CASE)
+This step executes only if the decision in Step 4 is to close as FP or BTP. Official close is queued for the Requests view.
 
 Inputs:
 1. ${ALERT_ID}, ${ALERT_COMPLETE_DETAILS}, ${KB_VERIFICATION_RESULTS}, ${IOC_MATCH_RESULTS}, ${ALERT_TYPE}.
@@ -255,24 +255,25 @@ Actions:
        1.1.1 What was checked (KB verification, IOC checks, patterns).
        1.1.2 Why the activity is FP or BTP.
        1.1.3 Concrete recommendations for rule improvement and exclusions.
-2. Update verdict to false_positive or benign_true_positive using update_alert_verdict:
+2. Update verdict to false_positive or benign_true_positive using update_alert_verdict (runs immediately; this is the AI working assessment, not an official close):
    2.1 Include a comment referencing KB results, IOC results, and reasons.
-3. Evaluate fine-tuning recommendations:
-   3.1 Use list_fine_tuning_recommendations to find matching detection patterns.
-   3.2 If a matching recommendation exists:
-       3.2.1 Add a comment to it with add_comment_to_fine_tuning_recommendation summarizing this new FP/BTP instance.
-   3.3 If no matching recommendation exists:
-       3.3.1 Create a new recommendation using create_fine_tuning_recommendation with a title focused on reducing false positives for this alert type.
+3. Request official close with close_alert (queued for the Requests view). Do not tell the analyst the alert is already closed.
+4. Evaluate fine-tuning recommendations:
+   4.1 Use list_fine_tuning_recommendations to find matching detection patterns.
+   4.2 If a matching recommendation exists:
+       4.2.1 Add a comment to it with add_comment_to_fine_tuning_recommendation summarizing this new FP/BTP instance.
+   4.3 If no matching recommendation exists:
+       4.3.1 File a new recommendation using create_fine_tuning_recommendation (queued for Requests) with a title focused on reducing false positives for this alert type.
 
 Decision Points:
 1. Determine whether to update an existing fine-tuning item or create a new one.
 
 Outputs:
 1. ${ASSESSMENT} = "false_positive" or "benign_true_positive".
-2. ${ACTION_TAKEN} = direct closure with documented reasoning and engineering feedback.
+2. ${ACTION_TAKEN} = AI verdict recorded; close and fine-tune requests filed for analyst approval.
 3. Alert verdict updated and notes added, no case created.
 
-If direct closure is performed, the runbook ends here for this alert.
+If the close request is filed, the runbook ends here for this alert.
 
 
 STEP 5 – CASE STRATEGY AND EXISTING CASE CHECK

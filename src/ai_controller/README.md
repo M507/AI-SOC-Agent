@@ -28,9 +28,10 @@ cursor-agent "your prompt"
 
 ## Features
 
-- **Web Interface**: Modern web UI with tabs for managing sessions and autoruns
+- **Web Interface**: Modern web UI with tabs for managing sessions, autoruns, and the Requests approval queue
 - **CLI Interface**: Command-line interface for executing commands directly
 - **Session Management**: Track and manage agent execution sessions
+- **Requests / approvals**: AI-suggested actions wait for analyst approval. See [approval_queue/CHECKLIST.md](approval_queue/CHECKLIST.md).
 - **Autorun Support**: Structure ready for scheduled/recurring agent executions
 - **Real-time Updates**: WebSocket support for live command output
 - **Terminal-like UI**: Terminal-style interface for viewing command results

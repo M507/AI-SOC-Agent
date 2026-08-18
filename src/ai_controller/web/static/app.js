@@ -6,7 +6,7 @@ class AIController {
         // Core state
         this.activeSessionId = null;
         this.uiDebugMode = false;
-        this.activeSection = 'sessions'; // 'sessions' | 'autoruns' | 'settings' | 'mcp'
+        this.activeSection = 'sessions'; // 'sessions' | 'autoruns' | 'requests' | 'settings' | 'mcp'
         this.activeSettingsPage = 'llm';
         this.mcpReadiness = null;
         this.lastMCPAlertCode = null;
@@ -22,6 +22,7 @@ class AIController {
         this.elasticClusters = new ElasticClustersManager(this);
         this.integrationsSettings = new IntegrationsSettingsManager(this);
         this.mcpPanel = new MCPPanel(this);
+        this.requestsManager = new RequestsManager(this);
         
         this.init();
     }
@@ -37,6 +38,7 @@ class AIController {
         // Default view is manual sessions; load initial data
         this.loadSessions('manual');
         this.loadAutoruns();
+        this.requestsManager.load();
 
         // Poll for updates every 3 seconds to keep chats live without
         // interfering with non-chat views like Settings.
@@ -60,6 +62,12 @@ class AIController {
                     }
                 }
             }
+
+            if (this.activeSection === 'requests') {
+                this.requestsManager.load();
+            } else {
+                this.requestsManager.refreshCounts();
+            }
         }, 3000);
 
         this.mcpHealthInterval = setInterval(() => {
@@ -74,6 +82,7 @@ class AIController {
         // Left navigation
         const navSessions = document.getElementById('nav-sessions');
         const navAutoruns = document.getElementById('nav-autoruns');
+        const navRequests = document.getElementById('nav-requests');
         const navSettings = document.getElementById('nav-settings');
         const navMcp = document.getElementById('nav-mcp');
 
@@ -85,6 +94,11 @@ class AIController {
         if (navAutoruns) {
             navAutoruns.addEventListener('click', () => {
                 this.setActiveSection('autoruns');
+            });
+        }
+        if (navRequests) {
+            navRequests.addEventListener('click', () => {
+                this.setActiveSection('requests');
             });
         }
         if (navSettings) {
@@ -485,7 +499,7 @@ class AIController {
     }
     
     setActiveSection(section) {
-        if (!['sessions', 'autoruns', 'settings', 'mcp'].includes(section)) {
+        if (!['sessions', 'autoruns', 'requests', 'settings', 'mcp'].includes(section)) {
             console.warn('[AIController] Unknown section:', section);
             return;
         }
@@ -493,7 +507,7 @@ class AIController {
         this.activeSection = section;
 
         // Update sidebar nav active state
-        const sections = ['sessions', 'autoruns', 'settings', 'mcp'];
+        const sections = ['sessions', 'autoruns', 'requests', 'settings', 'mcp'];
         sections.forEach((name) => {
             const el = document.getElementById(`nav-${name}`);
             if (el) {
@@ -508,6 +522,7 @@ class AIController {
         // Tab groups
         const sessionsGroup = document.getElementById('sessions-tab-group');
         const autorunsGroup = document.getElementById('autoruns-tab-group');
+        const requestsGroup = document.getElementById('requests-tab-group');
         const settingsGroup = document.getElementById('settings-tab-group');
         const mcpGroup = document.getElementById('mcp-tab-group');
 
@@ -516,6 +531,9 @@ class AIController {
         }
         if (autorunsGroup) {
             autorunsGroup.style.display = section === 'autoruns' ? 'flex' : 'none';
+        }
+        if (requestsGroup) {
+            requestsGroup.style.display = section === 'requests' ? 'flex' : 'none';
         }
         if (settingsGroup) {
             settingsGroup.style.display = section === 'settings' ? 'flex' : 'none';
@@ -528,6 +546,7 @@ class AIController {
 
         const sessionContent = document.getElementById('session-content');
         const mcpContent = document.getElementById('mcp-content');
+        const requestsContent = document.getElementById('requests-content');
         const noSessionMessage = document.getElementById('no-session-message');
 
         if (section !== 'settings') {
@@ -539,6 +558,10 @@ class AIController {
             this.autorunManager.setEmptyVisible(false);
         }
 
+        if (requestsContent) {
+            requestsContent.style.display = section === 'requests' ? 'flex' : 'none';
+        }
+
         if (section === 'sessions') {
             if (sessionContent) sessionContent.style.display = this.activeSessionId ? 'flex' : 'none';
             if (mcpContent) mcpContent.style.display = 'none';
@@ -548,6 +571,21 @@ class AIController {
             if (mcpContent) mcpContent.style.display = 'none';
             if (noSessionMessage) noSessionMessage.style.display = 'none';
             this.autorunManager.syncView();
+        } else if (section === 'requests') {
+            if (sessionContent) sessionContent.style.display = 'none';
+            if (mcpContent) mcpContent.style.display = 'none';
+            if (noSessionMessage) noSessionMessage.style.display = 'none';
+            document.querySelectorAll('button.tab[data-session-id]').forEach((tab) => {
+                tab.classList.remove('active');
+            });
+            const requestsTab = document.getElementById('requests-tab');
+            if (requestsTab) {
+                requestsTab.classList.add('active');
+            }
+            this.requestsManager.load();
+            if (this.activeSessionId) {
+                this.wsManager.disconnect(this.activeSessionId);
+            }
         } else if (section === 'settings') {
             if (sessionContent) sessionContent.style.display = 'none';
             if (mcpContent) mcpContent.style.display = 'none';

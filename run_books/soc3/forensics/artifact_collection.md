@@ -73,11 +73,10 @@ This runbook covers:
         *   **logs**: System logs and event logs
     *   Store selected types in `${ARTIFACT_TYPES}`.
 
-4.  **Execute Artifact Collection:**
+4.  **Request Artifact Collection:**
     *   Use `collect_forensic_artifacts` with `endpoint_id=${ENDPOINT_ID}` and `artifact_types=${ARTIFACT_TYPES}`.
-    *   Wait for collection completion confirmation.
-    *   Set `${COLLECTION_STATUS}` = "Artifacts collected successfully" or "Collection failed: [error]".
-    *   Store collected artifacts list in `${ARTIFACTS_COLLECTED}`.
+    *   The tool files a Requests-view approval. Set `${COLLECTION_STATUS}` = "Collection requested (pending analyst approval, request_id=...)".
+    *   Do not claim artifacts have already been collected.
 
 5.  **Document Collection:**
     *   Prepare collection comment: `COLLECTION_COMMENT = "SOC3 (IR Expert) Forensic Artifact Collection for Case ${CASE_ID}: Endpoint ID: ${ENDPOINT_ID}. Artifact Types Collected: ${ARTIFACT_TYPES}. Collection Status: ${COLLECTION_STATUS}. **Case Context Reviewed:** [summary of SOC1/SOC2 findings that informed artifact selection]. Infrastructure Context (KB): [...]. Collected at: [timestamp]. Artifacts: ${ARTIFACTS_COLLECTED}. **Note:** Forensic artifacts have been collected. Analysis should follow."`

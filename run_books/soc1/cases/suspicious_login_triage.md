@@ -142,9 +142,9 @@ This runbook explicitly **excludes**:
 
 11. **Action Based on Assessment:**
     *   **If FP/BTP (High Confidence):**
-        *   Use `close_alert` with `alert_id=${ALERT_ID}`, `reason="false_positive"` or `reason="benign_true_positive"`, and detailed comment.
+        *   Record `update_alert_verdict` immediately, then use `close_alert` with `alert_id=${ALERT_ID}`, `reason="false_positive"` or `reason="benign_true_positive"`, and detailed comment. Close is queued for Requests — do not claim the alert is already closed.
         *   If case was created, use `update_case_status` with `case_id=${CASE_ID}` and `status="closed"`.
-        *   Set `${ACTION_TAKEN}` = "Closed as FP/BTP during SOC1 triage."
+        *   Set `${ACTION_TAKEN}` = "AI verdict recorded; close requested (pending analyst approval)."
         *   End runbook execution.
     *   **If TP/Suspicious OR If Uncertain:**
         *   **MUST create case if not already created, with ALL alert details from `${ALERT_COMPLETE_DETAILS}`.**

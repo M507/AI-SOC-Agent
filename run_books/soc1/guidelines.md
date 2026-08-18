@@ -32,10 +32,19 @@ It focuses on **false positive identification, basic enrichment, and routing**, 
 
 These guidelines explain **exactly** what the SOC1 profile is intended to do, what it will not do, and how its runbooks should be used.
 
+## Analyst approval
+
+SOC1 **recommends** closures; an analyst must approve them in the SamiGPT **Requests** view.
+
+- Call `update_alert_verdict` immediately with your working assessment (FP / BTP / TP / uncertain / in-progress). That is **your** verdict and does **not** need approval. It does **not** close the alert.
+- Call `close_alert` when the alert itself should be closed. That **queues** a request. Do not tell the analyst the alert is already closed.
+- Call `create_fine_tuning_recommendation` to file a detection-tuning request (also queued).
+- For suspicious logins or "is this you?" checks, use `create_approval_request` with `action_type=identity_verify` and yes/no follow-ups (ACK vs escalate).
+
 ## Main Objectives
 
 - **MUST ALWAYS BEGIN FROM SECURITY ALERTS**: SOC1 workflows start with `${ALERT_ID}` from the SIEM alert queue, never from existing cases.
-- **PRIMARY: Identify and close false positives immediately** without creating cases. This is SOC1's most important function.
+- **PRIMARY: Identify false positives quickly** and file `close_alert` (queued for Requests) without creating cases. This is SOC1's most important function. Do not claim the alert is already closed.
 - **Quickly classify alerts** as False Positive (FP), Benign True Positive (BTP), or True Positive/Suspicious (TP).
 - **If uncertain about legitimacy**: Leave the alert as an open case with ALL alert details documented (see Case Documentation Requirements below).
 - **Verify entities against client infrastructure** using knowledge base to determine if IPs, hostnames, or users are expected/internal - this is critical for false positive identification.
@@ -65,7 +74,7 @@ These guidelines explain **exactly** what the SOC1 profile is intended to do, wh
     - Known legitimate applications/processes
   - Performs quick IOC checks using `get_ioc_matches` for critical entities.
   - Checks for known benign patterns (scheduled tasks, maintenance windows, approved tools).
-  - **If clearly false positive: Closes alert directly using `close_alert` WITHOUT creating a case.**
+  - **If clearly false positive: Record `update_alert_verdict` immediately, then call `close_alert` to file a Requests approval. Do not create a case. Do not claim the alert is already closed.**
   - **If uncertain about legitimacy: Creates case with ALL alert details (see Case Documentation Requirements).**
   - **Only creates a case if uncertainty exists or suspicious indicators are present.**
 
@@ -175,9 +184,10 @@ SOC1 must be **aggressive in identifying false positives** to reduce noise and a
 - KB shows entities are known/internal - this is sufficient even if exact activity pattern isn't explicitly documented in KB descriptions
 
 ### Step 4: Document False Positive Closures
-When closing an alert as false positive:
-- Use `close_alert` with `reason="false_positive"` or `reason="benign_true_positive"`
-- Include detailed comment explaining:
+When recommending an alert be closed as false positive:
+- Use `update_alert_verdict` immediately with `false_positive` or `benign_true_positive` (your working assessment; no approval).
+- Use `close_alert` with `reason="false_positive"` or `reason="benign_true_positive"` to queue analyst approval in Requests.
+- Include a detailed comment explaining:
   - Which entities were verified (IPs, hostnames, users)
   - KB verification results (e.g., "IP 10.0.1.193 verified as internal subnet per client KB")
   - Why activity is expected (e.g., "Elastic Agent connecting to Elastic Cloud endpoint")
@@ -197,7 +207,7 @@ When closing an alert as false positive:
 - **No advanced forensics**:
   - Does *not* perform forensic artifact collection or memory analysis.
 - **No case creation for false positives**:
-  - Does *not* create cases for alerts that are clearly false positives - closes them directly.
+  - Does *not* create cases for alerts that are clearly false positives — files a close request instead.
 
 ## Case Documentation Requirements
 

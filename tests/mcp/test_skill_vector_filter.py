@@ -13,3 +13,4 @@ def test_tools_list_honors_cluster_skill_vector(monkeypatch):
     visible = server._tools_for_current_cluster()
     assert "list_rules" not in visible
     assert "execute_rule" not in visible
+    assert "create_approval_request" in visible
