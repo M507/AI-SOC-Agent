@@ -9,6 +9,7 @@ OpenAI function calls so investigations still use SamiGPT skills.
 from __future__ import annotations
 
 import json
+import re
 from typing import Any, Dict, List, Optional
 
 from ..core.logging import get_logger
@@ -68,6 +69,99 @@ def mcp_tools_to_openai(tools: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
             }
         )
     return converted
+
+
+def mcp_tools_to_catalog(tools: List[Dict[str, Any]]) -> str:
+    """Compact tool list injected into the system prompt when native FC is dropped."""
+    lines = []
+    for tool in tools:
+        name = tool.get("name")
+        if not name:
+            continue
+        description = re.sub(r"\s+", " ", (tool.get("description") or "").strip())
+        if len(description) > 160:
+            description = description[:157] + "..."
+        schema = tool.get("inputSchema") or {}
+        required = schema.get("required") or []
+        args = ", ".join(str(item) for item in required) if required else "none required"
+        lines.append(f"- {name}: {description} (args: {args})")
+    return "\n".join(lines)
+
+
+def _parse_tool_call_payload(raw: str) -> Optional[Dict[str, Any]]:
+    """Accept JSON objects or Qwen's `name\\n{args}` tool-call bodies."""
+    raw = (raw or "").strip()
+    if not raw:
+        return None
+    try:
+        payload = json.loads(raw)
+        return payload if isinstance(payload, dict) else None
+    except json.JSONDecodeError:
+        pass
+    lines = [line.strip() for line in raw.splitlines() if line.strip()]
+    if not lines:
+        return None
+    name = lines[0]
+    if not re.match(r"^[\w.-]+$", name):
+        return None
+    arguments: Any = {}
+    if len(lines) > 1:
+        remainder = "\n".join(lines[1:])
+        try:
+            parsed = json.loads(remainder)
+            arguments = parsed if isinstance(parsed, dict) else {"value": parsed}
+        except json.JSONDecodeError:
+            arguments = {"value": remainder}
+    return {"name": name, "arguments": arguments}
+
+
+def parse_text_tool_calls(text: str) -> List[Dict[str, Any]]:
+    """Parse <tool_call>{...}</tool_call> blocks when the model cannot emit native tool_calls."""
+    if not text:
+        return []
+    calls: List[Dict[str, Any]] = []
+    start_tag = "<tool_call>"
+    end_tag = "</tool_call>"
+    cursor = 0
+    index = 0
+    while True:
+        start = text.find(start_tag, cursor)
+        if start < 0:
+            break
+        end = text.find(end_tag, start)
+        if end < 0:
+            break
+        raw = text[start + len(start_tag) : end].strip()
+        cursor = end + len(end_tag)
+        payload = _parse_tool_call_payload(raw)
+        if not payload:
+            continue
+        name = payload.get("name") or payload.get("tool")
+        if not name:
+            continue
+        arguments = payload.get("arguments") or payload.get("args") or {}
+        if not isinstance(arguments, (dict, str)):
+            arguments = {}
+        if isinstance(arguments, dict):
+            arguments = json.dumps(arguments)
+        calls.append(
+            {
+                "id": f"text-{index}",
+                "type": "function",
+                "function": {"name": str(name), "arguments": arguments},
+            }
+        )
+        index += 1
+    return calls
+
+
+_PROMPT_TOOL_INSTRUCTIONS = (
+    "You have SamiGPT MCP investigation tools. When a tool is required, emit one or more "
+    "XML tags of this exact form and do not invent names:\n"
+    '<tool_call>{"name": "tool_name", "arguments": {}}</tool_call>\n'
+    "After tool results are returned, give the analyst a concise answer.\n"
+    "Available tools:\n"
+)
 
 
 class OpenAICompatibleProvider(LLMProvider):
@@ -162,9 +256,8 @@ class OpenAICompatibleProvider(LLMProvider):
             logger.info("Open WebUI passthrough at %s supports tools; using it for tool calls", candidate)
         else:
             logger.warning(
-                "Open WebUI at %s cannot forward MCP tools (%s). Requests will run without tools. "
-                "Set ENABLE_OPENAI_API_PASSTHROUGH=True on Open WebUI, or point SamiGPT at the "
-                "inference backend directly, to restore tool calling.",
+                "Open WebUI at %s cannot forward native tool calls (%s). "
+                "SamiGPT will advertise MCP tools in the system prompt and execute them locally.",
                 origin,
                 detail or "passthrough unavailable",
             )
@@ -206,6 +299,7 @@ class OpenAICompatibleProvider(LLMProvider):
         ]
 
         openai_tools: List[Dict[str, Any]] = []
+        mcp_tools: List[Dict[str, Any]] = []
         if mcp_client is not None:
             try:
                 mcp_tools = await mcp_client.list_tools()
@@ -233,26 +327,30 @@ class OpenAICompatibleProvider(LLMProvider):
             chat_url = self._chat_url()
             tools_supported: Optional[bool] = None
             tools_advertised = len(openai_tools)
-            openwebui_mcp_id = (
-                (self.settings.get("mcp_server_id") or "").strip()
-                if self.provider_id == "openwebui"
-                else ""
-            )
+            prompt_tool_fallback = False
             if openai_tools:
-                if openwebui_mcp_id:
-                    # Open WebUI resolves the registered MCP server into native
-                    # tool schemas. SamiGPT still executes returned tool_calls
-                    # through its cluster-aware MCP client below.
+                tool_url = await self._tool_capable_chat_url(client, model)
+                if tool_url:
+                    chat_url = tool_url
                     tools_supported = True
                 else:
-                    tool_url = await self._tool_capable_chat_url(client, model)
-                    tools_supported = tool_url is not None
-                    if tool_url:
-                        chat_url = tool_url
-                    else:
-                        # The endpoint would accept and ignore them; dropping the
-                        # field keeps the request honest and the payload small.
-                        openai_tools = []
+                    # Open WebUI /api/v1 (and some Ollama proxies) accept `tools`
+                    # / `tool_ids` and then drop them before the model. SamiGPT
+                    # still executes tools itself, so put the catalog in the
+                    # system prompt and parse <tool_call> tags from the reply.
+                    catalog = mcp_tools_to_catalog(mcp_tools)
+                    if catalog:
+                        messages[0]["content"] = (
+                            f"{messages[0]['content']}\n\n{_PROMPT_TOOL_INSTRUCTIONS}{catalog}"
+                        )
+                        prompt_tool_fallback = True
+                        tools_supported = True
+                        logger.warning(
+                            "LLM endpoint does not forward native tool calls; "
+                            "advertising %s MCP tools in the system prompt instead",
+                            tools_advertised,
+                        )
+                    openai_tools = []
 
             for _iteration in range(max_iterations):
                 if self._cancelled:
@@ -271,10 +369,7 @@ class OpenAICompatibleProvider(LLMProvider):
                     "model": model,
                     "messages": messages,
                 }
-                if openwebui_mcp_id and tools_advertised:
-                    payload["tool_ids"] = [f"server:mcp:{openwebui_mcp_id}"]
-                    payload["params"] = {"function_calling": "native"}
-                elif openai_tools:
+                if openai_tools:
                     payload["tools"] = openai_tools
                     payload["tool_choice"] = "auto"
 
@@ -303,7 +398,10 @@ class OpenAICompatibleProvider(LLMProvider):
                 choice = (data.get("choices") or [{}])[0]
                 message = choice.get("message") or {}
                 last_text = message.get("content") or last_text
-                tool_calls = message.get("tool_calls") or []
+                native_calls = message.get("tool_calls") or []
+                text_calls = [] if native_calls else parse_text_tool_calls(last_text)
+                tool_calls = native_calls or text_calls
+                text_tool_loop = bool(text_calls) or prompt_tool_fallback
 
                 if not tool_calls:
                     return LLMResult(
@@ -317,7 +415,10 @@ class OpenAICompatibleProvider(LLMProvider):
                         tools_supported=tools_supported,
                     )
 
-                messages.append(message)
+                if text_tool_loop:
+                    messages.append({"role": "assistant", "content": last_text or ""})
+                else:
+                    messages.append(message)
                 if mcp_client is None:
                     return LLMResult(
                         success=True,
@@ -330,6 +431,7 @@ class OpenAICompatibleProvider(LLMProvider):
                         tools_supported=tools_supported,
                     )
 
+                result_blocks = []
                 for call in tool_calls:
                     fn = call.get("function") or {}
                     name = fn.get("name") or ""
@@ -340,11 +442,25 @@ class OpenAICompatibleProvider(LLMProvider):
                         arguments = {}
                     result_text = await mcp_client.call_tool(name, arguments)
                     tool_calls_made += 1
+                    if text_tool_loop:
+                        result_blocks.append(f"{name}: {result_text}")
+                    else:
+                        messages.append(
+                            {
+                                "role": "tool",
+                                "tool_call_id": call.get("id") or name,
+                                "content": result_text,
+                            }
+                        )
+                if text_tool_loop:
                     messages.append(
                         {
-                            "role": "tool",
-                            "tool_call_id": call.get("id") or name,
-                            "content": result_text,
+                            "role": "user",
+                            "content": (
+                                "Tool results:\n"
+                                + "\n\n".join(result_blocks)
+                                + "\n\nContinue. Emit another <tool_call> if needed, otherwise answer the analyst."
+                            ),
                         }
                     )
 

@@ -292,6 +292,43 @@ class AgentExecutor:
         finally:
             self._active_cluster_id = previous_cluster
     
+    def _mcp_client(self):
+        """Build an MCP client bound to the current session cluster."""
+        from ..mcp.client import MCPToolClient
+        from ..core.config_storage import get_section
+
+        mcp_cfg = get_section("mcp", {"host": "127.0.0.1", "port": 8082, "enabled": True})
+        if mcp_cfg.get("enabled", True) is False:
+            return None
+        return MCPToolClient(
+            host=mcp_cfg.get("host", "127.0.0.1"),
+            port=int(mcp_cfg.get("port", 8082)),
+            api_token=mcp_cfg.get("api_token") or "",
+            cluster_id=self._active_cluster_id,
+            tls=bool(mcp_cfg.get("tls", True)),
+        )
+
+    async def _execute_mcp_tool(self, command: Command) -> Optional[ExecutionResult]:
+        """Run a named tool through the MCP server when it is registered there."""
+        client = self._mcp_client()
+        if client is None or not command.tool_name:
+            return None
+        try:
+            tools = await client.list_tools()
+            names = {tool.get("name") for tool in tools if tool.get("name")}
+            if command.tool_name not in names:
+                return None
+            text = await client.call_tool(command.tool_name, command.arguments)
+            return ExecutionResult(success=True, output=text, timestamp=datetime.now())
+        except Exception as e:
+            logger.warning("MCP tool %s failed: %s", command.tool_name, e)
+            return ExecutionResult(
+                success=False,
+                output=None,
+                error=str(e),
+                timestamp=datetime.now(),
+            )
+
     async def _execute_tool(self, command: Command) -> ExecutionResult:
         """Execute a tool command."""
         if not command.tool_name:
@@ -301,6 +338,10 @@ class AgentExecutor:
                 error="No tool name specified",
                 timestamp=datetime.now()
             )
+
+        mcp_result = await self._execute_mcp_tool(command)
+        if mcp_result is not None:
+            return mcp_result
         
         # Check if tool is registered
         if command.tool_name not in self._tool_registry:
@@ -391,7 +432,6 @@ class AgentExecutor:
         completions and may use MCP tools when the MCP server is running.
         """
         from ..llm.registry import get_active_provider
-        from ..mcp.client import MCPToolClient
         from ..core.config_storage import get_section
 
         if context:
@@ -400,17 +440,10 @@ class AgentExecutor:
         try:
             provider = get_active_provider()
             self._current_provider = provider
-            mcp_cfg = get_section("mcp", {"host": "127.0.0.1", "port": 8082})
-            mcp_client = MCPToolClient(
-                host=mcp_cfg.get("host", "127.0.0.1"),
-                port=int(mcp_cfg.get("port", 8082)),
-                api_token=mcp_cfg.get("api_token") or "",
-                cluster_id=self._active_cluster_id,
-            )
             llm_cfg = get_section("llm", {})
             result = await provider.complete(
                 prompt,
-                mcp_client=mcp_client,
+                mcp_client=self._mcp_client(),
                 system_prompt=llm_cfg.get("system_prompt"),
                 max_tool_iterations=llm_cfg.get("max_tool_iterations", 12),
             )

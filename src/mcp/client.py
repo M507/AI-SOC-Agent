@@ -27,6 +27,8 @@ class MCPToolClient:
         cluster_id: Optional[str] = None,
         tls: Optional[bool] = None,
     ) -> None:
+        if host in {"0.0.0.0", "::", "[::]"}:
+            host = "127.0.0.1"
         self.host = host
         self.port = port
         self.api_token = api_token or ""
