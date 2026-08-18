@@ -53,6 +53,10 @@ _QUEUED_FOR_ANALYST = (
     " Files a request in the SamiGPT Requests view and does not run until an analyst "
     "approves it. Tell the analyst it is pending in Requests; do not claim the action already happened."
 )
+_INFORMATIONAL_FOR_ANALYST = (
+    " Files an informational note in the SamiGPT Requests view. Nothing is executed "
+    "and there is nothing to approve. Tell the analyst it is a suggestion only."
+)
 
 
 def configure_mcp_logging(log_dir: str = "logs") -> None:
@@ -292,6 +296,7 @@ class SamiGPTMCPServer:
         self._register_kb_tools()
         # Engineering tools (Trello)
         self._register_eng_tools()
+        self._register_lab_detection_tools()
         self._register_approval_tools()
 
     def _register_approval_tools(self) -> None:
@@ -303,10 +308,11 @@ class SamiGPTMCPServer:
         self.tools["create_approval_request"] = {
             "name": "create_approval_request",
             "description": (
-                "File an action for a human analyst to approve in the SamiGPT Requests view. "
+                "File an action for a human analyst in the SamiGPT Requests view. "
                 "Use this for irreversible or user-gated work: closing alerts, isolating hosts, "
-                "fine-tune recommendations, and 'is this you?' identity checks. Do not claim the "
-                "action already happened — it waits for approval. For identity_verify, set question "
+                "and 'is this you?' identity checks. Do not claim those actions already happened — "
+                "they wait for approval. Fine-tune and visibility notes are informational only "
+                "(no approve button). For identity_verify, set question "
                 "and follow_ups.yes / follow_ups.no to the next action (acknowledge/close vs escalate "
                 "to an Elastic Security case). Do not open IRIS or TheHive cases for this flow."
             ),
@@ -402,8 +408,6 @@ class SamiGPTMCPServer:
         Register engineering tools (Trello/ClickUp/GitHub).
         
         Available tools:
-        - create_fine_tuning_recommendation: Create a fine-tuning recommendation (supports Trello, ClickUp, and GitHub)
-        - create_visibility_recommendation: Create a visibility/engineering recommendation (supports Trello, ClickUp, and GitHub)
         - list_fine_tuning_recommendations: List all fine-tuning recommendations (ClickUp only)
         - list_visibility_recommendations: List all visibility/engineering recommendations (ClickUp only)
         - add_comment_to_fine_tuning_recommendation: Add a comment to a fine-tuning recommendation task (ClickUp only)
@@ -416,87 +420,7 @@ class SamiGPTMCPServer:
             )
             return
 
-        self._mcp_logger.info("Registering 6 engineering tools (Trello/ClickUp/GitHub)")
-
-        self.tools["create_fine_tuning_recommendation"] = {
-            "name": "create_fine_tuning_recommendation",
-            "description": (
-                "Request a fine-tuning recommendation on the detection-engineering board."
-                + _QUEUED_FOR_ANALYST
-            ),
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "title": {
-                        "type": "string",
-                        "description": "Task/card title"
-                    },
-                    "description": {
-                        "type": "string",
-                        "description": "Task/card description"
-                    },
-                    "list_name": {
-                        "type": "string",
-                        "description": "Optional list name (Trello only, defaults to first list on board)"
-                    },
-                    "labels": {
-                        "type": "array",
-                        "items": {"type": "string"},
-                        "description": "Optional list of label names (Trello only)"
-                    },
-                    "status": {
-                        "type": "string",
-                        "description": "Optional status name (ClickUp only, defaults to first status in list)"
-                    },
-                    "tags": {
-                        "type": "array",
-                        "items": {"type": "string"},
-                        "description": "Optional list of tag names (ClickUp only)"
-                    }
-                },
-                "required": ["title", "description"]
-            }
-        }
-
-        self.tools["create_visibility_recommendation"] = {
-            "name": "create_visibility_recommendation",
-            "description": (
-                "Request a visibility/engineering recommendation on the engineering board."
-                + _QUEUED_FOR_ANALYST
-            ),
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "title": {
-                        "type": "string",
-                        "description": "Task/card title"
-                    },
-                    "description": {
-                        "type": "string",
-                        "description": "Task/card description"
-                    },
-                    "list_name": {
-                        "type": "string",
-                        "description": "Optional list name (Trello only, defaults to first list on board)"
-                    },
-                    "labels": {
-                        "type": "array",
-                        "items": {"type": "string"},
-                        "description": "Optional list of label names (Trello only)"
-                    },
-                    "status": {
-                        "type": "string",
-                        "description": "Optional status name (ClickUp only, defaults to first status in list)"
-                    },
-                    "tags": {
-                        "type": "array",
-                        "items": {"type": "string"},
-                        "description": "Optional list of tag names (ClickUp only)"
-                    }
-                },
-                "required": ["title", "description"]
-            }
-        }
+        self._mcp_logger.info("Registering 4 engineering tools (Trello/ClickUp/GitHub)")
 
         self.tools["list_fine_tuning_recommendations"] = {
             "name": "list_fine_tuning_recommendations",
@@ -614,6 +538,117 @@ class SamiGPTMCPServer:
                 },
                 "required": ["task_id", "comment_text"]
             }
+        }
+
+    def _register_lab_detection_tools(self) -> None:
+        """Local Home Lab rule search plus informational fine-tune / visibility notes."""
+        self._mcp_logger.info("Registering Home Lab detection-rule tools")
+        self.tools["search_lab_detection_rules"] = {
+            "name": "search_lab_detection_rules",
+            "description": (
+                "Search the local Home Lab detection-rule catalog by keywords. Returns compact hits "
+                "(name, tags, data sources, indexes, short query excerpt) — never the full catalog. "
+                "Use 1–3 specific searches (process, technique, data source). Default 8 hits, max 15. "
+                "Then call get_lab_detection_rule for at most one or two candidates. Do not loop every rule."
+            ),
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "Keywords: rule name, MITRE technique, process, data source, or index",
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Max hits (default 8, max 15)",
+                    },
+                },
+                "required": ["query"],
+            },
+        }
+        self.tools["get_lab_detection_rule"] = {
+            "name": "get_lab_detection_rule",
+            "description": (
+                "Load one Home Lab detection rule excerpt by rule_id or name. Includes query, tags, "
+                "false_positives, and exceptions. Omits investigation notes. Query is truncated. "
+                "Use after search_lab_detection_rules. Do not fetch more than two full rules per step."
+            ),
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "rule_id": {
+                        "type": "string",
+                        "description": "Home Lab or Elastic rule UUID",
+                    },
+                    "rule_name": {
+                        "type": "string",
+                        "description": "Exact or partial rule name",
+                    },
+                },
+            },
+        }
+        self.tools["create_fine_tuning_recommendation"] = {
+            "name": "create_fine_tuning_recommendation",
+            "description": (
+                "Pull the matching Home Lab detection rule and file a fine-tune suggestion "
+                "(query, exceptions, or false-positive notes). Pass rule_id or rule_name when known; "
+                "otherwise search_lab_detection_rules first."
+                + _INFORMATIONAL_FOR_ANALYST
+            ),
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "title": {
+                        "type": "string",
+                        "description": "Short title for the suggestion",
+                    },
+                    "description": {
+                        "type": "string",
+                        "description": "What to change in the rule and why",
+                    },
+                    "rule_id": {
+                        "type": "string",
+                        "description": "Home Lab / Elastic rule UUID when known",
+                    },
+                    "rule_name": {
+                        "type": "string",
+                        "description": "Detection rule name when known",
+                    },
+                    "alert_id": {
+                        "type": "string",
+                        "description": "Related alert id, if any",
+                    },
+                },
+                "required": ["title", "description"],
+            },
+        }
+        self.tools["create_visibility_recommendation"] = {
+            "name": "create_visibility_recommendation",
+            "description": (
+                "File an informational visibility-gap note. Search first with search_lab_detection_rules "
+                "(1–3 short keyword queries) and load at most one or two rules with get_lab_detection_rule. "
+                "Only file this if the catalog does not already cover the behavior. Do not dump the catalog "
+                "into context. The server re-checks coverage when filing."
+                + _INFORMATIONAL_FOR_ANALYST
+            ),
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "title": {
+                        "type": "string",
+                        "description": "Short title for the gap note",
+                    },
+                    "description": {
+                        "type": "string",
+                        "description": "What telemetry or detection appears missing and why",
+                    },
+                    "source": {
+                        "type": "string",
+                        "description": "Missing source, e.g. DNS, PowerShell, cloud audit",
+                    },
+                },
+                "required": ["title", "description"],
+            },
         }
 
     def _register_case_tools(self) -> None:
@@ -1724,6 +1759,60 @@ class SamiGPTMCPServer:
             },
         }
 
+        self.tools["isolate_endpoint"] = {
+            "name": "isolate_endpoint",
+            "description": (
+                "Request isolating an endpoint from the network via Elastic Defend "
+                "(Kibana Endpoint Security) on the bound cluster. Pass agent.id when known, "
+                "or a hostname to look up."
+                + _QUEUED_FOR_ANALYST
+            ),
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "endpoint_id": {
+                        "type": "string",
+                        "description": "Elastic Agent / endpoint id (agent.id from the alert)",
+                    },
+                    "hostname": {
+                        "type": "string",
+                        "description": "Hostname if the agent id is unknown",
+                    },
+                    "reason": {
+                        "type": "string",
+                        "description": "Why isolation is needed",
+                    },
+                },
+                "required": ["endpoint_id"],
+            },
+        }
+
+        self.tools["release_endpoint_isolation"] = {
+            "name": "release_endpoint_isolation",
+            "description": (
+                "Request releasing an endpoint from Elastic Defend isolation on the bound cluster."
+                + _QUEUED_FOR_ANALYST
+            ),
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "endpoint_id": {
+                        "type": "string",
+                        "description": "Elastic Agent / endpoint id",
+                    },
+                    "hostname": {
+                        "type": "string",
+                        "description": "Hostname if the agent id is unknown",
+                    },
+                    "reason": {
+                        "type": "string",
+                        "description": "Why isolation should be released",
+                    },
+                },
+                "required": ["endpoint_id"],
+            },
+        }
+
         self.tools["update_alert_verdict"] = {
             "name": "update_alert_verdict",
             "description": (
@@ -2013,7 +2102,8 @@ class SamiGPTMCPServer:
         self.tools["isolate_endpoint"] = {
             "name": "isolate_endpoint",
             "description": (
-                "Request isolating an endpoint from the network to stop further compromise or lateral movement."
+                "Request isolating an endpoint from the network via Elastic Defend "
+                "(Kibana Endpoint Security) on the bound cluster."
                 + _QUEUED_FOR_ANALYST
             ),
             "inputSchema": {
@@ -2021,8 +2111,16 @@ class SamiGPTMCPServer:
                 "properties": {
                     "endpoint_id": {
                         "type": "string",
-                        "description": "The endpoint ID to isolate",
-                    }
+                        "description": "Elastic Agent / endpoint id (agent.id from the alert)",
+                    },
+                    "hostname": {
+                        "type": "string",
+                        "description": "Hostname if the agent id is unknown",
+                    },
+                    "reason": {
+                        "type": "string",
+                        "description": "Why isolation is needed",
+                    },
                 },
                 "required": ["endpoint_id"],
             },
@@ -2221,8 +2319,9 @@ class SamiGPTMCPServer:
             "description": (
                 "Execute an investigation runbook. The runbook content will be provided as context "
                 "for you to follow step-by-step. Use the appropriate MCP tools for each step. "
-                "Irreversible tools (close_alert, isolate, kill, forensics, fine-tune) file a "
-                "Requests-view approval and do not run until an analyst approves them."
+                "Irreversible tools (close_alert, isolate, kill, forensics) file a "
+                "Requests-view approval and do not run until an analyst approves them. "
+                "Fine-tune and visibility notes are informational only."
             ),
             "inputSchema": {
                 "type": "object",
@@ -2566,9 +2665,11 @@ To be populated during investigation.
         execution_instructions += (
             f"Follow the workflow steps in the runbook below. Use the appropriate MCP tools for each step. "
             f"Irreversible actions (close_alert, isolate_endpoint, kill_process_on_endpoint, "
-            f"collect_forensic_artifacts, create_fine_tuning_recommendation, "
-            f"create_visibility_recommendation) are queued for analyst "
+            f"collect_forensic_artifacts) are queued for analyst "
             f"approval in the SamiGPT Requests view — report them as pending, not completed. "
+            f"create_fine_tuning_recommendation and create_visibility_recommendation file "
+            f"informational notes only (no approve button). For visibility, search Home Lab "
+            f"rules first and only file if coverage is still missing. "
             f"Document your progress and findings in case comments as specified in the runbook. "
             f"Attach all observables (IOCs) to the case using attach_observable_to_case. "
             f"Follow the case standard format for all documentation."
@@ -3122,6 +3223,35 @@ To be populated during investigation.
                 result.get("request_id"),
             )
             return result
+
+        if tool_name == "search_lab_detection_rules":
+            from ..ai_controller.approval_queue.lab_rules import search_rules
+
+            hits = search_rules(args.get("query") or "", limit=args.get("limit") or 8)
+            self._mcp_logger.info(
+                "Tool %s executed: %s compact hits", tool_name, len(hits)
+            )
+            return {
+                "success": True,
+                "count": len(hits),
+                "hits": hits,
+                "hint": (
+                    "Compact index only. Load 1–2 candidates with get_lab_detection_rule. "
+                    "Do not request the full catalog."
+                ),
+            }
+        if tool_name == "get_lab_detection_rule":
+            from ..ai_controller.approval_queue.lab_rules import get_rule
+
+            rule = get_rule(rule_id=args.get("rule_id"), rule_name=args.get("rule_name"))
+            if rule is None:
+                return {
+                    "success": False,
+                    "found": False,
+                    "message": "No matching Home Lab detection rule.",
+                }
+            self._mcp_logger.info("Tool %s executed: loaded %s", tool_name, rule.get("name"))
+            return {"success": True, **rule}
 
         # Case management tools
         if tool_name == "create_case" and self.case_client:

@@ -69,9 +69,13 @@ _LABEL_OVERRIDES = {
     "kb_list_clients": "List knowledge-base clients",
     "kb_get_client_infra": "Get client infrastructure",
     "get_all_uncertain_alerts_for_host": "Uncertain alerts for a host",
-    "create_fine_tuning_recommendation": "Create a fine-tuning recommendation",
-    "create_visibility_recommendation": "Create a visibility recommendation",
+    "create_fine_tuning_recommendation": "File a fine-tune suggestion",
+    "create_visibility_recommendation": "File a visibility-gap note",
+    "search_lab_detection_rules": "Search Home Lab detection rules",
+    "get_lab_detection_rule": "Get a Home Lab detection rule",
     "create_elastic_case": "Create Elastic Security case",
+    "isolate_endpoint": "Isolate endpoint (Elastic Defend)",
+    "release_endpoint_isolation": "Release endpoint isolation",
 }
 
 
@@ -136,6 +140,8 @@ SIEM_SKILLS: Tuple[str, ...] = (
     "tag_alert",
     "add_alert_note",
     "create_elastic_case",
+    "isolate_endpoint",
+    "release_endpoint_isolation",
     "lookup_entity",
     "get_ioc_matches",
     "get_threat_intel",
@@ -143,6 +149,10 @@ SIEM_SKILLS: Tuple[str, ...] = (
     "search_security_rules",
     "get_rule_detections",
     "list_rule_errors",
+    "search_lab_detection_rules",
+    "get_lab_detection_rule",
+    "create_fine_tuning_recommendation",
+    "create_visibility_recommendation",
 )
 
 SKILL_GROUPS: Tuple[Dict[str, object], ...] = (
@@ -164,7 +174,7 @@ SKILL_GROUPS: Tuple[Dict[str, object], ...] = (
         "id": "SIEM",
         "name": "Elastic / ELK skills",
         "solutions": ("SIEM",),
-        "help": "Search, alerts, and detections against the Elastic cluster bound to this tab.",
+        "help": "Search, alerts, detections, Elastic Defend isolation, and Home Lab rule suggestions against the Elastic cluster bound to this tab.",
         "skills": SIEM_SKILLS,
     },
     {
@@ -201,8 +211,6 @@ SKILL_GROUPS: Tuple[Dict[str, object], ...] = (
         "solutions": ("ENG",),
         "help": "Trello / ClickUp / GitHub recommendation boards.",
         "skills": (
-            "create_fine_tuning_recommendation",
-            "create_visibility_recommendation",
             "list_fine_tuning_recommendations",
             "list_visibility_recommendations",
             "add_comment_to_fine_tuning_recommendation",

@@ -44,6 +44,13 @@ class ApprovalQueue:
         status: Optional[str] = None,
         cluster_id: Optional[str] = None,
     ) -> List[ApprovalRequest]:
+        if status == "pending":
+            items = [
+                item
+                for item in self.store.list(cluster_id=cluster_id)
+                if item.status in {RequestStatus.PENDING, RequestStatus.INFORMATIONAL}
+            ]
+            return sorted(items, key=lambda item: item.created_at, reverse=True)
         parsed = RequestStatus(status) if status else None
         return self.store.list(status=parsed, cluster_id=cluster_id)
 
@@ -52,7 +59,8 @@ class ApprovalQueue:
 
     def counts(self) -> Dict[str, int]:
         return {
-            "pending": self.store.count(RequestStatus.PENDING),
+            "pending": self.store.count(RequestStatus.PENDING) + self.store.count(RequestStatus.INFORMATIONAL),
+            "informational": self.store.count(RequestStatus.INFORMATIONAL),
             "all": self.store.count(),
         }
 
@@ -95,6 +103,9 @@ class ApprovalQueue:
         )
         if spec.asks_question:
             request.follow_ups = self._normalize_follow_ups(payload, summary, follow_ups)
+        if spec.execution == "informational":
+            request.payload = self._enrich_informational(spec.action_type, request.payload)
+            request.status = RequestStatus.INFORMATIONAL
         return self.store.put(request)
 
     def create_from_mcp_tool(
@@ -131,6 +142,8 @@ class ApprovalQueue:
 
     def deny(self, request_id: str, comment: Optional[str] = None, actor: str = "analyst") -> ApprovalRequest:
         request = self._require(request_id)
+        if request.status == RequestStatus.INFORMATIONAL:
+            raise ValueError("Informational requests have no action to deny")
         if request.status != RequestStatus.PENDING:
             raise ValueError("Only pending requests can be denied")
         request.status = RequestStatus.DENIED
@@ -140,6 +153,8 @@ class ApprovalQueue:
 
     def approve(self, request_id: str, comment: Optional[str] = None, actor: str = "analyst") -> ApprovalRequest:
         request = self._require(request_id)
+        if request.status == RequestStatus.INFORMATIONAL:
+            raise ValueError("Informational requests have no action to approve")
         if request.status != RequestStatus.PENDING:
             raise ValueError("Only pending requests can be approved")
         spec = get_action_spec(request.action_type)
@@ -276,6 +291,16 @@ class ApprovalQueue:
         if request is None:
             raise KeyError(request_id)
         return request
+
+    @staticmethod
+    def _enrich_informational(action_type: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+        from .lab_rules import enrich_fine_tune, enrich_visibility
+
+        if action_type == "fine_tune":
+            return enrich_fine_tune(payload)
+        if action_type == "visibility":
+            return enrich_visibility(payload)
+        return payload
 
     @staticmethod
     def _default_question(spec, payload: Dict[str, Any]) -> str:

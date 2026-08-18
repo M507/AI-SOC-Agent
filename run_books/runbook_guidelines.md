@@ -14,10 +14,12 @@ This document provides general guidelines for creating, maintaining, and executi
 
 Irreversible MCP tools **file a request** instead of executing:
 
-*   `close_alert`, `isolate_endpoint`, `release_endpoint_isolation`, `kill_process_on_endpoint`, `collect_forensic_artifacts`, `create_fine_tuning_recommendation`, `create_visibility_recommendation`
+*   `close_alert`, `isolate_endpoint`, `release_endpoint_isolation`, `kill_process_on_endpoint`, `collect_forensic_artifacts`
+*   `create_fine_tuning_recommendation` and `create_visibility_recommendation` file **informational** notes (Home Lab rule lookup / coverage check). No approve button. No engineering board.
+*   Before a visibility note: `search_lab_detection_rules` (1–3 keyword searches) then at most 1–2 `get_lab_detection_rule` calls. Only file a gap if the catalog does not already cover it.
 *   `update_alert_verdict` is **not** gated. It is the AI's working assessment and runs immediately. It does not close the alert.
 *   `create_approval_request` is for identity checks ("is this you?") and any custom follow-up (ACK vs escalate to an Elastic Security case).
-*   After calling a gated tool, tell the analyst the action is **pending in Requests**. Do not claim it already happened.
+*   After calling a gated tool, tell the analyst the action is **pending in Requests**. Do not claim it already happened. After a fine-tune or visibility note, say it is informational in Requests.
 
 ## SOC Tier Fundamental Principles
 

@@ -205,6 +205,11 @@
     color: #fff4c2;
 }
 
+.status-badge.informational {
+    background: #1b4f72;
+    color: #d6eaf8;
+}
+
 .status-badge.denied {
     background: #5a5a5a;
     color: #d4d4d4;
@@ -213,6 +218,56 @@
 .status-badge.executed {
     background: #0e7c0e;
     color: white;
+}
+
+.request-info-banner {
+    background: #1e3a4c;
+    border: 1px solid #2e5a73;
+    color: #d6eaf8;
+    padding: 10px 12px;
+    border-radius: 6px;
+    margin-bottom: 16px;
+    font-size: 13px;
+}
+
+.request-suggestion,
+.request-rule-query {
+    font-size: 12px;
+    line-height: 1.45;
+    white-space: pre-wrap;
+    overflow-x: auto;
+    max-height: 280px;
+    background: #1e1e1e;
+    border: 1px solid #3e3e42;
+    border-radius: 6px;
+    padding: 10px 12px;
+    margin: 0 0 16px;
+    color: #d4d4d4;
+}
+
+.request-rule-name {
+    font-weight: 600;
+    color: #ffffff;
+    margin-bottom: 6px;
+}
+
+.request-rule-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-bottom: 10px;
+    font-size: 12px;
+    color: #858585;
+}
+
+.request-coverage-hits {
+    margin: 0 0 16px;
+    padding-left: 18px;
+    color: #d4d4d4;
+}
+
+.request-coverage-hits li {
+    margin-bottom: 10px;
 }
 
 .nav-count {

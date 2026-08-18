@@ -1767,3 +1767,52 @@ def create_elastic_case(
         raise IntegrationError(f"Failed to create Elastic Security case: {str(e)}") from e
 
 
+def isolate_endpoint(
+    endpoint_id: str,
+    comment: Optional[str] = None,
+    hostname: Optional[str] = None,
+    client: SIEMClient = None,  # type: ignore
+) -> Dict[str, Any]:
+    """Isolate a host via Elastic Defend on the bound Kibana/Elastic cluster."""
+    if client is None:
+        raise IntegrationError("SIEM client not provided")
+    if not hasattr(client, "isolate_endpoint"):
+        raise IntegrationError("SIEM client does not support isolate_endpoint")
+    try:
+        result = client.isolate_endpoint(
+            endpoint_id=endpoint_id,
+            comment=comment,
+            hostname=hostname,
+        )
+        if isinstance(result, dict):
+            result.setdefault("success", True)
+            return result
+        return {"success": True, "endpoint_id": endpoint_id, "action": result}
+    except Exception as e:
+        raise IntegrationError(f"Failed to isolate endpoint {endpoint_id}: {str(e)}") from e
+
+
+def release_endpoint_isolation(
+    endpoint_id: str,
+    comment: Optional[str] = None,
+    hostname: Optional[str] = None,
+    client: SIEMClient = None,  # type: ignore
+) -> Dict[str, Any]:
+    """Release a host from Elastic Defend isolation on the bound cluster."""
+    if client is None:
+        raise IntegrationError("SIEM client not provided")
+    method = getattr(client, "release_endpoint_isolation", None)
+    if method is None:
+        raise IntegrationError("SIEM client does not support release_endpoint_isolation")
+    try:
+        result = method(endpoint_id=endpoint_id, comment=comment, hostname=hostname)
+        if isinstance(result, dict):
+            result.setdefault("success", True)
+            return result
+        return {"success": True, "endpoint_id": endpoint_id, "action": result}
+    except Exception as e:
+        raise IntegrationError(
+            f"Failed to release isolation for endpoint {endpoint_id}: {str(e)}"
+        ) from e
+
+

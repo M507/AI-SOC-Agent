@@ -79,3 +79,65 @@ def test_requests_api_create_list_deny(tmp_path):
     denied = client.post(f"/api/requests/{request_id}/deny", json={"comment": "need more evidence"})
     assert denied.status_code == 200
     assert denied.json()["request"]["status"] == "denied"
+
+
+def test_fine_tune_api_is_informational(tmp_path, monkeypatch):
+    import json
+    from pathlib import Path
+
+    from src.ai_controller.approval_queue.lab_rules import clear_index_cache
+
+    rules = tmp_path / "lab-rules"
+    rules.mkdir()
+    (rules / "[enabled]_Suspicious_PowerShell_Encoded_Command_aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee.json").write_text(
+        json.dumps(
+            {
+                "_dac": {
+                    "rule_id": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+                    "elastic_id": "elastic-aaaa",
+                    "name": "Suspicious PowerShell Encoded Command",
+                },
+                "rule": {
+                    "name": "Suspicious PowerShell Encoded Command",
+                    "description": "Detects encoded PowerShell.",
+                    "query": "process.name: powershell.exe and process.args: *-enc*",
+                    "language": "kuery",
+                    "index": ["logs-endpoint.events.process-*"],
+                    "tags": ["Data Source: Elastic Endgame"],
+                    "enabled": True,
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("SAMI_LAB_RULES_DIR", str(rules))
+    clear_index_cache()
+    client = _client(tmp_path / "web")
+    created = client.post(
+        "/api/requests",
+        json={
+            "action_type": "fine_tune",
+            "title": "Tune encoded PowerShell",
+            "summary": "Lab admin FPs.",
+            "payload": {
+                "title": "Tune encoded PowerShell",
+                "description": "Exclude the signed build-server user.",
+                "rule_id": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+            },
+        },
+    )
+    assert created.status_code == 200, created.text
+    body = created.json()["request"]
+    assert body["status"] == "informational"
+    assert body["payload"]["rule_found"] is True
+    assert "powershell.exe" in body["payload"]["rule"]["query"]
+    request_id = body["id"]
+    approve = client.post(f"/api/requests/{request_id}/approve", json={})
+    assert approve.status_code == 400
+    listed = client.get("/api/requests?status=pending")
+    assert any(item["id"] == request_id for item in listed.json()["requests"])
+    js = Path(__file__).resolve().parents[2] / "src" / "ai_controller" / "web" / "static" / "requests.js"
+    text = js.read_text(encoding="utf-8")
+    assert "isInformational" in text
+    assert "Informational only" in text
+    assert "data-request-action=\"approve\"" in text

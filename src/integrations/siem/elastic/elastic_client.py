@@ -5,6 +5,7 @@ Elasticsearch/Elastic SIEM implementation of the generic ``SIEMClient`` interfac
 from __future__ import annotations
 
 import json
+import re
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
@@ -26,6 +27,11 @@ from .elastic_http import ElasticHttpClient
 
 
 logger = get_logger("sami.integrations.elastic.client")
+
+_AGENT_ID_RE = re.compile(
+    r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+    re.I,
+)
 
 
 class ElasticSIEMClient:
@@ -1443,6 +1449,135 @@ class ElasticSIEMClient:
             "attach_error": attach_error,
             "case": created,
         }
+
+    def isolate_endpoint(
+        self,
+        endpoint_id: str,
+        comment: Optional[str] = None,
+        hostname: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Isolate a host via Kibana Elastic Defend (Endpoint Security)."""
+        return self._submit_host_action("isolate", endpoint_id, comment, hostname)
+
+    def release_endpoint_isolation(
+        self,
+        endpoint_id: str,
+        comment: Optional[str] = None,
+        hostname: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Release a host from isolation via Kibana Elastic Defend."""
+        return self._submit_host_action("unisolate", endpoint_id, comment, hostname)
+
+    def _submit_host_action(
+        self,
+        command: str,
+        endpoint_id: Optional[str],
+        comment: Optional[str],
+        hostname: Optional[str],
+    ) -> Dict[str, Any]:
+        agent_id = self._resolve_agent_id(endpoint_id, hostname)
+        kibana = self._cases_http()
+        payload = {
+            "endpoint_ids": [agent_id],
+            "comment": (comment or "").strip()
+            or f"SamiGPT {command} ({hostname or agent_id})",
+        }
+        last_error: Optional[Exception] = None
+        response: Optional[Dict[str, Any]] = None
+        used = None
+        for path in (f"/api/endpoint/action/{command}", f"/api/endpoint/{command}"):
+            try:
+                response = kibana.post(path, json_data=payload)
+                used = path
+                break
+            except IntegrationError as exc:
+                last_error = exc
+                status = str(exc)
+                if "HTTP 404" in status or "Not Found" in status:
+                    continue
+                hint = ""
+                if "401" in status or "403" in status or "Unauthorized" in status:
+                    hint = (
+                        " The cluster API key was accepted by Elasticsearch but Kibana rejected "
+                        "the host-isolation call. Use a Kibana API key with Elastic Defend "
+                        "response-action privileges, or set kibana_url on the cluster."
+                    )
+                raise IntegrationError(
+                    f"Failed to {command} endpoint {agent_id}:{hint} {exc}"
+                ) from exc
+        if response is None:
+            raise IntegrationError(f"Failed to {command} endpoint {agent_id}: {last_error}")
+        data = response.get("data") if isinstance(response.get("data"), dict) else response
+        return {
+            "success": True,
+            "provider": "elastic",
+            "command": command,
+            "endpoint_id": agent_id,
+            "hostname": hostname,
+            "action_id": data.get("id") or data.get("action_id") or data.get("action"),
+            "status": data.get("status") or "pending",
+            "comment": payload["comment"],
+            "api_path": used,
+            "action": data,
+        }
+
+    def _resolve_agent_id(
+        self,
+        endpoint_id: Optional[str],
+        hostname: Optional[str],
+    ) -> str:
+        given = (endpoint_id or "").strip()
+        host = (hostname or "").strip()
+        if given and _AGENT_ID_RE.match(given):
+            return given
+        kibana = self._cases_http()
+        needles = []
+        for item in (given, host):
+            if item and item not in needles:
+                needles.append(item)
+        for needle in needles:
+            escaped = needle.replace("\\", "\\\\").replace('"', '\\"')
+            kuery = (
+                f'agent.id:"{escaped}" or host.name:"{escaped}" or host.hostname:"{escaped}"'
+            )
+            try:
+                meta = kibana.get(
+                    "/api/endpoint/metadata",
+                    params={"page": 0, "pageSize": 5, "kuery": kuery},
+                )
+            except IntegrationError as exc:
+                logger.debug("Endpoint metadata lookup failed for %s: %s", needle, exc)
+                continue
+            agent_id = self._agent_id_from_metadata(meta)
+            if agent_id:
+                return agent_id
+        if given:
+            return given
+        raise IntegrationError(
+            f"Could not resolve an Elastic Agent id from endpoint_id={endpoint_id!r} "
+            f"hostname={hostname!r}"
+        )
+
+    @staticmethod
+    def _agent_id_from_metadata(meta: Dict[str, Any]) -> Optional[str]:
+        rows = meta.get("data") or meta.get("hosts") or []
+        if isinstance(rows, dict):
+            rows = [rows]
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            metadata = row.get("metadata") if isinstance(row.get("metadata"), dict) else row
+            agent = metadata.get("agent") if isinstance(metadata.get("agent"), dict) else {}
+            host = metadata.get("host") if isinstance(metadata.get("host"), dict) else {}
+            for candidate in (
+                agent.get("id"),
+                row.get("agent_id"),
+                host.get("id"),
+                metadata.get("elastic.agent.id"),
+            ):
+                if candidate:
+                    return str(candidate)
+        return None
 
     def close_alert(
         self,

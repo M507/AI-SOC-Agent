@@ -29,6 +29,11 @@ def _require(request: ApprovalRequest, *names: str) -> None:
         raise ValueError(f"Missing payload fields: {', '.join(missing)}")
 
 
+def _require_host(request: ApprovalRequest) -> None:
+    if not request.payload.get("endpoint_id") and not request.payload.get("hostname"):
+        raise ValueError("Missing payload fields: endpoint_id or hostname")
+
+
 class CloseAlertHandler:
     def execute(self, request: ApprovalRequest, clients: ClientBundle) -> Dict[str, Any]:
         _require(request, "alert_id")
@@ -46,26 +51,50 @@ class CloseAlertHandler:
 
 class IsolateEndpointHandler:
     def execute(self, request: ApprovalRequest, clients: ClientBundle) -> Dict[str, Any]:
-        _require(request, "endpoint_id")
-        if clients.edr is None:
-            return _missing("edr", "No EDR client configured. Isolation will run once Elastic Defend (or another EDR) is connected.")
-        from ...orchestrator import tools_edr
+        _require_host(request)
+        reason = request.payload.get("reason") or request.summary
+        hostname = request.payload.get("hostname")
+        endpoint_id = str(request.payload.get("endpoint_id") or hostname or "")
+        if clients.siem is not None and hasattr(clients.siem, "isolate_endpoint"):
+            from ...orchestrator import tools_siem
 
-        return tools_edr.isolate_endpoint(
-            endpoint_id=str(request.payload["endpoint_id"]),
-            client=clients.edr,
+            return tools_siem.isolate_endpoint(
+                endpoint_id=endpoint_id,
+                hostname=hostname,
+                comment=reason,
+                client=clients.siem,
+            )
+        if clients.edr is not None:
+            from ...orchestrator import tools_edr
+
+            return tools_edr.isolate_endpoint(endpoint_id=endpoint_id, client=clients.edr)
+        return _missing(
+            "siem",
+            "No Elastic cluster for this request. Isolation uses Kibana Elastic Defend on the bound cluster.",
         )
 
 
 class ReleaseIsolationHandler:
     def execute(self, request: ApprovalRequest, clients: ClientBundle) -> Dict[str, Any]:
-        _require(request, "endpoint_id")
+        _require_host(request)
+        reason = request.payload.get("reason") or request.summary
+        hostname = request.payload.get("hostname")
+        endpoint_id = str(request.payload.get("endpoint_id") or hostname or "")
+        if clients.siem is not None and hasattr(clients.siem, "release_endpoint_isolation"):
+            from ...orchestrator import tools_siem
+
+            return tools_siem.release_endpoint_isolation(
+                endpoint_id=endpoint_id,
+                hostname=hostname,
+                comment=reason,
+                client=clients.siem,
+            )
         if clients.edr is None:
-            return _missing("edr", "No EDR client configured. Release payload is stored.")
+            return _missing("siem", "No Elastic cluster for this request. Release uses Kibana Elastic Defend on the bound cluster.")
         from ...orchestrator import tools_edr
 
         return tools_edr.release_endpoint_isolation(
-            endpoint_id=str(request.payload["endpoint_id"]),
+            endpoint_id=endpoint_id,
             client=clients.edr,
         )
 
@@ -103,44 +132,20 @@ class CollectForensicsHandler:
 
 class FineTuneHandler:
     def execute(self, request: ApprovalRequest, clients: ClientBundle) -> Dict[str, Any]:
-        _require(request, "title", "description")
-        if clients.eng is None:
-            return {
-                "success": True,
-                "stored_locally": True,
-                "needs_integration": True,
-                "integration": "eng",
-                "message": "Fine-tune request saved in the Requests queue. Connect Trello, ClickUp, or GitHub to push it to the engineering board.",
-                "title": request.payload.get("title"),
-            }
-        from ...orchestrator import tools_eng
-
-        return tools_eng.create_fine_tuning_recommendation(
-            title=str(request.payload["title"]),
-            description=str(request.payload["description"]),
-            client=clients.eng,
-        )
+        return {
+            "success": True,
+            "informational": True,
+            "message": "Fine-tune suggestions are informational only. Nothing was sent to an engineering board.",
+        }
 
 
 class VisibilityHandler:
     def execute(self, request: ApprovalRequest, clients: ClientBundle) -> Dict[str, Any]:
-        _require(request, "title", "description")
-        if clients.eng is None:
-            return {
-                "success": True,
-                "stored_locally": True,
-                "needs_integration": True,
-                "integration": "eng",
-                "message": "Visibility request saved. Connect an engineering board to file it there.",
-                "title": request.payload.get("title"),
-            }
-        from ...orchestrator import tools_eng
-
-        return tools_eng.create_visibility_recommendation(
-            title=str(request.payload["title"]),
-            description=str(request.payload["description"]),
-            client=clients.eng,
-        )
+        return {
+            "success": True,
+            "informational": True,
+            "message": "Visibility-gap notes are informational only. Nothing was sent to an engineering board.",
+        }
 
 
 class CreateCaseHandler:

@@ -12,6 +12,8 @@ class _FakeSIEM:
         self.verdicts = []
         self.tags = []
         self.cases = []
+        self.isolated = []
+        self.released = []
 
     def close_alert(self, alert_id, reason=None, comment=None):
         self.closed.append((alert_id, reason, comment))
@@ -41,6 +43,28 @@ class _FakeSIEM:
         self.cases.append(case)
         return case
 
+    def isolate_endpoint(self, endpoint_id, comment=None, hostname=None):
+        self.isolated.append((endpoint_id, comment, hostname))
+        return {
+            "success": True,
+            "provider": "elastic",
+            "endpoint_id": endpoint_id,
+            "hostname": hostname,
+            "action_id": "act-1",
+            "status": "pending",
+            "comment": comment,
+        }
+
+    def release_endpoint_isolation(self, endpoint_id, comment=None, hostname=None):
+        self.released.append((endpoint_id, comment, hostname))
+        return {
+            "success": True,
+            "provider": "elastic",
+            "endpoint_id": endpoint_id,
+            "action_id": "act-2",
+            "status": "pending",
+        }
+
 
 def test_catalog_covers_soc_actions():
     types = {spec.action_type for spec in ACTION_CATALOG}
@@ -50,6 +74,10 @@ def test_catalog_covers_soc_actions():
     assert "fine_tune" in types
     assert "update_verdict" not in types
     assert get_action_spec("close_alert").execution == "ready"
+    assert get_action_spec("isolate_endpoint").execution == "ready"
+    assert get_action_spec("isolate_endpoint").integration == "siem"
+    assert get_action_spec("fine_tune").execution == "informational"
+    assert get_action_spec("visibility").execution == "informational"
 
 
 def test_close_alert_executes_on_originating_cluster(tmp_path, monkeypatch):
@@ -160,8 +188,31 @@ def test_identity_no_opens_elastic_case_not_iris(tmp_path, monkeypatch):
     ).lower() or "New ASN" in (opened["description"] or "")
 
 
-def test_isolate_waits_for_edr(tmp_path):
+def test_isolate_runs_via_elastic_cluster(tmp_path, monkeypatch):
     queue = ApprovalQueue(str(tmp_path))
+    siem = _FakeSIEM()
+    monkeypatch.setattr(
+        "src.ai_controller.approval_queue.service.resolve_clients",
+        lambda cluster_id=None: ClientBundle(cluster_id=cluster_id or "lab", siem=siem),
+    )
+    created = queue.create(
+        "isolate_endpoint",
+        "Isolate workstation",
+        "Ransomware notes on disk.",
+        payload={"endpoint_id": "host-1", "hostname": "ws-1", "reason": "ransomware"},
+        cluster_id="lab",
+    )
+    done = queue.approve(created.id)
+    assert done.status is RequestStatus.EXECUTED
+    assert siem.isolated == [("host-1", "ransomware", "ws-1")]
+
+
+def test_isolate_waits_when_cluster_missing(tmp_path, monkeypatch):
+    queue = ApprovalQueue(str(tmp_path))
+    monkeypatch.setattr(
+        "src.ai_controller.approval_queue.service.resolve_clients",
+        lambda cluster_id=None: ClientBundle(),
+    )
     created = queue.create(
         "isolate_endpoint",
         "Isolate workstation",
@@ -257,15 +308,21 @@ def test_gated_mcp_tool_descriptions_tell_the_model_they_queue():
         "release_endpoint_isolation",
         "kill_process_on_endpoint",
         "collect_forensic_artifacts",
-        "create_fine_tuning_recommendation",
-        "create_visibility_recommendation",
     ]
     for name in gated:
         desc = server.tools[name]["description"]
         assert "Requests view" in desc, name
         assert "does not run until" in desc, name
+    for name in ("create_fine_tuning_recommendation", "create_visibility_recommendation"):
+        desc = server.tools[name]["description"]
+        assert "Requests view" in desc, name
+        assert "informational" in desc.lower(), name
+        assert "does not run until" not in desc, name
+    assert "search_lab_detection_rules" in server.tools
+    assert "get_lab_detection_rule" in server.tools
     verdict = server.tools["update_alert_verdict"]["description"]
     assert "does not wait for analyst approval" in verdict
     assert "queued for the Requests view" in verdict
     runbook = server.tools["execute_runbook"]["description"]
     assert "Requests-view" in runbook
+    assert "informational only" in runbook

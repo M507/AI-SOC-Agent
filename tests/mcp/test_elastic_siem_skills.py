@@ -82,6 +82,7 @@ def test_catalog_lists_elk_and_iris_skill_groups():
     assert all(skill["label"] and skill["label"] != skill["id"] for skill in elk["skills"])
     assert SKILL_TO_SOLUTIONS["create_case"] == ("IRIS", "TH")
     assert SKILL_TO_SOLUTIONS["create_elastic_case"] == ("SIEM",)
+    assert SKILL_TO_SOLUTIONS["isolate_endpoint"] == ("SIEM", "EDR")
     assert SKILL_TO_SOLUTIONS["get_recent_alerts"] == ("SIEM",)
 
 
@@ -101,6 +102,7 @@ def test_mcp_lists_elk_skills_when_siem_enabled(monkeypatch):
     assert response.status_code == 200
     names = {tool["name"] for tool in response.json().get("tools") or []}
     assert set(SIEM_SKILLS) <= names
+    assert "isolate_endpoint" in names
     assert "create_case" not in names
     assert "list_rules" not in names
 

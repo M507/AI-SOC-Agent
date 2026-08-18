@@ -99,7 +99,7 @@ class RequestsManager {
             btn.classList.toggle('active', btn.dataset.requestFilter === this.filter);
         });
         if (!this.requests.length) {
-            list.innerHTML = `<div class="requests-empty">No ${this.filter === 'pending' ? 'pending' : ''} requests. The agent files actions here when it wants your approval to close an alert, isolate a host, or ask “is this you?”.</div>`;
+            list.innerHTML = `<div class="requests-empty">No ${this.filter === 'pending' ? 'open' : ''} requests. The agent files actions here when it wants your approval, or informational fine-tune / visibility notes.</div>`;
             this.renderDetail();
             return;
         }
@@ -143,18 +143,13 @@ class RequestsManager {
         }
         const item = this.selected();
         if (!item) {
-            root.innerHTML = '<div class="requests-detail-empty">Select a request to review the payload and approve or deny it.</div>';
+            root.innerHTML = '<div class="requests-detail-empty">Select a request to review it.</div>';
             return;
         }
         const spec = this.specFor(item.action_type);
-        const pending = item.status === 'pending';
+        const informational = this.isInformational(item, spec);
+        const pending = item.status === 'pending' && !informational;
         const payload = item.payload || {};
-        const payloadRows = Object.keys(payload).length
-            ? Object.entries(payload).map(([key, value]) => {
-                const label = this.fieldLabel(spec, key);
-                return `<dt>${escapeHtml(label)}</dt><dd>${escapeHtml(this.formatValue(value))}</dd>`;
-            }).join('')
-            : '<dt>None</dt><dd>No extra payload fields.</dd>';
         const followUps = item.follow_ups || {};
         const followHtml = Object.keys(followUps).length
             ? `<div class="request-section-label">If you answer</div>
@@ -191,6 +186,9 @@ class RequestsManager {
                 <button type="button" class="btn btn-danger" data-request-action="deny">Deny</button>
             `;
         }
+        const banner = informational
+            ? '<div class="request-info-banner">Informational only — no action is taken. There is nothing to approve.</div>'
+            : '';
         root.innerHTML = `
             <div class="request-card-meta">
                 <span class="action-badge">${escapeHtml((spec && spec.label) || item.action_type)}</span>
@@ -200,11 +198,11 @@ class RequestsManager {
             </div>
             <h3 class="request-detail-title">${escapeHtml(item.title)}</h3>
             <div class="request-detail-summary">${escapeHtml(item.summary || '')}</div>
+            ${banner}
             ${questionHtml}
             <div class="request-section-label">Why</div>
             <div class="request-detail-rationale">${escapeHtml(item.rationale || 'No extra investigation notes.')}</div>
-            <div class="request-section-label">Payload (used when you approve)</div>
-            <dl class="request-payload">${payloadRows}</dl>
+            ${this.detailBodyHtml(item, spec, payload)}
             ${followHtml}
             ${errorHtml}
             ${resultHtml}
@@ -212,6 +210,91 @@ class RequestsManager {
             <div class="request-actions">${buttons}</div>
         `;
         this.highlightCards();
+    }
+
+    isInformational(item, spec) {
+        return item.status === 'informational' || (spec && spec.execution === 'informational');
+    }
+
+    detailBodyHtml(item, spec, payload) {
+        if (this.isInformational(item, spec)) {
+            return this.informationalBodyHtml(payload);
+        }
+        const payloadRows = Object.keys(payload).length
+            ? Object.entries(payload).map(([key, value]) => {
+                const label = this.fieldLabel(spec, key);
+                return `<dt>${escapeHtml(label)}</dt><dd>${escapeHtml(this.formatValue(value))}</dd>`;
+            }).join('')
+            : '<dt>None</dt><dd>No extra payload fields.</dd>';
+        return `<div class="request-section-label">Payload (used when you approve)</div><dl class="request-payload">${payloadRows}</dl>`;
+    }
+
+    informationalBodyHtml(payload) {
+        const suggestion = payload.suggestion || payload.description || '';
+        const rule = payload.rule;
+        const coverage = payload.coverage_check;
+        const skip = new Set(['suggestion', 'rule', 'coverage_check', 'rule_found', 'description']);
+        const extras = Object.entries(payload).filter(([key, value]) => !skip.has(key) && value != null && value !== '');
+        const extraRows = extras.length
+            ? extras.map(([key, value]) => `<dt>${escapeHtml(key)}</dt><dd>${escapeHtml(this.formatValue(value))}</dd>`).join('')
+            : '';
+        return `
+            ${suggestion ? `<div class="request-section-label">Suggestion</div><pre class="request-suggestion">${escapeHtml(suggestion)}</pre>` : ''}
+            ${this.ruleHtml(rule)}
+            ${this.coverageHtml(coverage)}
+            ${extraRows ? `<div class="request-section-label">Details</div><dl class="request-payload">${extraRows}</dl>` : ''}
+        `;
+    }
+
+    ruleHtml(rule) {
+        if (!rule || typeof rule !== 'object') {
+            return '';
+        }
+        if (rule.found === false) {
+            return `<div class="request-section-label">Home Lab rule</div><p class="request-detail-summary">${escapeHtml(rule.message || 'No matching rule found.')}</p>`;
+        }
+        const query = rule.query
+            ? `<pre class="request-rule-query">${escapeHtml(String(rule.query))}</pre>`
+            : '';
+        const tags = Array.isArray(rule.tags) && rule.tags.length
+            ? `<div class="request-rule-meta">${rule.tags.map((tag) => `<span class="action-badge">${escapeHtml(String(tag))}</span>`).join('')}</div>`
+            : '';
+        return `
+            <div class="request-section-label">Home Lab rule</div>
+            <div class="request-rule">
+                <div class="request-rule-name">${escapeHtml(rule.name || 'Unnamed rule')}</div>
+                <div class="request-rule-meta">
+                    ${rule.rule_id ? `<span>id ${escapeHtml(String(rule.rule_id))}</span>` : ''}
+                    ${rule.language ? `<span>${escapeHtml(String(rule.language))}</span>` : ''}
+                    ${rule.enabled === false ? '<span>disabled</span>' : ''}
+                </div>
+                ${rule.description ? `<p class="request-detail-rationale">${escapeHtml(String(rule.description))}</p>` : ''}
+                ${tags}
+                ${query}
+            </div>
+        `;
+    }
+
+    coverageHtml(check) {
+        if (!check || typeof check !== 'object') {
+            return '';
+        }
+        const verdict = check.likely_gap
+            ? 'Likely a real gap — no strong match in the Home Lab catalog.'
+            : 'May already be covered by an existing Home Lab rule.';
+        const hits = Array.isArray(check.matching_rules) ? check.matching_rules : [];
+        const hitRows = hits.length
+            ? `<ul class="request-coverage-hits">${hits.map((hit) => `
+                <li><strong>${escapeHtml(hit.name || hit.rule_id || 'rule')}</strong>
+                ${hit.score != null ? ` (score ${escapeHtml(String(hit.score))})` : ''}
+                ${hit.query_excerpt ? `<pre class="request-rule-query">${escapeHtml(String(hit.query_excerpt))}</pre>` : ''}
+                </li>`).join('')}</ul>`
+            : '<p class="request-detail-summary">No catalog hits for this description.</p>';
+        return `
+            <div class="request-section-label">Coverage check</div>
+            <p class="request-detail-summary">${escapeHtml(verdict)}</p>
+            ${hitRows}
+        `;
     }
 
     fieldLabel(spec, key) {

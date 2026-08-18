@@ -28,22 +28,36 @@ def enqueue_gated_tool(
         arguments or {},
         cluster_id=cluster_id,
     )
+    informational = spec.execution == "informational"
     logger.info(
         "Queued %s as approval request %s (%s)",
         tool_name,
         request.id,
         spec.action_type,
     )
+    if informational:
+        message = (
+            f"{spec.label} was filed as informational in the SamiGPT Requests view "
+            f"(id {request.id}). There is nothing to approve — it is a suggestion only."
+        )
+    else:
+        message = (
+            f"{spec.label} was filed for analyst approval in the SamiGPT Requests view "
+            f"(id {request.id}). It will not run until it is approved."
+        )
     return {
         "queued": True,
         "success": True,
+        "informational": informational,
         "request_id": request.id,
         "action_type": request.action_type,
         "status": request.status.value,
-        "message": (
-            f"{spec.label} was filed for analyst approval in the SamiGPT Requests view "
-            f"(id {request.id}). It will not run until it is approved."
-        ),
+        "message": message,
+        "payload": {
+            key: request.payload.get(key)
+            for key in ("rule_found", "rule", "coverage_check", "suggestion")
+            if key in request.payload
+        },
     }
 
 
@@ -69,14 +83,26 @@ def create_request_from_tool_args(args: Dict[str, Any], cluster_id: Optional[str
         follow_ups=follow_ups if isinstance(follow_ups, dict) else None,
         source="mcp",
     )
+    from .catalog import get_action_spec
+
+    spec = get_action_spec(request.action_type)
+    informational = bool(spec and spec.execution == "informational")
+    if informational:
+        message = (
+            f"Filed {request.title} as informational in the SamiGPT Requests view "
+            f"(id {request.id}). There is nothing to approve — it is a suggestion only."
+        )
+    else:
+        message = (
+            f"Filed {request.title} for analyst approval in the SamiGPT Requests view "
+            f"(id {request.id})."
+        )
     return {
         "success": True,
         "queued": True,
+        "informational": informational,
         "request_id": request.id,
         "action_type": request.action_type,
         "status": request.status.value,
-        "message": (
-            f"Filed {request.title} for analyst approval in the SamiGPT Requests view "
-            f"(id {request.id})."
-        ),
+        "message": message,
     }

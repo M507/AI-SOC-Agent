@@ -11,6 +11,7 @@ from uuid import uuid4
 
 class RequestStatus(str, Enum):
     PENDING = "pending"
+    INFORMATIONAL = "informational"
     DENIED = "denied"
     EXECUTED = "executed"
     FAILED = "failed"

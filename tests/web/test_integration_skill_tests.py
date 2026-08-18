@@ -20,6 +20,8 @@ def test_critical_skills_are_never_runnable():
         ("edr", "kill_process_on_endpoint"),
         ("elastic:example", "close_alert"),
         ("elastic:example", "update_alert_verdict"),
+        ("elastic:example", "isolate_endpoint"),
+        ("elastic:example", "release_endpoint_isolation"),
     ):
         item = next(entry for entry in probes.skill_inventory(integration_id) if entry["id"] == skill)
         assert item["mode"] == "skip"

@@ -56,6 +56,8 @@ NEEDS_REAL_FIXTURE = {
     "get_endpoint_summary": "Requires a real endpoint ID.",
     "get_detection_details": "Requires a real detection ID.",
     "create_elastic_case": "Creates a persistent Elastic Security case; covered by unit tests instead of the UI probe.",
+    "create_fine_tuning_recommendation": "Files an informational Requests note; covered by unit tests.",
+    "create_visibility_recommendation": "Files an informational Requests note; covered by unit tests.",
     "add_case_evidence": "Uploads a file that may outlive the case; skipped because cleanup cannot be guaranteed.",
     "assign_case": "Requires a valid platform user; a dummy assignee is not safe.",
 }
@@ -86,6 +88,8 @@ SIEM_ARGS: Dict[str, Dict[str, Any]] = {
     "get_threat_intel": {"query": "203.0.113.1", "context": {"source": "sami-skill-test"}},
     "list_security_rules": {"limit": 1},
     "search_security_rules": {"query": "__sami_skill_test__"},
+    "search_lab_detection_rules": {"query": "powershell", "limit": 3},
+    "get_lab_detection_rule": {"rule_name": "PowerShell"},
 }
 
 
@@ -135,8 +139,6 @@ def skill_inventory(integration_id: str) -> List[Dict[str, Any]]:
 
 def _uses_temporary_resource(skill: str) -> bool:
     return skill in CASE_SKILLS and skill not in {"list_cases", "search_cases"} or skill in {
-        "create_fine_tuning_recommendation",
-        "create_visibility_recommendation",
         "add_comment_to_fine_tuning_recommendation",
         "add_comment_to_visibility_recommendation",
     }
