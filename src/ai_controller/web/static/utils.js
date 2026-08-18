@@ -51,6 +51,31 @@ function formatIntervalPreview(seconds) {
 }
 
 /**
+ * Split a stored condition string such as "get_recent_alerts 1" into its parts.
+ */
+function splitConditionFunction(condition) {
+    const raw = (condition || '').trim();
+    if (!raw) return { name: '', limit: '' };
+    const parts = raw.split(/\s+/);
+    const last = parts[parts.length - 1];
+    if (parts.length > 1 && /^\d+$/.test(last)) {
+        return { name: parts.slice(0, -1).join(' '), limit: last };
+    }
+    return { name: raw, limit: '' };
+}
+
+/**
+ * Compose a condition string from a function name and an optional limit.
+ */
+function joinConditionFunction(name, limit) {
+    const fn = (name || '').trim();
+    if (!fn) return '';
+    const count = Number.parseInt(limit, 10);
+    if (!Number.isFinite(count) || count < 1) return fn;
+    return `${fn} ${count}`;
+}
+
+/**
  * Pretty-print the full result object for debug mode.
  */
 function formatDebugResult(result) {

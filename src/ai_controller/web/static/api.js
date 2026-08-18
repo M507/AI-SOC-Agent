@@ -418,6 +418,58 @@ class APIClient {
         }
     }
 
+    async getOpenWebUIMCPStatus(verify = false) {
+        try {
+            return await this.request(`/api/llm/openwebui-mcp/status?verify=${verify ? 'true' : 'false'}`);
+        } catch (error) {
+            return { success: false, error: error.message, activity: [] };
+        }
+    }
+
+    async getMCPReadiness() {
+        try {
+            return await this.request('/api/llm/mcp-readiness');
+        } catch (error) {
+            return {
+                success: false,
+                ready: false,
+                severity: 'error',
+                title: 'Could not check MCP readiness',
+                message: error.message,
+                action_label: 'Open MCP Server',
+                action_section: 'mcp',
+            };
+        }
+    }
+
+    async connectOpenWebUIMCP(publicUrl) {
+        try {
+            return await this.request('/api/llm/openwebui-mcp/connect', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ public_url: publicUrl }),
+            });
+        } catch (error) {
+            return { success: false, error: error.message };
+        }
+    }
+
+    async disconnectOpenWebUIMCP() {
+        try {
+            return await this.request('/api/llm/openwebui-mcp/disconnect', { method: 'POST' });
+        } catch (error) {
+            return { success: false, error: error.message };
+        }
+    }
+
+    async clearOpenWebUIMCPActivity() {
+        try {
+            return await this.request('/api/llm/openwebui-mcp/activity', { method: 'DELETE' });
+        } catch (error) {
+            return { success: false, error: error.message };
+        }
+    }
+
     async getMCPHealth() {
         try {
             return await this.request('/api/mcp/health');

@@ -71,9 +71,11 @@ class ModalManager {
         if (modal) {
             modal.style.display = 'flex';
         }
+        const limitInput = document.getElementById('autorun-condition-limit');
         if (nameInput) nameInput.value = '';
         if (commandInput) commandInput.value = '';
         if (conditionInput) conditionInput.value = '';
+        if (limitInput) limitInput.value = '';
         if (intervalInput) intervalInput.value = '300';
         this.updateIntervalPreview();
         if (conditionHelpTooltip) {
@@ -137,9 +139,13 @@ class ModalManager {
         
         if (!nameInput || !commandInput || !intervalInput) return;
         
+        const limitInput = document.getElementById('autorun-condition-limit');
         const name = nameInput.value.trim();
         const command = commandInput.value.trim();
-        const conditionFunction = conditionInput ? conditionInput.value.trim() : '';
+        const conditionFunction = joinConditionFunction(
+            conditionInput ? conditionInput.value : '',
+            limitInput ? limitInput.value : ''
+        );
         const intervalSeconds = parseInt(intervalInput.value, 10);
         
         if (!name || !command) {

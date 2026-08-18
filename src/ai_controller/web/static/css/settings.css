@@ -1,3 +1,9 @@
+.settings-card-attention {
+    outline: 2px solid #f0b429;
+    outline-offset: -2px;
+    box-shadow: 0 0 0 4px rgb(240 180 41 / 16%);
+}
+
 /* Settings Styles - Settings page layout and form elements */
 
 .settings-content {

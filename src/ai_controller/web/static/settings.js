@@ -27,6 +27,16 @@ class SettingsManager {
         if (testModelBtn) {
             testModelBtn.addEventListener('click', () => this.testModel());
         }
+        const mcpActions = {
+            'openwebui-mcp-connect-btn': () => this.connectOpenWebUIMCP(),
+            'openwebui-mcp-test-btn': () => this.refreshOpenWebUIMCP(true),
+            'openwebui-mcp-disconnect-btn': () => this.disconnectOpenWebUIMCP(),
+            'openwebui-mcp-clear-log-btn': () => this.clearOpenWebUIMCPLog(),
+        };
+        Object.keys(mcpActions).forEach((id) => {
+            const element = document.getElementById(id);
+            if (element) element.addEventListener('click', mcpActions[id]);
+        });
         const fields = document.getElementById('llm-provider-fields');
         if (fields) {
             fields.addEventListener('click', (event) => {
@@ -56,6 +66,12 @@ class SettingsManager {
         if (prompt) prompt.value = this.settings.system_prompt || '';
         const iterations = document.getElementById('llm-max-iterations');
         if (iterations) iterations.value = this.settings.max_tool_iterations || 12;
+        const mcpSettings = await this.api.getMCPSettings();
+        const publicUrl = document.getElementById('openwebui-mcp-url');
+        if (publicUrl && mcpSettings && mcpSettings.settings) {
+            publicUrl.value = mcpSettings.settings.public_url || '';
+        }
+        await this.refreshOpenWebUIMCP(false);
     }
 
     renderProviderSelect() {
@@ -304,6 +320,93 @@ class SettingsManager {
         }
     }
 
+    async refreshOpenWebUIMCP(verify) {
+        const data = await this.api.getOpenWebUIMCPStatus(Boolean(verify));
+        this.renderOpenWebUIMCP(data);
+        if (verify && window.toast) {
+            if (data.success && data.verified) {
+                window.toast.success(`Open WebUI verified ${data.tools_count || 0} MCP tools.`, { key: 'openwebui-mcp' });
+            } else {
+                window.toast.error(data.error || 'Open WebUI MCP verification failed.', { key: 'openwebui-mcp' });
+            }
+        }
+        return data;
+    }
+
+    async connectOpenWebUIMCP() {
+        const input = document.getElementById('openwebui-mcp-url');
+        const publicUrl = (input && input.value || '').trim();
+        if (!publicUrl) {
+            this.setStatus('Enter the MCP URL reachable from Open WebUI.', true);
+            return;
+        }
+        if (window.toast) window.toast.info('Connecting Open WebUI to MCP…', { key: 'openwebui-mcp', duration: 0 });
+        const data = await this.api.connectOpenWebUIMCP(publicUrl);
+        this.renderOpenWebUIMCP(data);
+        await this.controller.refreshMCPReadiness({ notify: !data.success });
+        if (!window.toast) return;
+        if (data.success) {
+            window.toast.success(`Connected. Open WebUI loaded ${data.tools_count || 0} tools.`, { key: 'openwebui-mcp' });
+        } else {
+            window.toast.error(data.error || 'Connection failed.', { key: 'openwebui-mcp' });
+        }
+    }
+
+    async disconnectOpenWebUIMCP() {
+        const data = await this.api.disconnectOpenWebUIMCP();
+        this.renderOpenWebUIMCP(data);
+        await this.controller.refreshMCPReadiness({ notify: true });
+        if (!window.toast) return;
+        if (data.success) {
+            window.toast.success('SamiGPT MCP disconnected from Open WebUI.', { key: 'openwebui-mcp' });
+        } else {
+            window.toast.error(data.error || 'Disconnect failed.', { key: 'openwebui-mcp' });
+        }
+    }
+
+    async clearOpenWebUIMCPLog() {
+        const data = await this.api.clearOpenWebUIMCPActivity();
+        this.renderOpenWebUIMCPLog((data && data.activity) || []);
+    }
+
+    renderOpenWebUIMCP(data) {
+        data = data || {};
+        const connected = Boolean(data.connected || data.configured);
+        const verified = Boolean(data.verified);
+        const badge = document.getElementById('openwebui-mcp-status-badge');
+        if (badge) {
+            badge.textContent = verified ? 'Verified' : (connected ? 'Registered' : 'Disconnected');
+            badge.className = `status-badge ${verified || connected ? 'completed' : 'stopped'}`;
+        }
+        const registered = document.getElementById('openwebui-mcp-registered');
+        if (registered) registered.textContent = connected ? 'Yes' : 'No';
+        const tools = document.getElementById('openwebui-mcp-tools');
+        if (tools) tools.textContent = data.tools_count != null ? String(data.tools_count) : '—';
+        const origin = document.getElementById('openwebui-mcp-origin');
+        if (origin) origin.textContent = data.openwebui_url || '—';
+        const error = document.getElementById('openwebui-mcp-error');
+        if (error) {
+            error.textContent = data.error || '';
+            error.hidden = !data.error;
+        }
+        this.renderOpenWebUIMCPLog(data.activity || []);
+    }
+
+    renderOpenWebUIMCPLog(entries) {
+        const log = document.getElementById('openwebui-mcp-log');
+        if (!log) return;
+        if (!entries.length) {
+            log.innerHTML = '<div class="elastic-log-empty">No connection activity yet.</div>';
+            return;
+        }
+        log.innerHTML = entries.slice().reverse().map((entry) => (
+            `<div class="elastic-log-entry ${entry.level === 'error' ? 'is-error' : ''}">`
+            + `<span>${this.escapeHtml(entry.timestamp || '')}</span> `
+            + `<strong>${this.escapeHtml((entry.level || 'info').toUpperCase())}</strong> `
+            + `${this.escapeHtml(entry.message || '')}</div>`
+        )).join('');
+    }
+
     escapeAttr(value) {
         return String(value)
             .replace(/&/g, '&amp;')
@@ -353,10 +456,14 @@ class MCPPanel {
         const autoStart = document.getElementById('mcp-auto-start');
         const host = document.getElementById('mcp-host');
         const port = document.getElementById('mcp-port');
+        const publicUrl = document.getElementById('mcp-public-url');
+        const tls = document.getElementById('mcp-tls');
         if (enabled) enabled.checked = settings.enabled !== false;
         if (autoStart) autoStart.checked = settings.auto_start !== false;
         if (host) host.value = settings.host || '127.0.0.1';
         if (port) port.value = settings.port || 8082;
+        if (publicUrl) publicUrl.value = settings.public_url || '';
+        if (tls) tls.checked = settings.tls !== false;
     }
 
     collectSettings() {
@@ -365,6 +472,8 @@ class MCPPanel {
             auto_start: Boolean((document.getElementById('mcp-auto-start') || {}).checked),
             host: (document.getElementById('mcp-host') || {}).value || '127.0.0.1',
             port: Number((document.getElementById('mcp-port') || {}).value || 8082),
+            public_url: (document.getElementById('mcp-public-url') || {}).value || '',
+            tls: Boolean((document.getElementById('mcp-tls') || {}).checked),
         };
     }
 
@@ -382,6 +491,7 @@ class MCPPanel {
         } else if (window.toast) {
             window.toast.error(data.error || 'Failed to save MCP settings', { key: 'mcp' });
         }
+        await this.controller.refreshMCPReadiness({ notify: !data.success });
     }
 
     async refresh({ notify = false } = {}) {
@@ -405,6 +515,7 @@ class MCPPanel {
         }
         const data = await this.api.mcpAction(name);
         this.renderHealth(data);
+        await this.controller.refreshMCPReadiness({ notify: name !== 'start' });
         if (!window.toast) return;
         if (!data || data.success === false) {
             window.toast.error((data && (data.error || data.detail)) || `Failed to ${name} MCP`, { key: 'mcp' });
@@ -458,6 +569,7 @@ class MCPPanel {
                 `Health: ${status.endpoints.health}`,
                 `Tools:  ${status.endpoints.tools}`,
                 `RPC:    ${status.endpoints.rpc}`,
+                `MCP:    ${status.endpoints.mcp || '—'}`,
             ].join('\n');
         }
     }

@@ -25,15 +25,24 @@ class MCPToolClient:
         api_token: Optional[str] = None,
         verify: Any = None,
         cluster_id: Optional[str] = None,
+        tls: Optional[bool] = None,
     ) -> None:
         self.host = host
         self.port = port
         self.api_token = api_token or ""
         self.cluster_id = cluster_id
-        if verify is None:
-            from ..core.tls import DEFAULT_CERT_PATH
+        if tls is None:
+            try:
+                from ..core.config_storage import get_section
 
-            self.verify = str(DEFAULT_CERT_PATH) if DEFAULT_CERT_PATH.exists() else False
+                tls = bool(get_section("mcp", {}).get("tls", True))
+            except Exception:
+                tls = True
+        self.tls = bool(tls)
+        if verify is None:
+            from ..core.tls import client_ssl_context
+
+            self.verify = client_ssl_context()
         else:
             self.verify = verify
 
@@ -95,12 +104,14 @@ class MCPToolClient:
             logger.warning("httpx is not installed; cannot call MCP over HTTP")
             return None
 
-        url = f"https://{self.host}:{self.port}/rpc"
+        scheme = "https" if self.tls else "http"
+        url = f"{scheme}://{self.host}:{self.port}/rpc"
         headers = {}
         if self.api_token:
             headers["Authorization"] = f"Bearer {self.api_token}"
         try:
-            async with httpx.AsyncClient(timeout=60.0, verify=self.verify) as client:
+            verify = self.verify if self.tls else False
+            async with httpx.AsyncClient(timeout=60.0, verify=verify) as client:
                 response = await client.post(url, json=request, headers=headers)
                 response.raise_for_status()
                 if response.status_code == 204:

@@ -7,6 +7,7 @@ INDEX = WEB / "templates" / "index.html"
 TOAST_JS = WEB / "static" / "toast.js"
 TOAST_CSS = WEB / "static" / "css" / "toast.css"
 AUTORUN_CSS = WEB / "static" / "css" / "autorun.css"
+APP_JS = WEB / "static" / "app.js"
 
 
 def test_index_uses_toast_region_instead_of_inline_llm_status():
@@ -37,3 +38,16 @@ def test_autorun_panel_is_not_forced_visible():
     html = INDEX.read_text(encoding="utf-8")
     opening_tag = html.split('id="autorun-content"', 1)[1].split(">", 1)[0]
     assert "hidden" in opening_tag
+
+
+def test_mcp_readiness_banner_is_actionable_and_accessible():
+    html = INDEX.read_text(encoding="utf-8")
+    app_js = APP_JS.read_text(encoding="utf-8")
+
+    assert 'id="mcp-readiness-banner"' in html
+    assert 'role="alert"' in html
+    assert 'aria-live="assertive"' in html
+    assert 'id="mcp-readiness-action"' in html
+    assert "refreshMCPReadiness({ notify: true })" in app_js
+    assert "openMCPReadinessAction()" in app_js
+    assert "openwebui-mcp-card" in app_js

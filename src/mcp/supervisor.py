@@ -57,14 +57,20 @@ class MCPSupervisor:
             and not uvicorn_server.should_exit
         )
 
-    def start(self, host: Optional[str] = None, port: Optional[int] = None) -> Dict[str, Any]:
+    def start(
+        self,
+        host: Optional[str] = None,
+        port: Optional[int] = None,
+        tls: Optional[bool] = None,
+    ) -> Dict[str, Any]:
         """Start the HTTP MCP listener. Idempotent if already running on the same bind."""
         with self._lock:
             host = host or self._host
             port = int(port or self._port)
+            tls = self._tls if tls is None else bool(tls)
 
             if self.is_running:
-                if host == self._host and port == self._port:
+                if host == self._host and port == self._port and tls == self._tls:
                     return self.status()
                 self._stop_locked()
 
@@ -89,18 +95,24 @@ class MCPSupervisor:
                     update_raw_section("mcp", persisted)
                     logger.warning("Generated mcp.api_token and wrote it to config.json")
 
-                app = create_mcp_http_app(self._server, api_token=api_token)
-                cert_file, key_file = ensure_tls_certs()
-
-                uv_config = uvicorn.Config(
-                    app,
-                    host=host,
-                    port=port,
-                    log_level="warning",
-                    access_log=False,
-                    ssl_certfile=cert_file,
-                    ssl_keyfile=key_file,
+                app = create_mcp_http_app(
+                    self._server,
+                    api_token=api_token,
+                    require_https=tls,
                 )
+
+                uvicorn_options: Dict[str, Any] = {
+                    "host": host,
+                    "port": port,
+                    "log_level": "warning",
+                    "access_log": False,
+                }
+                if tls:
+                    cert_file, key_file = ensure_tls_certs()
+                    uvicorn_options.update(
+                        {"ssl_certfile": cert_file, "ssl_keyfile": key_file}
+                    )
+                uv_config = uvicorn.Config(app, **uvicorn_options)
                 uv_server = uvicorn.Server(uv_config)
                 uv_server.install_signal_handlers = False
                 thread = threading.Thread(
@@ -114,9 +126,16 @@ class MCPSupervisor:
                 self._thread = thread
                 self._host = host
                 self._port = port
+                self._tls = tls
                 self._started_at = datetime.now(timezone.utc).isoformat()
                 self._last_error = None
-                logger.info("MCP HTTPS server started on https://%s:%s", host, port)
+                logger.info(
+                    "MCP %s server started on %s://%s:%s",
+                    "HTTPS" if tls else "HTTP",
+                    "https" if tls else "http",
+                    host,
+                    port,
+                )
             except Exception as e:
                 self._last_error = str(e)
                 logger.exception("Failed to start MCP HTTP server")
@@ -129,10 +148,15 @@ class MCPSupervisor:
             self._stop_locked()
             return self.status()
 
-    def restart(self, host: Optional[str] = None, port: Optional[int] = None) -> Dict[str, Any]:
+    def restart(
+        self,
+        host: Optional[str] = None,
+        port: Optional[int] = None,
+        tls: Optional[bool] = None,
+    ) -> Dict[str, Any]:
         with self._lock:
             self._stop_locked()
-        return self.start(host=host, port=port)
+        return self.start(host=host, port=port, tls=tls)
 
     def _stop_locked(self) -> None:
         if self._uvicorn:
@@ -177,10 +201,14 @@ class MCPSupervisor:
             "status": "healthy" if running else "stopped",
             "host": self._host,
             "port": self._port,
-            "tls": True,
+            "tls": self._tls,
             "started_at": self._started_at,
             "last_error": self._last_error,
-            "endpoints": describe_mcp_endpoints(self._host, self._port),
+            "endpoints": describe_mcp_endpoints(
+                self._host,
+                self._port,
+                tls=self._tls,
+            ),
         }
         if snapshot:
             payload.update(
@@ -217,4 +245,5 @@ def get_supervisor() -> MCPSupervisor:
             mcp_cfg = get_section("mcp", {"host": _DEFAULT_HOST, "port": _DEFAULT_PORT})
             _supervisor._host = mcp_cfg.get("host", _DEFAULT_HOST)
             _supervisor._port = int(mcp_cfg.get("port", _DEFAULT_PORT))
+            _supervisor._tls = bool(mcp_cfg.get("tls", True))
         return _supervisor

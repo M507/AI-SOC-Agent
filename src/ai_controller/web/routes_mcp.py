@@ -22,6 +22,8 @@ class MCPSettingsUpdate(BaseModel):
     auto_start: Optional[bool] = None
     host: Optional[str] = None
     port: Optional[int] = Field(default=None, ge=1, le=65535)
+    public_url: Optional[str] = None
+    tls: Optional[bool] = None
 
 
 def _default_mcp_section() -> dict:
@@ -30,6 +32,8 @@ def _default_mcp_section() -> dict:
         "auto_start": True,
         "host": "127.0.0.1",
         "port": 8082,
+        "public_url": "",
+        "tls": True,
     }
 
 
@@ -62,7 +66,11 @@ async def mcp_health():
 async def start_mcp():
     settings = {**_default_mcp_section(), **get_section("mcp", _default_mcp_section())}
     try:
-        status = get_supervisor().start(host=settings["host"], port=int(settings["port"]))
+        status = get_supervisor().start(
+            host=settings["host"],
+            port=int(settings["port"]),
+            tls=bool(settings.get("tls", True)),
+        )
         return {"success": True, **status}
     except Exception as e:
         logger.exception("Failed to start MCP server")
@@ -79,7 +87,11 @@ async def stop_mcp():
 async def restart_mcp():
     settings = {**_default_mcp_section(), **get_section("mcp", _default_mcp_section())}
     try:
-        status = get_supervisor().restart(host=settings["host"], port=int(settings["port"]))
+        status = get_supervisor().restart(
+            host=settings["host"],
+            port=int(settings["port"]),
+            tls=bool(settings.get("tls", True)),
+        )
         return {"success": True, **status}
     except Exception as e:
         logger.exception("Failed to restart MCP server")

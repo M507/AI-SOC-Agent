@@ -8,6 +8,8 @@ class AIController {
         this.uiDebugMode = false;
         this.activeSection = 'sessions'; // 'sessions' | 'autoruns' | 'settings' | 'mcp'
         this.activeSettingsPage = 'llm';
+        this.mcpReadiness = null;
+        this.lastMCPAlertCode = null;
         
         // Initialize managers
         this.api = new APIClient();
@@ -31,6 +33,7 @@ class AIController {
         this.elasticClusters.load();
         this.integrationsSettings.load();
         this.mcpPanel.refresh();
+        this.refreshMCPReadiness({ notify: true });
         // Default view is manual sessions; load initial data
         this.loadSessions('manual');
         this.loadAutoruns();
@@ -62,6 +65,9 @@ class AIController {
         this.mcpHealthInterval = setInterval(() => {
             this.mcpPanel.refresh();
         }, 10000);
+        this.mcpReadinessInterval = setInterval(() => {
+            this.refreshMCPReadiness();
+        }, 30000);
     }
     
     setupEventListeners() {
@@ -90,6 +96,10 @@ class AIController {
             navMcp.addEventListener('click', () => {
                 this.setActiveSection('mcp');
             });
+        }
+        const readinessAction = document.getElementById('mcp-readiness-action');
+        if (readinessAction) {
+            readinessAction.addEventListener('click', () => this.openMCPReadinessAction());
         }
 
         const emptyNewSessionBtn = document.getElementById('empty-new-session-btn');
@@ -303,6 +313,64 @@ class AIController {
                 debugToggle.checked = this.uiDebugMode;
             }
         }
+    }
+
+    async refreshMCPReadiness({ notify = false } = {}) {
+        const readiness = await this.api.getMCPReadiness();
+        this.mcpReadiness = readiness;
+        this.renderMCPReadiness(readiness);
+
+        if (
+            notify
+            && readiness
+            && !readiness.ready
+            && readiness.code !== this.lastMCPAlertCode
+            && window.toast
+        ) {
+            window.toast.error(
+                `${readiness.title}. ${readiness.message}`,
+                { key: 'mcp-readiness', duration: 12000 }
+            );
+        }
+        this.lastMCPAlertCode = readiness && readiness.ready ? null : (readiness && readiness.code);
+        return readiness;
+    }
+
+    renderMCPReadiness(readiness) {
+        const banner = document.getElementById('mcp-readiness-banner');
+        if (!banner) return;
+        const show = Boolean(readiness && !readiness.ready);
+        banner.hidden = !show;
+        banner.classList.toggle('is-error', Boolean(show && readiness.severity === 'error'));
+        if (!show) return;
+
+        const title = document.getElementById('mcp-readiness-title');
+        const message = document.getElementById('mcp-readiness-message');
+        const action = document.getElementById('mcp-readiness-action');
+        if (title) title.textContent = readiness.title || 'AI tools are not connected';
+        if (message) message.textContent = readiness.message || 'Open settings to connect MCP.';
+        if (action) action.textContent = readiness.action_label || 'Open connection setup';
+    }
+
+    openMCPReadinessAction() {
+        const readiness = this.mcpReadiness || {};
+        if (readiness.action_section === 'mcp') {
+            this.setActiveSection('mcp');
+            return;
+        }
+
+        this.activeSettingsPage = readiness.action_page || 'llm';
+        this.setActiveSection('settings');
+        this.setSettingsPage(this.activeSettingsPage);
+        const anchorId = readiness.action_anchor || 'openwebui-mcp-card';
+        window.setTimeout(() => {
+            const target = document.getElementById(anchorId);
+            if (target) {
+                target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                target.classList.add('settings-card-attention');
+                window.setTimeout(() => target.classList.remove('settings-card-attention'), 2500);
+            }
+        }, 100);
     }
     
     async loadSessions(sessionType = 'manual') {

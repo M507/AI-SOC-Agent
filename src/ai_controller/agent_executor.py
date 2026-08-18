@@ -248,12 +248,20 @@ class AgentExecutor:
                 arguments[key.strip()] = value.strip()
         return arguments
     
-    async def execute_command(self, command: Command, cluster_id: Optional[str] = None) -> ExecutionResult:
+    async def execute_command(
+        self,
+        command: Command,
+        cluster_id: Optional[str] = None,
+        context: Optional[str] = None,
+    ) -> ExecutionResult:
         """
         Execute a parsed command and return the result.
         
         This method handles tool execution and can be extended to support
         agents and runbooks.
+
+        `context` is prepended to freeform prompts. Scheduled runs use it to
+        pass data their condition function already fetched.
         """
         previous_cluster = self._active_cluster_id
         self._active_cluster_id = cluster_id
@@ -265,7 +273,7 @@ class AgentExecutor:
             elif command.command_type == CommandType.RUN_RUNBOOK:
                 return await self._execute_runbook(command)
             elif command.command_type == CommandType.UNKNOWN:
-                return await self._execute_freeform_prompt(command.raw)
+                return await self._execute_freeform_prompt(command.raw, context=context)
             else:
                 return ExecutionResult(
                     success=False,
@@ -370,7 +378,11 @@ class AgentExecutor:
             timestamp=datetime.now()
         )
 
-    async def _execute_freeform_prompt(self, prompt: str) -> ExecutionResult:
+    async def _execute_freeform_prompt(
+        self,
+        prompt: str,
+        context: Optional[str] = None,
+    ) -> ExecutionResult:
         """
         Execute a freeform prompt via the configured LLM provider.
 
@@ -381,6 +393,9 @@ class AgentExecutor:
         from ..llm.registry import get_active_provider
         from ..mcp.client import MCPToolClient
         from ..core.config_storage import get_section
+
+        if context:
+            prompt = f"{context}\n\n{prompt}"
 
         try:
             provider = get_active_provider()

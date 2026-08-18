@@ -275,9 +275,11 @@ class AutorunManager {
         const modal = document.getElementById('edit-autorun-modal');
         if (!autorun || !modal) return;
 
+        const condition = splitConditionFunction(autorun.condition_function);
         document.getElementById('edit-autorun-name').value = autorun.name || '';
         document.getElementById('edit-autorun-command').value = autorun.command || '';
-        document.getElementById('edit-autorun-condition').value = autorun.condition_function || '';
+        document.getElementById('edit-autorun-condition').value = condition.name;
+        document.getElementById('edit-autorun-condition-limit').value = condition.limit;
         document.getElementById('edit-autorun-interval').value = autorun.interval_seconds || 300;
         if (this.controller.elasticClusters) {
             this.controller.elasticClusters.fillSelect(
@@ -308,7 +310,10 @@ class AutorunManager {
 
         const name = document.getElementById('edit-autorun-name').value.trim();
         const command = document.getElementById('edit-autorun-command').value.trim();
-        const condition = document.getElementById('edit-autorun-condition').value || null;
+        const condition = joinConditionFunction(
+            document.getElementById('edit-autorun-condition').value,
+            document.getElementById('edit-autorun-condition-limit').value
+        ) || null;
         const intervalSeconds = Number.parseInt(
             document.getElementById('edit-autorun-interval').value,
             10

@@ -34,6 +34,10 @@ class LLMTestRequest(BaseModel):
     model: Optional[str] = None
 
 
+class OpenWebUIMCPConnectRequest(BaseModel):
+    public_url: str = Field(min_length=8)
+
+
 def _provider_from_request(request: LLMTestRequest):
     stored = get_section("llm", _default_llm_section())
     provider_id = request.provider or stored.get("provider") or "cursor_agent"
@@ -133,3 +137,69 @@ async def test_llm_model(request: LLMTestRequest):
     except Exception as e:
         logger.exception("LLM model test failed")
         raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.get("/openwebui-mcp/status")
+async def openwebui_mcp_status(verify: bool = False):
+    from ..openwebui_mcp import activity_log, status
+
+    try:
+        result = await status(verify=verify)
+        return {"success": True, **result, "activity": activity_log()}
+    except Exception as e:
+        logger.warning("Open WebUI MCP status failed: %s", e)
+        return {"success": False, "error": str(e), "activity": activity_log()}
+
+
+@router.post("/openwebui-mcp/connect")
+async def connect_openwebui_mcp(request: OpenWebUIMCPConnectRequest):
+    from ..openwebui_mcp import activity_log, connect, record_failure
+
+    try:
+        result = await connect(request.public_url)
+        return {"success": True, **result, "activity": activity_log()}
+    except Exception as e:
+        record_failure("Failed to connect Open WebUI to MCP", e)
+        logger.exception("Failed to connect Open WebUI to MCP")
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.post("/openwebui-mcp/disconnect")
+async def disconnect_openwebui_mcp():
+    from ..openwebui_mcp import activity_log, disconnect, record_failure
+
+    try:
+        result = await disconnect()
+        return {"success": True, **result, "activity": activity_log()}
+    except Exception as e:
+        record_failure("Failed to disconnect Open WebUI from MCP", e)
+        logger.exception("Failed to disconnect Open WebUI from MCP")
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.delete("/openwebui-mcp/activity")
+async def clear_openwebui_mcp_activity():
+    from ..openwebui_mcp import clear_activity_log
+
+    clear_activity_log()
+    return {"success": True, "activity": []}
+
+
+@router.get("/mcp-readiness")
+async def llm_mcp_readiness():
+    from ..openwebui_mcp import provider_mcp_readiness
+
+    try:
+        return {"success": True, **await provider_mcp_readiness()}
+    except Exception as e:
+        logger.exception("MCP readiness check failed")
+        return {
+            "success": False,
+            "ready": False,
+            "severity": "error",
+            "code": "readiness_check_failed",
+            "title": "Could not check MCP readiness",
+            "message": str(e),
+            "action_label": "Open MCP Server",
+            "action_section": "mcp",
+        }

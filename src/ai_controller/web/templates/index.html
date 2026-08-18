@@ -6,14 +6,14 @@
         <title>SamiGPT AI Controller</title>
         <!-- CSS Files - Organized by purpose for easier maintenance -->
         <link rel="stylesheet" href="/static/css/base.css?v=2">
-        <link rel="stylesheet" href="/static/css/layout.css?v=6">
+        <link rel="stylesheet" href="/static/css/layout.css?v=7">
         <link rel="stylesheet" href="/static/css/buttons.css?v=3">
         <link rel="stylesheet" href="/static/css/tabs.css?v=3">
         <link rel="stylesheet" href="/static/css/status.css?v=2">
         <link rel="stylesheet" href="/static/css/terminal.css?v=2">
         <link rel="stylesheet" href="/static/css/autorun.css?v=5">
         <link rel="stylesheet" href="/static/css/modal.css?v=4">
-        <link rel="stylesheet" href="/static/css/settings.css?v=12">
+        <link rel="stylesheet" href="/static/css/settings.css?v=13">
         <link rel="stylesheet" href="/static/css/toast.css?v=1">
         <link rel="stylesheet" href="/static/css/scrollbar.css?v=2">
     </head>
@@ -32,6 +32,18 @@
                 <button id="logout-btn" class="btn btn-secondary">Sign out</button>
             </div>
         </header>
+
+        <div id="mcp-readiness-banner" class="readiness-banner" role="alert" aria-live="assertive" hidden>
+            <div class="readiness-banner-copy">
+                <strong id="mcp-readiness-title">AI tools are not connected</strong>
+                <span id="mcp-readiness-message">
+                    Connect the AI provider to MCP before starting an investigation.
+                </span>
+            </div>
+            <button type="button" id="mcp-readiness-action" class="btn btn-primary btn-sm">
+                Open connection setup
+            </button>
+        </div>
 
         <div class="main-layout">
             <aside class="sidebar">
@@ -141,6 +153,33 @@
                                 <textarea id="llm-system-prompt" rows="4" placeholder="Leave blank to use the default SOC assistant prompt"></textarea>
                                 <label for="llm-max-iterations">Max MCP tool iterations</label>
                                 <input type="number" id="llm-max-iterations" min="1" max="50" value="12">
+                            </section>
+                            <section class="settings-card" id="openwebui-mcp-card">
+                                <h3>Open WebUI MCP connection</h3>
+                                <p class="settings-help">
+                                    Registers SamiGPT as a bearer-authenticated MCP Streamable HTTP
+                                    server in the configured Open WebUI instance. The URL must be
+                                    reachable from the Open WebUI host.
+                                </p>
+                                <label for="openwebui-mcp-url">Public MCP URL</label>
+                                <input type="text" id="openwebui-mcp-url" placeholder="https://10.10.10.33:8082/mcp">
+                                <div class="settings-inline-row">
+                                    <button type="button" id="openwebui-mcp-connect-btn" class="btn btn-primary">Connect and verify</button>
+                                    <button type="button" id="openwebui-mcp-test-btn" class="btn btn-secondary">Test</button>
+                                    <button type="button" id="openwebui-mcp-disconnect-btn" class="btn btn-secondary">Disconnect</button>
+                                    <span id="openwebui-mcp-status-badge" class="status-badge">Unknown</span>
+                                </div>
+                                <dl class="health-details">
+                                    <div><dt>Registered</dt><dd id="openwebui-mcp-registered">—</dd></div>
+                                    <div><dt>Verified tools</dt><dd id="openwebui-mcp-tools">—</dd></div>
+                                    <div><dt>Open WebUI</dt><dd id="openwebui-mcp-origin">—</dd></div>
+                                </dl>
+                                <p id="openwebui-mcp-error" class="settings-status is-error" hidden></p>
+                                <h4>Connection activity</h4>
+                                <div id="openwebui-mcp-log" class="elastic-log" role="log" aria-live="polite"></div>
+                                <div class="settings-inline-row">
+                                    <button type="button" id="openwebui-mcp-clear-log-btn" class="btn btn-secondary btn-sm">Clear log</button>
+                                </div>
                             </section>
                         </div>
                     </div>
@@ -305,10 +344,21 @@
                                 <input type="text" id="mcp-host" placeholder="127.0.0.1">
                                 <label for="mcp-port">Port</label>
                                 <input type="number" id="mcp-port" min="1" max="65535" value="8082">
+                                <label for="mcp-public-url">Public URL</label>
+                                <input type="text" id="mcp-public-url" placeholder="https://10.10.10.33:8082/mcp">
+                                <label class="settings-toggle">
+                                    <input type="checkbox" id="mcp-tls" checked>
+                                    <span class="toggle-label">Use TLS (recommended)</span>
+                                </label>
+                                <p class="settings-help">
+                                    Use <code>0.0.0.0</code> as the bind host for remote clients,
+                                    and a concrete host or IP in the public URL. Disable TLS only on
+                                    a trusted private network when the client cannot trust the local certificate.
+                                </p>
                             </section>
                             <section class="settings-card">
                                 <h3>How to connect</h3>
-                                <p class="settings-help"><strong>HTTP JSON-RPC</strong> (Open WebUI, custom agents)</p>
+                                <p class="settings-help"><strong>MCP Streamable HTTP</strong> (Open WebUI and standard MCP clients)</p>
                                 <pre id="mcp-http-snippet" class="autorun-prompt"></pre>
                                 <p class="settings-help"><strong>Stdio</strong> (Cursor IDE, Claude Desktop)</p>
                                 <pre class="autorun-prompt">python -m src.mcp.mcp_server</pre>
@@ -430,6 +480,13 @@
                     Choose a condition function to control when the autorun runs. 
                     If you leave this as \"No condition\", the autorun will always execute on schedule.
                 </small>
+
+                <label for="autorun-condition-limit">Items per run (optional):</label>
+                <input type="number" id="autorun-condition-limit" min="1" step="1" placeholder="All (default)">
+                <small style="color: #666; display: block; margin-top: 4px;">
+                    Set to 1 to triage a single alert per run. The condition results are passed
+                    into the prompt, so the agent starts with the alert already loaded.
+                </small>
                 
                 <label for="autorun-interval">Interval (seconds):</label>
                 <input type="number" id="autorun-interval" value="300" min="5" step="5">
@@ -467,6 +524,10 @@
                     <option value="get_recent_alerts">get_recent_alerts</option>
                     <option value="list_cases">list_cases</option>
                 </select>
+
+                <label for="edit-autorun-condition-limit">Items per run (optional):</label>
+                <input type="number" id="edit-autorun-condition-limit" min="1" step="1" placeholder="All (default)">
+                <small>Set to 1 to triage a single alert per run.</small>
 
                 <label for="edit-autorun-interval">Interval (seconds):</label>
                 <input type="number" id="edit-autorun-interval" min="5" step="5">
@@ -508,25 +569,25 @@
     <script src="https://cdn.jsdelivr.net/npm/marked@12.0.0/marked.min.js"></script>
     
     <!-- Core utilities (no dependencies) -->
-    <script src="/static/utils.js?v=2"></script>
+    <script src="/static/utils.js?v=3"></script>
     <script src="/static/toast.js?v=1"></script>
     
     <!-- API client (no dependencies) -->
-    <script src="/static/api.js?v=9"></script>
+    <script src="/static/api.js?v=11"></script>
     
     <!-- Component modules (depend on utils) -->
     <script src="/static/websocket.js?v=1"></script>
     <script src="/static/terminal.js?v=1"></script>
     <script src="/static/sessions.js?v=5"></script>
     <script src="/static/pdf_export.js?v=2"></script>
-    <script src="/static/autoruns.js?v=11"></script>
-    <script src="/static/modals.js?v=4"></script>
+    <script src="/static/autoruns.js?v=12"></script>
+    <script src="/static/modals.js?v=5"></script>
     
     <!-- Main application (depends on all modules) -->
-    <script src="/static/settings.js?v=4"></script>
+    <script src="/static/settings.js?v=5"></script>
     <script src="/static/elastic_settings.js?v=7"></script>
     <script src="/static/integrations_settings.js?v=3"></script>
-    <script src="/static/app.js?v=10"></script>
+    <script src="/static/app.js?v=11"></script>
 </body>
 </html>
 

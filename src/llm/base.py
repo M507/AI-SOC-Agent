@@ -30,6 +30,9 @@ class LLMResult:
     provider: Optional[str] = None
     model: Optional[str] = None
     tool_calls: int = 0
+    tools_advertised: int = 0
+    # None when the endpoint's tool support was not determined.
+    tools_supported: Optional[bool] = None
 
     def to_output_dict(self) -> Dict[str, Any]:
         return {
@@ -38,6 +41,8 @@ class LLMResult:
             "provider": self.provider,
             "model": self.model,
             "tool_calls": self.tool_calls,
+            "tools_advertised": self.tools_advertised,
+            "tools_supported": self.tools_supported,
         }
 
 

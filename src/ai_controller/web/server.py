@@ -22,6 +22,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from ..agent_executor import AgentExecutor, ExecutionResult
+from ..autorun_conditions import build_condition_context, parse_condition_spec
 from ..session_manager import SessionManager, Session, SessionType, SessionStatus, AutorunConfig
 from ...core.logging import get_logger
 from .auth import AuthMiddleware, SecurityHeadersMiddleware, init_auth, websocket_user
@@ -313,6 +314,7 @@ async def _run_autorun(autorun: AutorunConfig):
         # Check condition function if configured
         # Validate that condition_function is not None and not empty string
         condition_function = fresh_autorun.condition_function
+        condition_context: Optional[str] = None
         if condition_function and condition_function.strip():
             logger.info("Checking condition function '%s' for autorun %s (%s)", 
                        condition_function, fresh_autorun.id, fresh_autorun.name)
@@ -395,11 +397,17 @@ async def _run_autorun(autorun: AutorunConfig):
                 )
                 return
             else:
+                condition_context = build_condition_context(
+                    parse_condition_spec(condition_function),
+                    condition_details.get("output"),
+                )
                 logger.info(
-                    "Condition function '%s' returned content for autorun %s (%s). Proceeding with execution.",
+                    "Condition function '%s' returned content for autorun %s (%s). "
+                    "Proceeding with execution (context_chars=%s).",
                     condition_function,
                     fresh_autorun.id,
-                    fresh_autorun.name
+                    fresh_autorun.name,
+                    len(condition_context) if condition_context else 0,
                 )
         else:
             logger.warning(
@@ -429,6 +437,7 @@ async def _run_autorun(autorun: AutorunConfig):
         result: Optional[ExecutionResult] = await executor.execute_command(
             command,
             cluster_id=fresh_autorun.cluster_id or (session.cluster_id if session else None),
+            context=condition_context,
         )
 
         # Update entry and session status
@@ -496,6 +505,7 @@ async def _check_autorun_condition(
           False if it returns empty/None (should skip execution)
         - details: Dictionary with verbose information about the condition check
     """
+    spec = parse_condition_spec(condition_function)
     details = {
         "condition_function": condition_function,
         "command_executed": None,
@@ -513,7 +523,7 @@ async def _check_autorun_condition(
         # SPECIAL-CASE: get_recent_alerts should be executed directly at the Python level,
         #               not via the AI agent / cursor-agent. This avoids consuming AI
         #               tokens just to check if there is work to do.
-        if condition_function == "get_recent_alerts":
+        if spec.name == "get_recent_alerts":
             try:
                 # Import here to avoid heavy imports at module load
                 from ...core.config_storage import load_config_from_file
@@ -529,10 +539,16 @@ async def _check_autorun_condition(
                     return False, details
 
                 # Build SIEM client for the autorun's cluster (or the default)
-                details["command_executed"] = "python:get_recent_alerts(hours_back=1, max_alerts=100)"
+                max_alerts = spec.alert_limit()
+                details["command_executed"] = (
+                    f"python:get_recent_alerts(hours_back=1, max_alerts={max_alerts})"
+                )
 
-                logger.debug("Executing get_recent_alerts condition directly via SIEM client")
-                output = get_recent_alerts(hours_back=1, max_alerts=100, client=siem_client)
+                logger.debug(
+                    "Executing get_recent_alerts condition directly via SIEM client (max_alerts=%s)",
+                    max_alerts,
+                )
+                output = get_recent_alerts(hours_back=1, max_alerts=max_alerts, client=siem_client)
                 details["execution_success"] = True
                 details["output"] = output
                 details["output_type"] = type(output).__name__ if output is not None else "None"
@@ -542,7 +558,7 @@ async def _check_autorun_condition(
                 details["error"] = str(e)
                 return False, details
 
-        elif condition_function == "list_cases":
+        elif spec.name == "list_cases":
             try:
                 # Import here to avoid heavy imports at module load
                 from ...core.config_storage import load_config_from_file
@@ -559,12 +575,13 @@ async def _check_autorun_condition(
                 config = load_config_from_file()
                 # Prioritize IRIS if both are configured (same as mcp_server.py)
                 case_client = None
+                case_limit = spec.case_limit()
                 if getattr(config, "iris", None):
                     case_client = IRISCaseManagementClient.from_config(config)
-                    details["command_executed"] = "python:list_cases(status='open', limit=50) [IRIS]"
+                    details["command_executed"] = f"python:list_cases(status='open', limit={case_limit}) [IRIS]"
                 elif getattr(config, "thehive", None):
                     case_client = TheHiveCaseManagementClient.from_config(config)
-                    details["command_executed"] = "python:list_cases(status='open', limit=50) [TheHive]"
+                    details["command_executed"] = f"python:list_cases(status='open', limit={case_limit}) [TheHive]"
                 else:
                     msg = "Case management system (IRIS or TheHive) is not configured; cannot evaluate list_cases condition"
                     logger.warning(msg)
@@ -573,7 +590,7 @@ async def _check_autorun_condition(
                     return False, details
 
                 logger.debug("Executing list_cases condition directly via case management client")
-                output = list_cases(status="open", limit=50, client=case_client)
+                output = list_cases(status="open", limit=case_limit, client=case_client)
                 details["execution_success"] = True
                 details["output"] = output
                 details["output_type"] = type(output).__name__ if output is not None else "None"
@@ -858,6 +875,7 @@ async def _start_mcp_background() -> None:
             get_supervisor().start,
             mcp_cfg.get("host", "127.0.0.1"),
             int(mcp_cfg.get("port", 8082)),
+            bool(mcp_cfg.get("tls", True)),
         )
         logger.info("MCP HTTP server auto-started")
     except asyncio.CancelledError:
@@ -1151,6 +1169,10 @@ async def execute_command(session_id: str, command_request: CommandRequest):
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
     
+    # Capture before the nested task: assigning to `session` in except
+    # blocks below would otherwise make it a local and break cluster_id lookup.
+    cluster_id = session.cluster_id
+
     # Parse command
     command = executor.parse_command(command_request.command)
     
@@ -1169,7 +1191,7 @@ async def execute_command(session_id: str, command_request: CommandRequest):
         try:
             session_manager.update_session_status(session_id, SessionStatus.RUNNING)
             
-            result = await executor.execute_command(command, cluster_id=session.cluster_id)
+            result = await executor.execute_command(command, cluster_id=cluster_id)
             
             # Update entry
             session_manager.update_entry(
@@ -1195,8 +1217,8 @@ async def execute_command(session_id: str, command_request: CommandRequest):
             
             # Only update session if it still exists (might be deleted during cancellation)
             try:
-                session = session_manager.get_session(session_id)
-                if session:
+                current = session_manager.get_session(session_id)
+                if current:
                     session_manager.update_entry(
                         session_id,
                         entry.id,
@@ -1216,8 +1238,8 @@ async def execute_command(session_id: str, command_request: CommandRequest):
             
             # Only update session if it still exists (might be deleted)
             try:
-                session = session_manager.get_session(session_id)
-                if session:
+                current = session_manager.get_session(session_id)
+                if current:
                     session_manager.update_entry(
                         session_id,
                         entry.id,

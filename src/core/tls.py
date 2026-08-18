@@ -117,6 +117,34 @@ def ensure_tls_certs(
     return str(cert_file), str(key_file)
 
 
+def client_ssl_context(cert_path: str | Path = DEFAULT_CERT_PATH):
+    """
+    Build a client SSL context that trusts our self-signed server certificate.
+
+    The generated cert is a leaf (`ca=False`), so OpenSSL rejects it as a trust
+    anchor unless partial chains are allowed. Without that flag, callers see
+    "unable to get local issuer certificate" and fall back to no verification.
+    Returns False when the certificate is missing, matching httpx's `verify`.
+    """
+    import ssl
+
+    cert_file = Path(cert_path)
+    if not cert_file.exists():
+        logger.warning("TLS certificate %s not found; client verification disabled", cert_file)
+        return False
+
+    try:
+        context = ssl.create_default_context(cafile=str(cert_file))
+    except Exception as e:
+        logger.warning("Could not load %s as a trust anchor: %s", cert_file, e)
+        return False
+
+    partial_chain = getattr(ssl, "VERIFY_X509_PARTIAL_CHAIN", None)
+    if partial_chain is not None:
+        context.verify_flags |= partial_chain
+    return context
+
+
 def uvicorn_ssl_kwargs(
     cert_path: str | Path = DEFAULT_CERT_PATH,
     key_path: str | Path = DEFAULT_KEY_PATH,

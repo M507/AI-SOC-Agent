@@ -23,6 +23,12 @@ DEFAULT_SYSTEM_PROMPT = (
     "request. Be concise, operational, and cite tool results rather than guessing."
 )
 
+# Open WebUI's /api/v1 pipeline accepts requests containing `tools` but never
+# forwards them to the model, so tool calling silently does nothing. Its
+# /openai/v1 passthrough does forward them, but is disabled by default
+# (ENABLE_OPENAI_API_PASSTHROUGH). Probe once per origin and remember.
+_TOOL_ROUTE_CACHE: Dict[str, Optional[str]] = {}
+
 _DEFAULTS = {
     "openai": {
         "base_url": "https://api.openai.com/v1",
@@ -89,9 +95,10 @@ class OpenAICompatibleProvider(LLMProvider):
         if self.provider_id != "openwebui":
             return raw
         lower = raw.lower()
-        # Open WebUI's OpenAI-compatible API lives at /api/v1. Accept a bare host.
-        if "/openai/v1" in lower:
-            return raw[: lower.rfind("/openai/v1")] + "/api/v1"
+        # /openai/v1 is Open WebUI's passthrough and is the only route that
+        # forwards `tools`, so an explicit choice of it is preserved.
+        if lower.endswith("/openai/v1"):
+            return raw
         if lower.endswith("/api/v1") or lower.endswith("/v1"):
             return raw
         if lower.endswith("/api"):
@@ -117,6 +124,51 @@ class OpenAICompatibleProvider(LLMProvider):
         if base.endswith("/chat/completions"):
             return base
         return f"{base}/chat/completions"
+
+    async def _tool_capable_chat_url(self, client: Any, model: str) -> Optional[str]:
+        """
+        Return a chat URL that forwards `tools`, or None if none is available.
+
+        Only Open WebUI needs this: every other OpenAI-compatible endpoint
+        honors `tools` on the configured URL.
+        """
+        configured = self._chat_url()
+        if self.provider_id != "openwebui" or "/openai/v1/" in configured:
+            return configured
+
+        origin = self._origin()
+        if origin in _TOOL_ROUTE_CACHE:
+            return _TOOL_ROUTE_CACHE[origin]
+
+        candidate = f"{origin}/openai/v1/chat/completions"
+        try:
+            response = await client.post(
+                candidate,
+                headers=self._headers(),
+                json={
+                    "model": model,
+                    "messages": [{"role": "user", "content": "ping"}],
+                    "max_tokens": 1,
+                },
+            )
+            usable = response.status_code < 400
+            detail = "" if usable else f"HTTP {response.status_code}: {response.text[:160]}"
+        except Exception as e:
+            usable = False
+            detail = str(e)
+
+        _TOOL_ROUTE_CACHE[origin] = candidate if usable else None
+        if usable:
+            logger.info("Open WebUI passthrough at %s supports tools; using it for tool calls", candidate)
+        else:
+            logger.warning(
+                "Open WebUI at %s cannot forward MCP tools (%s). Requests will run without tools. "
+                "Set ENABLE_OPENAI_API_PASSTHROUGH=True on Open WebUI, or point SamiGPT at the "
+                "inference backend directly, to restore tool calling.",
+                origin,
+                detail or "passthrough unavailable",
+            )
+        return _TOOL_ROUTE_CACHE[origin]
 
     def _headers(self) -> Dict[str, str]:
         headers = {
@@ -178,6 +230,30 @@ class OpenAICompatibleProvider(LLMProvider):
 
         timeout = float(self.settings.get("timeout_seconds") or 120)
         async with httpx.AsyncClient(timeout=timeout) as client:
+            chat_url = self._chat_url()
+            tools_supported: Optional[bool] = None
+            tools_advertised = len(openai_tools)
+            openwebui_mcp_id = (
+                (self.settings.get("mcp_server_id") or "").strip()
+                if self.provider_id == "openwebui"
+                else ""
+            )
+            if openai_tools:
+                if openwebui_mcp_id:
+                    # Open WebUI resolves the registered MCP server into native
+                    # tool schemas. SamiGPT still executes returned tool_calls
+                    # through its cluster-aware MCP client below.
+                    tools_supported = True
+                else:
+                    tool_url = await self._tool_capable_chat_url(client, model)
+                    tools_supported = tool_url is not None
+                    if tool_url:
+                        chat_url = tool_url
+                    else:
+                        # The endpoint would accept and ignore them; dropping the
+                        # field keeps the request honest and the payload small.
+                        openai_tools = []
+
             for _iteration in range(max_iterations):
                 if self._cancelled:
                     return LLMResult(
@@ -187,19 +263,24 @@ class OpenAICompatibleProvider(LLMProvider):
                         provider=self.provider_id,
                         model=model,
                         tool_calls=tool_calls_made,
+                        tools_advertised=tools_advertised,
+                        tools_supported=tools_supported,
                     )
 
                 payload: Dict[str, Any] = {
                     "model": model,
                     "messages": messages,
                 }
-                if openai_tools:
+                if openwebui_mcp_id and tools_advertised:
+                    payload["tool_ids"] = [f"server:mcp:{openwebui_mcp_id}"]
+                    payload["params"] = {"function_calling": "native"}
+                elif openai_tools:
                     payload["tools"] = openai_tools
                     payload["tool_choice"] = "auto"
 
                 try:
                     response = await client.post(
-                        self._chat_url(),
+                        chat_url,
                         headers=self._headers(),
                         json=payload,
                     )
@@ -214,6 +295,8 @@ class OpenAICompatibleProvider(LLMProvider):
                         provider=self.provider_id,
                         model=model,
                         tool_calls=tool_calls_made,
+                        tools_advertised=tools_advertised,
+                        tools_supported=tools_supported,
                     )
 
                 last_raw = data
@@ -230,6 +313,8 @@ class OpenAICompatibleProvider(LLMProvider):
                         provider=self.provider_id,
                         model=model,
                         tool_calls=tool_calls_made,
+                        tools_advertised=tools_advertised,
+                        tools_supported=tools_supported,
                     )
 
                 messages.append(message)
@@ -241,6 +326,8 @@ class OpenAICompatibleProvider(LLMProvider):
                         provider=self.provider_id,
                         model=model,
                         tool_calls=tool_calls_made,
+                        tools_advertised=tools_advertised,
+                        tools_supported=tools_supported,
                     )
 
                 for call in tool_calls:
@@ -268,6 +355,8 @@ class OpenAICompatibleProvider(LLMProvider):
                 provider=self.provider_id,
                 model=model,
                 tool_calls=tool_calls_made,
+                tools_advertised=tools_advertised,
+                tools_supported=tools_supported,
             )
 
     def _models_urls(self) -> List[str]:
