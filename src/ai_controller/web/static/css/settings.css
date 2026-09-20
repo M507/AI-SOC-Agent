@@ -351,6 +351,8 @@
     align-items: flex-start;
     justify-content: space-between;
     gap: 10px;
+    cursor: pointer;
+    user-select: none;
 }
 
 .skill-group-head h4 {
@@ -360,10 +362,14 @@
 }
 
 .skill-solution-row {
-    display: flex;
+    display: none;
     flex-wrap: wrap;
     gap: 12px;
     margin-top: 8px;
+}
+
+.skill-group.is-open .skill-solution-row {
+    display: flex;
 }
 
 .solution-pills {

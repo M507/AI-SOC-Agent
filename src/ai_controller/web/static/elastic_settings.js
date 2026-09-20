@@ -10,6 +10,7 @@ class ElasticClustersManager {
         this.catalog = { solutions: [], groups: [], default_skill_vector: '', help: '' };
         this.editorTarget = null;
         this.editorState = null;
+        this.openSkillGroups = new Set();
         this.syncingEditor = false;
         this.bind();
         this.log('info', 'Elastic clusters settings ready. Button actions will log here.');
@@ -396,6 +397,7 @@ class ElasticClustersManager {
             ? (this.defaultSkillVector || this.catalog.default_skill_vector || '')
             : (cluster && cluster.skill_vector) || this.defaultSkillVector || '';
         this.editorTarget = target;
+        this.openSkillGroups = new Set();
         const title = document.getElementById('skill-vector-title');
         const help = document.getElementById('skill-vector-help');
         if (title) {
@@ -424,6 +426,7 @@ class ElasticClustersManager {
         if (modal) modal.style.display = 'none';
         this.editorTarget = null;
         this.editorState = null;
+        this.openSkillGroups = new Set();
     }
 
     resetSkillEditor() {
@@ -473,13 +476,24 @@ class ElasticClustersManager {
 
     onSkillGroupClick(event) {
         const toggle = event.target.closest && event.target.closest('[data-skill-expand]');
-        if (!toggle) return;
-        const groupEl = toggle.closest('.skill-group');
+        const head = event.target.closest && event.target.closest('.skill-group-head');
+        if (!toggle && !head) return;
+        // Ignore clicks on controls inside the head other than expand / title area.
+        if (!toggle && event.target.closest('button, input, label, a')) return;
+        const groupEl = (toggle || head).closest('.skill-group');
         if (!groupEl) return;
-        groupEl.classList.toggle('is-open');
-        const open = groupEl.classList.contains('is-open');
-        toggle.textContent = open ? 'Hide' : 'Show';
-        this.log('info', `${open ? 'Expanded' : 'Collapsed'} ${groupEl.getAttribute('data-skill-group') || 'skill'} group`);
+        const groupId = groupEl.getAttribute('data-skill-group') || '';
+        const open = !groupEl.classList.contains('is-open');
+        if (open) {
+            this.openSkillGroups.add(groupId);
+            groupEl.classList.add('is-open');
+        } else {
+            this.openSkillGroups.delete(groupId);
+            groupEl.classList.remove('is-open');
+        }
+        const button = groupEl.querySelector('[data-skill-expand]');
+        if (button) button.textContent = open ? 'Hide' : 'Show';
+        this.log('info', `${open ? 'Expanded' : 'Collapsed'} ${groupId || 'skill'} group`);
     }
 
     groupForSkill(skillId) {
@@ -549,13 +563,14 @@ class ElasticClustersManager {
                     </span>
                 </label>`;
             }).join('');
-            return `<section class="skill-group is-open${parentOn ? '' : ' is-disabled'}" data-skill-group="${this.escapeAttr(group.id)}">
-                <header class="skill-group-head">
+            const isOpen = this.openSkillGroups.has(group.id);
+            return `<section class="skill-group${isOpen ? ' is-open' : ''}${parentOn ? '' : ' is-disabled'}" data-skill-group="${this.escapeAttr(group.id)}">
+                <header class="skill-group-head" title="Click to ${isOpen ? 'hide' : 'show'} skills">
                     <div>
                         <h4>${this.escapeHtml(group.name)} <span class="skill-count">${enabledCount}/${total}</span></h4>
                         <p class="settings-help">${this.escapeHtml(group.help || '')}</p>
                     </div>
-                    <button type="button" class="btn btn-secondary btn-sm" data-skill-expand>Hide</button>
+                    <button type="button" class="btn btn-secondary btn-sm" data-skill-expand aria-expanded="${isOpen ? 'true' : 'false'}">${isOpen ? 'Hide' : 'Show'}</button>
                 </header>
                 <div class="skill-solution-row">${solutionToggles}</div>
                 <div class="skill-list">${skills}</div>
