@@ -14,6 +14,33 @@ class _FakeSIEM:
         self.cases = []
         self.isolated = []
         self.released = []
+        self.alerts = {
+            "alert-9": {
+                "id": "alert-9",
+                "title": "Suspicious DNS Query",
+                "severity": "medium",
+                "status": "open",
+                "verdict": "in-progress",
+                "description": "Host queried a known scanner domain.",
+                "created_at": "2026-09-20T12:00:00Z",
+                "related_entities": ["host:workstation-1", "user:alice", "ip:1.2.3.4"],
+                "events": [
+                    {
+                        "id": "evt-1",
+                        "timestamp": "2026-09-20T12:00:00Z",
+                        "host": "workstation-1",
+                        "message": "dns query evil.example",
+                    }
+                ],
+                "comments": [{"author": "ai", "comment": "Looks like scanner noise", "timestamp": "2026-09-20T12:01:00Z"}],
+            }
+        }
+
+    def get_security_alert_by_id(self, alert_id, include_detections=True):
+        alert = self.alerts.get(alert_id)
+        if not alert:
+            raise KeyError(alert_id)
+        return dict(alert)
 
     def close_alert(self, alert_id, reason=None, comment=None):
         self.closed.append((alert_id, reason, comment))
@@ -83,10 +110,9 @@ def test_catalog_covers_soc_actions():
 def test_close_alert_executes_on_originating_cluster(tmp_path, monkeypatch):
     queue = ApprovalQueue(str(tmp_path))
     siem = _FakeSIEM()
-    monkeypatch.setattr(
-        "src.ai_controller.approval_queue.service.resolve_clients",
-        lambda cluster_id=None: ClientBundle(cluster_id=cluster_id or "lab", siem=siem),
-    )
+    bundle = lambda cluster_id=None: ClientBundle(cluster_id=cluster_id or "lab", siem=siem)
+    monkeypatch.setattr("src.ai_controller.approval_queue.service.resolve_clients", bundle)
+    monkeypatch.setattr("src.ai_controller.approval_queue.enrichment.resolve_clients", bundle)
     created = queue.create(
         "close_alert",
         "Close noisy DNS alert",
@@ -94,10 +120,31 @@ def test_close_alert_executes_on_originating_cluster(tmp_path, monkeypatch):
         payload={"alert_id": "alert-9", "reason": "false_positive", "comment": "scanner"},
         cluster_id="lab",
     )
+    assert created.payload.get("alert", {}).get("title") == "Suspicious DNS Query"
+    assert created.payload.get("hostname") == "workstation-1"
+    assert "scanner" in (created.rationale or created.summary)
     done = queue.approve(created.id)
     assert done.status is RequestStatus.EXECUTED
     assert done.cluster_id == "lab"
     assert siem.closed == [("alert-9", "false_positive", "scanner")]
+
+
+def test_close_alert_enriches_sparse_mcp_payload(tmp_path, monkeypatch):
+    queue = ApprovalQueue(str(tmp_path))
+    siem = _FakeSIEM()
+    bundle = lambda cluster_id=None: ClientBundle(cluster_id="lab", siem=siem)
+    monkeypatch.setattr("src.ai_controller.approval_queue.service.resolve_clients", bundle)
+    monkeypatch.setattr("src.ai_controller.approval_queue.enrichment.resolve_clients", bundle)
+    created = queue.create_from_mcp_tool(
+        "close_alert",
+        {"alert_id": "alert-9"},
+        cluster_id="lab",
+    )
+    assert created.payload["alert"]["title"] == "Suspicious DNS Query"
+    assert "Suspicious DNS Query" in created.title
+    assert "workstation-1" in created.summary
+    assert "dns query evil.example" in created.rationale
+    assert created.payload.get("username") == "alice"
 
 
 def test_deny_does_not_execute(tmp_path, monkeypatch):

@@ -80,6 +80,11 @@ ACTION_CATALOG: Tuple[ActionSpec, ...] = (
             FieldSpec("alert_id", "Alert ID", True, "SIEM alert identifier"),
             FieldSpec("reason", "Reason", False, "false_positive, benign_true_positive, true_positive"),
             FieldSpec("comment", "Comment", False, "Why the alert is being closed"),
+            FieldSpec("rule_name", "Rule name", False, "Filled from SIEM when omitted"),
+            FieldSpec("hostname", "Host", False, "Filled from SIEM when omitted"),
+            FieldSpec("username", "User", False, "Filled from SIEM when omitted"),
+            FieldSpec("severity", "Severity", False),
+            FieldSpec("verdict", "Current verdict", False),
         ),
     ),
     ActionSpec(

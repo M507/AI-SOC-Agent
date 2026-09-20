@@ -1862,6 +1862,8 @@ class SamiGPTMCPServer:
             "description": (
                 "Request closing a SIEM alert (false positive or benign true positive)."
                 + _QUEUED_FOR_ANALYST
+                + " Always include reason and a detailed comment so the analyst can decide."
+                + " Prefer also passing rationale with investigation notes (entities, why FP/BTP)."
                 + " Use update_alert_verdict immediately for your working assessment; that does not close the alert."
             ),
             "inputSchema": {
@@ -1877,10 +1879,24 @@ class SamiGPTMCPServer:
                     },
                     "comment": {
                         "type": "string",
-                        "description": "Comment explaining why the alert is being closed",
+                        "description": (
+                            "Human-readable explanation for the analyst reviewing the Requests queue. "
+                            "Include rule name, host/user, and why this is FP or BTP."
+                        ),
+                    },
+                    "rationale": {
+                        "type": "string",
+                        "description": (
+                            "Investigation notes for the Requests view (entities, timeline, evidence). "
+                            "Shown to the analyst before they approve."
+                        ),
+                    },
+                    "summary": {
+                        "type": "string",
+                        "description": "Short analyst-facing summary of what would be closed and why",
                     },
                 },
-                "required": ["alert_id"],
+                "required": ["alert_id", "reason", "comment"],
             },
         }
 

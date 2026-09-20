@@ -50,12 +50,26 @@ class ApprovalQueue:
                 for item in self.store.list(cluster_id=cluster_id)
                 if item.status in {RequestStatus.PENDING, RequestStatus.INFORMATIONAL}
             ]
+            items = [self.ensure_enriched(item) for item in items]
             return sorted(items, key=lambda item: item.created_at, reverse=True)
         parsed = RequestStatus(status) if status else None
-        return self.store.list(status=parsed, cluster_id=cluster_id)
+        items = self.store.list(status=parsed, cluster_id=cluster_id)
+        if parsed in {RequestStatus.PENDING, RequestStatus.INFORMATIONAL} or status is None:
+            items = [
+                self.ensure_enriched(item)
+                if item.status in {RequestStatus.PENDING, RequestStatus.INFORMATIONAL}
+                else item
+                for item in items
+            ]
+        return items
 
     def get(self, request_id: str) -> Optional[ApprovalRequest]:
-        return self.store.get(request_id)
+        request = self.store.get(request_id)
+        if request is None:
+            return None
+        if request.status in {RequestStatus.PENDING, RequestStatus.INFORMATIONAL}:
+            return self.ensure_enriched(request)
+        return request
 
     def counts(self) -> Dict[str, int]:
         return {
@@ -106,6 +120,10 @@ class ApprovalQueue:
         if spec.execution == "informational":
             request.payload = self._enrich_informational(spec.action_type, request.payload)
             request.status = RequestStatus.INFORMATIONAL
+        else:
+            from .enrichment import enrich_request
+
+            request = enrich_request(request)
         return self.store.put(request)
 
     def create_from_mcp_tool(
@@ -123,11 +141,16 @@ class ApprovalQueue:
         args = dict(arguments or {})
         title = args.get("title") or f"{spec.label}: {args.get('alert_id') or args.get('endpoint_id') or 'pending'}"
         summary = args.get("summary") or args.get("comment") or args.get("description") or spec.description
-        rationale = args.get("rationale") or ""
+        rationale = (
+            args.get("rationale")
+            or args.get("comment")
+            or args.get("description")
+            or ""
+        )
         payload = {
             key: value
             for key, value in args.items()
-            if key not in {"summary", "rationale", "session_id", "cluster_id"}
+            if key not in {"summary", "rationale", "session_id", "cluster_id", "title"}
         }
         return self.create(
             action_type=spec.action_type,
@@ -139,6 +162,17 @@ class ApprovalQueue:
             session_id=session_id or args.get("session_id"),
             source="mcp",
         )
+
+    def ensure_enriched(self, request: ApprovalRequest) -> ApprovalRequest:
+        """Backfill SIEM context on older/sparse pending requests and persist."""
+        from .enrichment import enrich_request, needs_enrichment
+
+        if request.status not in {RequestStatus.PENDING, RequestStatus.INFORMATIONAL}:
+            return request
+        if not needs_enrichment(request):
+            return request
+        enriched = enrich_request(request)
+        return self.store.put(enriched)
 
     def deny(self, request_id: str, comment: Optional[str] = None, actor: str = "analyst") -> ApprovalRequest:
         request = self._require(request_id)

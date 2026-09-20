@@ -220,26 +220,89 @@ class RequestsManager {
         if (this.isInformational(item, spec)) {
             return this.informationalBodyHtml(payload);
         }
+        const skip = new Set([
+            'alert', 'rule', 'coverage_check', 'rule_found', 'suggestion', 'description',
+        ]);
         const payloadRows = Object.keys(payload).length
-            ? Object.entries(payload).map(([key, value]) => {
-                const label = this.fieldLabel(spec, key);
-                return `<dt>${escapeHtml(label)}</dt><dd>${escapeHtml(this.formatValue(value))}</dd>`;
-            }).join('')
-            : '<dt>None</dt><dd>No extra payload fields.</dd>';
-        return `<div class="request-section-label">Payload (used when you approve)</div><dl class="request-payload">${payloadRows}</dl>`;
+            ? Object.entries(payload)
+                .filter(([key, value]) => !skip.has(key) && value != null && value !== '')
+                .map(([key, value]) => {
+                    const label = this.fieldLabel(spec, key);
+                    return `<dt>${escapeHtml(label)}</dt><dd>${escapeHtml(this.formatValue(value))}</dd>`;
+                }).join('')
+            : '';
+        return `
+            ${this.alertHtml(payload.alert)}
+            ${payloadRows ? `<div class="request-section-label">Action parameters</div><dl class="request-payload">${payloadRows}</dl>` : ''}
+        `;
+    }
+
+    alertHtml(alert) {
+        if (!alert || typeof alert !== 'object') {
+            return '';
+        }
+        const entities = Array.isArray(alert.related_entities) ? alert.related_entities : [];
+        const events = Array.isArray(alert.events) ? alert.events : [];
+        const comments = Array.isArray(alert.comments) ? alert.comments : [];
+        const meta = [
+            alert.severity ? `severity ${alert.severity}` : '',
+            alert.status ? `status ${alert.status}` : '',
+            alert.verdict ? `verdict ${alert.verdict}` : '',
+            alert.created_at ? `at ${alert.created_at}` : '',
+        ].filter(Boolean);
+        const entityHtml = entities.length
+            ? `<div class="request-rule-meta">${entities.map((item) => `<span class="action-badge">${escapeHtml(String(item))}</span>`).join('')}</div>`
+            : '';
+        const eventHtml = events.length
+            ? `<div class="request-section-label">Triggering events</div>
+               <ul class="request-coverage-hits">${events.map((event) => {
+                    if (!event || typeof event !== 'object') {
+                        return `<li>${escapeHtml(String(event))}</li>`;
+                    }
+                    const bits = [event.timestamp, event.host, event.username, event.process_name, event.message]
+                        .filter(Boolean).map(String);
+                    return `<li>${escapeHtml(bits.join(' · '))}</li>`;
+               }).join('')}</ul>`
+            : '';
+        const commentHtml = comments.length
+            ? `<div class="request-section-label">Alert comments</div>
+               <ul class="request-coverage-hits">${comments.map((comment) => {
+                    if (!comment || typeof comment !== 'object') {
+                        return `<li>${escapeHtml(String(comment))}</li>`;
+                    }
+                    return `<li><strong>${escapeHtml(String(comment.author || 'unknown'))}</strong>
+                        ${comment.timestamp ? escapeHtml(String(comment.timestamp)) + ': ' : ''}
+                        ${escapeHtml(String(comment.comment || ''))}</li>`;
+               }).join('')}</ul>`
+            : '';
+        return `
+            <div class="request-section-label">Alert context</div>
+            <div class="request-rule">
+                <div class="request-rule-name">${escapeHtml(alert.title || alert.id || 'Alert')}</div>
+                <div class="request-rule-meta">
+                    ${alert.id ? `<span>id ${escapeHtml(String(alert.id))}</span>` : ''}
+                    ${meta.map((item) => `<span>${escapeHtml(item)}</span>`).join('')}
+                </div>
+                ${alert.description ? `<p class="request-detail-rationale">${escapeHtml(String(alert.description))}</p>` : ''}
+                ${entityHtml}
+            </div>
+            ${eventHtml}
+            ${commentHtml}
+        `;
     }
 
     informationalBodyHtml(payload) {
         const suggestion = payload.suggestion || payload.description || '';
         const rule = payload.rule;
         const coverage = payload.coverage_check;
-        const skip = new Set(['suggestion', 'rule', 'coverage_check', 'rule_found', 'description']);
+        const skip = new Set(['suggestion', 'rule', 'coverage_check', 'rule_found', 'description', 'alert']);
         const extras = Object.entries(payload).filter(([key, value]) => !skip.has(key) && value != null && value !== '');
         const extraRows = extras.length
             ? extras.map(([key, value]) => `<dt>${escapeHtml(key)}</dt><dd>${escapeHtml(this.formatValue(value))}</dd>`).join('')
             : '';
         return `
             ${suggestion ? `<div class="request-section-label">Suggestion</div><pre class="request-suggestion">${escapeHtml(suggestion)}</pre>` : ''}
+            ${this.alertHtml(payload.alert)}
             ${this.ruleHtml(rule)}
             ${this.coverageHtml(coverage)}
             ${extraRows ? `<div class="request-section-label">Details</div><dl class="request-payload">${extraRows}</dl>` : ''}
@@ -307,7 +370,11 @@ class RequestsManager {
             return '—';
         }
         if (typeof value === 'object') {
-            return JSON.stringify(value);
+            try {
+                return JSON.stringify(value, null, 2);
+            } catch (err) {
+                return String(value);
+            }
         }
         return String(value);
     }
