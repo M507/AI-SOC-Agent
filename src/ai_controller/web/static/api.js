@@ -546,6 +546,18 @@ class APIClient {
         }
     }
 
+    async getRecentAlerts(clusterId = null, limit = 10, hoursBack = 24) {
+        try {
+            const params = new URLSearchParams();
+            if (clusterId) params.set('cluster_id', clusterId);
+            params.set('limit', String(limit));
+            params.set('hours_back', String(hoursBack));
+            return await this.request(`/api/elastic/recent-alerts?${params.toString()}`);
+        } catch (error) {
+            return { success: false, alerts: [], error: error.message };
+        }
+    }
+
     async createElasticCluster(payload) {
         try {
             return await this.request('/api/elastic/clusters', {

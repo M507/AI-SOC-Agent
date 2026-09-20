@@ -8,6 +8,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 from ...core.elastic_clusters import (
+    client_for_id,
     get_cluster,
     load_registry,
     probe_cluster,
@@ -243,3 +244,70 @@ async def set_cluster_skill_vector(cluster_id: str, payload: SkillVectorPayload)
     save_registry(registry)
     logger.info("Elastic settings: Saved MCP skill vector for cluster %s %s", cluster_id, vector)
     return {"success": True, **public_clusters()}
+
+
+@router.get("/recent-alerts")
+async def recent_alerts(
+    cluster_id: Optional[str] = None,
+    limit: int = 10,
+    hours_back: int = 24,
+):
+    """Return recent alerts for the New Session picker (UUID + short label)."""
+    limit = max(1, min(int(limit or 10), 25))
+    hours_back = max(1, min(int(hours_back or 24), 168))
+
+    client = client_for_id(cluster_id)
+    if client is None:
+        return {
+            "success": True,
+            "alerts": [],
+            "message": "No Elastic cluster configured",
+        }
+
+    try:
+        alerts = client.get_security_alerts(
+            hours_back=hours_back,
+            max_alerts=limit,
+            include_investigated=True,
+        )
+    except Exception as exc:
+        logger.warning(
+            "Elastic recent-alerts failed cluster_id=%s: %s",
+            cluster_id,
+            exc,
+        )
+        return {
+            "success": False,
+            "alerts": [],
+            "error": str(exc),
+        }
+
+    items = []
+    for alert in alerts or []:
+        if not isinstance(alert, dict):
+            continue
+        alert_id = str(alert.get("id") or "").strip()
+        if not alert_id:
+            continue
+        title = (
+            str(alert.get("title") or alert.get("rule_name") or "Untitled alert").strip()
+            or "Untitled alert"
+        )
+        severity = str(alert.get("severity") or "").strip().lower() or "unknown"
+        created_at = str(alert.get("created_at") or "").strip()
+        items.append(
+            {
+                "id": alert_id,
+                "title": title,
+                "severity": severity,
+                "status": str(alert.get("status") or "").strip() or "open",
+                "created_at": created_at,
+            }
+        )
+
+    return {
+        "success": True,
+        "alerts": items[:limit],
+        "cluster_id": cluster_id,
+        "hours_back": hours_back,
+    }

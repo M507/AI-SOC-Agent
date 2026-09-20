@@ -53,7 +53,7 @@ CRITICAL_SKILLS = {
 NEEDS_REAL_FIXTURE = {
     "get_security_alert_by_id": "Requires a real alert ID; no dummy alert is created.",
     "get_siem_event_by_id": "Requires a real event ID.",
-    "get_rule_detections": "Requires a real detection-rule ID.",
+    "get_rule_detections": "Requires a real detection-rule ID or rule name.",
     "list_rule_errors": "Requires a real detection-rule ID.",
     "get_endpoint_summary": "Requires a real endpoint ID.",
     "get_detection_details": "Requires a real detection ID.",
@@ -73,6 +73,21 @@ SIEM_ARGS: Dict[str, Dict[str, Any]] = {
     "search_user_activity": {"username": "__sami_skill_test__", "limit": 1},
     "pivot_on_indicator": {"indicator": "203.0.113.1", "limit": 1},
     "search_kql_query": {"kql_query": 'host.name : "__sami_skill_test__"', "limit": 1, "hours_back": 1},
+    "search_lucene_query": {"lucene_query": 'host.name:"__sami_skill_test__"', "limit": 1, "hours_back": 1},
+    "search_eql_query": {
+        "eql_query": 'process where process.name == "__sami_skill_test__"',
+        "limit": 1,
+        "hours_back": 1,
+    },
+    "search_dsl_query": {
+        "dsl_query": '{"query":{"term":{"host.name":"__sami_skill_test__"}}}',
+        "limit": 1,
+        "hours_back": 1,
+    },
+    "search_esql_query": {
+        "esql_query": 'FROM logs-* | WHERE host.name == "__sami_skill_test__" | LIMIT 1',
+        "limit": 1,
+    },
     "get_recent_alerts": {"hours_back": 1, "max_alerts": 1},
     "get_network_events": {"source_ip": "203.0.113.1", "hours_back": 1, "limit": 1},
     "get_dns_events": {"domain": "skill-test.invalid", "hours_back": 1, "limit": 1},

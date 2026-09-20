@@ -364,6 +364,8 @@ def get_recent_alerts(
     status_filter: Optional[str] = None,
     severity: Optional[str] = None,
     hostname: Optional[str] = None,
+    rule_name: Optional[str] = None,
+    rule_id: Optional[str] = None,
     client: SIEMClient = None,  # type: ignore
 ) -> Dict[str, Any]:
     """
@@ -379,9 +381,13 @@ def get_recent_alerts(
     - parameters:
       - hours_back (int, optional): How many hours to look back (default: 1)
       - max_alerts (int, optional): Maximum number of alerts to retrieve (default: 100)
-      - status_filter (str, optional): Filter by status (implementation-specific)
+      - status_filter (str, optional): Filter by status (open, acknowledged/akn, closed).
+        Default excludes closed. Use acknowledged/closed with get_security_alerts or
+        get_rule_detections for historical review (this tool still skips verdicted alerts).
       - severity (str, optional): Filter by severity (low, medium, high, critical)
       - hostname (str, optional): Filter alerts by hostname (matches host.name field)
+      - rule_name (str, optional): Filter alerts by detection rule name
+      - rule_id (str, optional): Filter alerts by detection rule ID
 
     **Important:** This tool automatically filters out alerts that have a `verdict` field
     (signal.ai.verdict in Elasticsearch). Alerts with verdicts have already been investigated
@@ -411,6 +417,9 @@ def get_recent_alerts(
             status_filter=status_filter,
             severity=severity,
             hostname=hostname,
+            rule_name=rule_name,
+            rule_id=rule_id,
+            include_investigated=False,
         )
     except Exception as e:
         raise IntegrationError(f"Failed to get recent alerts: {str(e)}") from e
@@ -469,6 +478,8 @@ def get_recent_alerts(
             "status_filter": status_filter,
             "severity": severity,
             "hostname": hostname,
+            "rule_name": rule_name,
+            "rule_id": rule_id,
             "total_alerts": len(alerts),
             "uninvestigated_alerts": 0,
             "group_count": 0,
@@ -628,6 +639,8 @@ def get_recent_alerts(
         "status_filter": status_filter,
         "severity": severity,
         "hostname": hostname,
+        "rule_name": rule_name,
+        "rule_id": rule_id,
         "total_alerts": len(alerts),
         "uninvestigated_alerts": len(uninvestigated_alerts),
         "group_count": len(grouped_list),
@@ -641,38 +654,60 @@ def get_security_alerts(
     max_alerts: int = 10,
     status_filter: Optional[str] = None,
     severity: Optional[str] = None,
+    hostname: Optional[str] = None,
+    rule_name: Optional[str] = None,
+    rule_id: Optional[str] = None,
+    include_investigated: Optional[bool] = None,
     client: SIEMClient = None,  # type: ignore
 ) -> Dict[str, Any]:
     """
     Get security alerts from the SIEM platform.
-    
+
     Tool schema:
     - name: get_security_alerts
-    - description: Get security alerts directly from the SIEM platform
+    - description: Get security alerts from the SIEM. Filter by workflow status
+      (open, acknowledged/akn, closed), rule name/id, severity, or hostname.
+      Default excludes closed and already-investigated (verdicted) alerts. Pass
+      status_filter=acknowledged|closed (or include_investigated=true) to review
+      historical ack/closed alerts by rule.
     - parameters:
       - hours_back (int, optional): How many hours to look back (default: 24)
       - max_alerts (int, optional): Maximum number of alerts to return (default: 10)
-      - status_filter (str, optional): Filter by status
+      - status_filter (str, optional): open | acknowledged (akn/ack) | closed.
+        Default excludes closed.
       - severity (str, optional): Filter by severity (low, medium, high, critical)
+      - hostname (str, optional): Filter by host.name
+      - rule_name (str, optional): Filter by detection rule name
+      - rule_id (str, optional): Filter by detection rule ID
+      - include_investigated (bool, optional): Include alerts with signal.ai.verdict.
+        Defaults to true when status_filter is acknowledged/closed.
     """
     if client is None:
         raise IntegrationError("SIEM client not provided")
-    
+
     # Check if client has this method
     if not hasattr(client, "get_security_alerts"):
         raise IntegrationError("SIEM client does not support get_security_alerts")
-    
+
     try:
         alerts = client.get_security_alerts(
             hours_back=hours_back,
             max_alerts=max_alerts,
             status_filter=status_filter,
             severity=severity,
+            hostname=hostname,
+            rule_name=rule_name,
+            rule_id=rule_id,
+            include_investigated=include_investigated,
         )
-        
+
         return {
             "success": True,
             "count": len(alerts),
+            "status_filter": status_filter,
+            "rule_name": rule_name,
+            "rule_id": rule_id,
+            "include_investigated": include_investigated,
             "alerts": alerts,
         }
     except Exception as e:
@@ -947,41 +982,51 @@ def search_security_rules(
 
 
 def get_rule_detections(
-    rule_id: str,
+    rule_id: Optional[str] = None,
     alert_state: Optional[str] = None,
     hours_back: int = 24,
     limit: int = 50,
+    rule_name: Optional[str] = None,
     client: SIEMClient = None,  # type: ignore
 ) -> Dict[str, Any]:
     """
     Get historical detections from a specific rule.
-    
+
     Tool schema:
     - name: get_rule_detections
-    - description: Retrieve historical detections generated by a specific security detection rule
+    - description: Retrieve historical detections generated by a security detection
+      rule, including acknowledged and closed alerts. Identify the rule with
+      rule_id and/or rule_name.
     - parameters:
-      - rule_id (str, required): Unique ID of the rule
-      - alert_state (str, optional): Filter by alert state
+      - rule_id (str, optional): Unique ID of the rule (required if rule_name omitted)
+      - rule_name (str, optional): Detection rule name (required if rule_id omitted)
+      - alert_state (str, optional): open | acknowledged (akn/ack) | closed
       - hours_back (int, optional): How many hours back (default: 24)
       - limit (int, optional): Maximum number of detections (default: 50)
     """
     if client is None:
         raise IntegrationError("SIEM client not provided")
-    
+
+    if not rule_id and not rule_name:
+        raise IntegrationError("get_rule_detections requires rule_id and/or rule_name")
+
     if not hasattr(client, "get_rule_detections"):
         raise IntegrationError("SIEM client does not support get_rule_detections")
-    
+
     try:
         detections = client.get_rule_detections(
             rule_id=rule_id,
+            rule_name=rule_name,
             alert_state=alert_state,
             hours_back=hours_back,
             limit=limit,
         )
-        
+
         return {
             "success": True,
             "rule_id": rule_id,
+            "rule_name": rule_name,
+            "alert_state": alert_state,
             "count": len(detections),
             "detections": detections,
         }
@@ -1256,66 +1301,190 @@ def search_kql_query(
     client: SIEMClient = None,  # type: ignore
 ) -> Dict[str, Any]:
     """
-    Execute a KQL (Kusto Query Language) or advanced query for deeper investigations.
-    
+    Execute a Kibana Query Language (KQL) search.
+
     Tool schema:
     - name: search_kql_query
-    - description: Execute a KQL (Kusto Query Language) or advanced query for deeper investigations.
-      This tool allows for complex queries including advanced filtering, aggregations, time-based
-      analysis, cross-index searches, and complex joins. Supports both KQL syntax and vendor-specific
-      query DSL (e.g., Elasticsearch Query DSL).
+    - description: Execute a Kibana Query Language (KQL) search for investigations.
+      For Lucene, EQL, Query DSL, or ES|QL use search_lucene_query / search_eql_query /
+      search_dsl_query / search_esql_query.
     - parameters:
-      - kql_query (str, required): KQL query string or advanced query DSL (JSON for Elasticsearch)
+      - kql_query (str, required): KQL query string (JSON DSL also accepted for compatibility)
       - limit (int, optional): Maximum number of events to return (default: 500)
       - hours_back (int, optional): Optional time window in hours to limit the search
-    
-    Args:
-        kql_query: KQL query string or advanced query DSL.
-        limit: Maximum number of events to return.
-        hours_back: Optional time window in hours.
-        client: The SIEM client.
-    
-    Returns:
-        Dictionary containing search results with events.
-    
-    Raises:
-        IntegrationError: If search fails.
     """
     if client is None:
         raise IntegrationError("SIEM client not provided")
-    
+
     if not hasattr(client, "search_kql_query"):
         raise IntegrationError("SIEM client does not support search_kql_query")
-    
+
     try:
         result = client.search_kql_query(
             kql_query=kql_query,
             limit=limit,
             hours_back=hours_back,
         )
-        
-        return {
-            "success": True,
-            "query": result.query,
-            "total_count": result.total_count,
-            "returned_count": len(result.events),
-            "events": [
-                {
-                    "id": event.id,
-                    "timestamp": event.timestamp.isoformat(),
-                    "source_type": event.source_type.value,
-                    "message": event.message,
-                    "host": event.host,
-                    "username": event.username,
-                    "ip": event.ip,
-                    "process_name": event.process_name,
-                    "file_hash": event.file_hash,
-                }
-                for event in result.events
-            ],
-        }
+        return _format_query_result(result)
     except Exception as e:
         raise IntegrationError(f"Failed to execute KQL query: {str(e)}") from e
+
+
+def _format_query_result(result: Any) -> Dict[str, Any]:
+    return {
+        "success": True,
+        "query": result.query,
+        "total_count": result.total_count,
+        "returned_count": len(result.events),
+        "events": [
+            {
+                "id": event.id,
+                "timestamp": event.timestamp.isoformat(),
+                "source_type": event.source_type.value,
+                "message": event.message,
+                "host": event.host,
+                "username": event.username,
+                "ip": event.ip,
+                "process_name": event.process_name,
+                "file_hash": event.file_hash,
+            }
+            for event in result.events
+        ],
+    }
+
+
+def search_lucene_query(
+    lucene_query: str,
+    limit: int = 500,
+    hours_back: Optional[int] = None,
+    index_pattern: Optional[str] = None,
+    client: SIEMClient = None,  # type: ignore
+) -> Dict[str, Any]:
+    """
+    Execute a Lucene query_string search.
+
+    Tool schema:
+    - name: search_lucene_query
+    - description: Search security indices with Lucene syntax
+      (e.g. process.name:powershell AND host.name:workstation-*).
+    - parameters:
+      - lucene_query (str, required): Lucene query string
+      - limit (int, optional): Max events (default: 500)
+      - hours_back (int, optional): Time window in hours
+      - index_pattern (str, optional): Override index pattern
+    """
+    if client is None:
+        raise IntegrationError("SIEM client not provided")
+    if not hasattr(client, "search_lucene_query"):
+        raise IntegrationError("SIEM client does not support search_lucene_query")
+    try:
+        result = client.search_lucene_query(
+            lucene_query=lucene_query,
+            limit=limit,
+            hours_back=hours_back,
+            index_pattern=index_pattern,
+        )
+        return _format_query_result(result)
+    except Exception as e:
+        raise IntegrationError(f"Failed to execute Lucene query: {str(e)}") from e
+
+
+def search_eql_query(
+    eql_query: str,
+    limit: int = 100,
+    hours_back: Optional[int] = None,
+    index_pattern: Optional[str] = None,
+    client: SIEMClient = None,  # type: ignore
+) -> Dict[str, Any]:
+    """
+    Execute an Elastic Event Query Language (EQL) search.
+
+    Tool schema:
+    - name: search_eql_query
+    - description: Run an EQL hunt (process/network sequences), e.g.
+      process where process.name == "cmd.exe" and process.parent.name == "winword.exe".
+    - parameters:
+      - eql_query (str, required): EQL query
+      - limit (int, optional): Max events (default: 100)
+      - hours_back (int, optional): Time window in hours
+      - index_pattern (str, optional): Override index pattern
+    """
+    if client is None:
+        raise IntegrationError("SIEM client not provided")
+    if not hasattr(client, "search_eql_query"):
+        raise IntegrationError("SIEM client does not support search_eql_query")
+    try:
+        result = client.search_eql_query(
+            eql_query=eql_query,
+            limit=limit,
+            hours_back=hours_back,
+            index_pattern=index_pattern,
+        )
+        return _format_query_result(result)
+    except Exception as e:
+        raise IntegrationError(f"Failed to execute EQL query: {str(e)}") from e
+
+
+def search_dsl_query(
+    dsl_query: str,
+    limit: int = 500,
+    hours_back: Optional[int] = None,
+    index_pattern: Optional[str] = None,
+    client: SIEMClient = None,  # type: ignore
+) -> Dict[str, Any]:
+    """
+    Execute a raw Elasticsearch Query DSL search.
+
+    Tool schema:
+    - name: search_dsl_query
+    - description: Run a JSON Elasticsearch Query DSL body against security indices.
+    - parameters:
+      - dsl_query (str, required): JSON Query DSL object as a string
+      - limit (int, optional): Max events (default: 500)
+      - hours_back (int, optional): Time window in hours
+      - index_pattern (str, optional): Override index pattern
+    """
+    if client is None:
+        raise IntegrationError("SIEM client not provided")
+    if not hasattr(client, "search_dsl_query"):
+        raise IntegrationError("SIEM client does not support search_dsl_query")
+    try:
+        result = client.search_dsl_query(
+            dsl_query=dsl_query,
+            limit=limit,
+            hours_back=hours_back,
+            index_pattern=index_pattern,
+        )
+        return _format_query_result(result)
+    except Exception as e:
+        raise IntegrationError(f"Failed to execute DSL query: {str(e)}") from e
+
+
+def search_esql_query(
+    esql_query: str,
+    limit: int = 500,
+    client: SIEMClient = None,  # type: ignore
+) -> Dict[str, Any]:
+    """
+    Execute an ES|QL query.
+
+    Tool schema:
+    - name: search_esql_query
+    - description: Run Elastic ES|QL (FROM ... | WHERE ... | KEEP ...). Include LIMIT
+      in the query or rely on the limit parameter.
+    - parameters:
+      - esql_query (str, required): ES|QL query text
+      - limit (int, optional): Appended as LIMIT when missing (default: 500)
+    """
+    if client is None:
+        raise IntegrationError("SIEM client not provided")
+    if not hasattr(client, "search_esql_query"):
+        raise IntegrationError("SIEM client does not support search_esql_query")
+    try:
+        result = client.search_esql_query(esql_query=esql_query, limit=limit)
+        return _format_query_result(result)
+    except Exception as e:
+        raise IntegrationError(f"Failed to execute ES|QL query: {str(e)}") from e
 
 
 def get_network_events(

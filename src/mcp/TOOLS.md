@@ -859,6 +859,10 @@ The following checklist shows which SIEM tools are currently implemented:
 - [x] `search_user_activity`
 - [x] `pivot_on_indicator`
 - [x] `search_kql_query`
+- [x] `search_lucene_query`
+- [x] `search_eql_query`
+- [x] `search_dsl_query`
+- [x] `search_esql_query`
 
 **Alert Management Tools:**
 - [x] `get_security_alerts`
@@ -1152,110 +1156,167 @@ Given an IOC (file hash, IP address, domain, etc.), search for all related secur
 
 ### `search_kql_query`
 
-Execute a KQL (Kusto Query Language) or advanced query for deeper investigations. This tool enables complex queries including advanced filtering, aggregations, time-based analysis, cross-index searches, and complex joins. Supports both KQL syntax and vendor-specific query DSL (e.g., Elasticsearch Query DSL).
+Execute a Kibana Query Language (KQL) search for investigations.
 
-**Note:** This tool is designed for SOC 2 and SOC 3 analysts who need to perform deeper investigations with complex queries. For simpler searches, use `search_security_events` instead.
+For other Elastic query languages use:
+- `search_lucene_query` — Lucene `query_string`
+- `search_eql_query` — Event Query Language (EQL)
+- `search_dsl_query` — Elasticsearch Query DSL (JSON)
+- `search_esql_query` — ES|QL
 
 **Parameters:**
-- `kql_query` (string, required): KQL query string or advanced query DSL (JSON for Elasticsearch)
+- `kql_query` (string, required): KQL query string
 - `limit` (integer, optional): Maximum number of events to return (default: 500)
-- `hours_back` (integer, optional): Optional time window in hours to limit the search
+- `hours_back` (integer, optional): Optional time window in hours
 
-**Returns:**
-- `success` (boolean): Whether the operation succeeded
-- `query` (string): The query that was executed
-- `total_count` (integer): Total number of matching events
-- `returned_count` (integer): Number of events returned
-- `events` (array): List of security events, each containing:
-  - `id` (string): Event identifier
-  - `timestamp` (string): ISO timestamp of the event
-  - `source_type` (string): Event source type
-  - `message` (string): Event message/log entry
-  - `host` (string): Hostname where event occurred
-  - `username` (string): Username associated with event
-  - `ip` (string): IP address
-  - `process_name` (string): Process name
-  - `file_hash` (string): File hash if applicable
+**Returns:** normalized `events` with `id`, `timestamp`, `message`, `host`, `username`, `ip`, `process_name`, `file_hash`.
 
-**Usage Example 1: KQL-like Query**
+**Usage Example:**
 ```json
 {
   "name": "search_kql_query",
   "arguments": {
-    "kql_query": "host == \"server01\" and process contains \"powershell\" | where timestamp > ago(24h)",
-    "limit": 500,
+    "kql_query": "host.name: \"server-01\" and process.name: \"powershell.exe\"",
+    "limit": 100,
     "hours_back": 24
   }
 }
 ```
 
-**Usage Example 2: Elasticsearch Query DSL**
+---
+
+### `search_lucene_query`
+
+Search security indices with Lucene `query_string` syntax.
+
+**Parameters:**
+- `lucene_query` (string, required): Lucene query (e.g. `process.name:powershell AND host.name:workstation-*`)
+- `limit` (integer, optional): Max events (default: 500)
+- `hours_back` (integer, optional): Time window in hours
+- `index_pattern` (string, optional): Override index pattern
+
+**Usage Example:**
 ```json
 {
-  "name": "search_kql_query",
+  "name": "search_lucene_query",
   "arguments": {
-    "kql_query": "{\"query\": {\"bool\": {\"must\": [{\"match\": {\"process.name\": \"powershell\"}}, {\"range\": {\"@timestamp\": {\"gte\": \"now-24h\"}}}]}}, \"size\": 500}",
-    "limit": 500
+    "lucene_query": "process.name:powershell.exe AND event.action:start",
+    "hours_back": 24,
+    "limit": 50
   }
 }
 ```
 
-**Use Cases:**
-- Perform complex multi-field searches
-- Execute advanced aggregations and statistical analysis
-- Cross-index correlation searches
-- Time-based pattern analysis
-- Deep threat hunting investigations
-- Complex join operations across data sources
-- Advanced filtering with multiple conditions
-- Custom investigation queries beyond standard search capabilities
+---
 
-**Supported Query Formats:**
-- **KQL-like syntax**: Basic KQL patterns (field == value, field != value, field contains "value", time ranges with ago())
-- **Elasticsearch Query DSL**: Full JSON query DSL for Elasticsearch
-- **Vendor-specific**: Other SIEM query languages as supported by the backend
+### `search_eql_query`
 
-**Best Practices:**
-- Use `hours_back` parameter to limit time range for better performance
-- Start with smaller `limit` values for initial queries
-- For Elasticsearch, use Query DSL for maximum flexibility
-- Combine with other tools like `pivot_on_indicator` for comprehensive investigations
+Run an Elastic Event Query Language (EQL) hunt — best for process/network sequences.
+
+**Parameters:**
+- `eql_query` (string, required): EQL query
+- `limit` (integer, optional): Max events (default: 100)
+- `hours_back` (integer, optional): Time window in hours
+- `index_pattern` (string, optional): Override index pattern
+
+**Usage Example:**
+```json
+{
+  "name": "search_eql_query",
+  "arguments": {
+    "eql_query": "process where process.name == \"cmd.exe\" and process.parent.name == \"winword.exe\"",
+    "hours_back": 48,
+    "limit": 50
+  }
+}
+```
+
+---
+
+### `search_dsl_query`
+
+Run a raw Elasticsearch Query DSL JSON body against security indices.
+
+**Parameters:**
+- `dsl_query` (string, required): JSON Query DSL object as a string
+- `limit` (integer, optional): Max events (default: 500)
+- `hours_back` (integer, optional): Time window in hours
+- `index_pattern` (string, optional): Override index pattern
+
+**Usage Example:**
+```json
+{
+  "name": "search_dsl_query",
+  "arguments": {
+    "dsl_query": "{\"query\":{\"bool\":{\"must\":[{\"term\":{\"host.name\":\"server-01\"}}]}}}",
+    "hours_back": 24,
+    "limit": 50
+  }
+}
+```
+
+---
+
+### `search_esql_query`
+
+Run an Elastic ES|QL query (`FROM ... | WHERE ... | KEEP ...`).
+
+**Parameters:**
+- `esql_query` (string, required): ES|QL query text
+- `limit` (integer, optional): Appended as `LIMIT` when missing (default: 500)
+
+**Usage Example:**
+```json
+{
+  "name": "search_esql_query",
+  "arguments": {
+    "esql_query": "FROM logs-* | WHERE host.name == \"server-01\" | KEEP @timestamp, host.name, message | LIMIT 50"
+  }
+}
+```
 
 ---
 
 ### `get_security_alerts`
 
-Get security alerts directly from the SIEM platform. This tool retrieves active alerts that require investigation and triage.
+Get security alerts directly from the SIEM platform. Supports triage (open/uninvestigated) and historical review of acknowledged/closed alerts by rule.
 
 **Note:** This tool operates on SIEM alerts (not cases). For case management operations, use the case management tools (e.g., `list_cases`, `review_case`).
 
 **Parameters:**
 - `hours_back` (integer, optional): How many hours to look back for alerts (default: 24)
 - `max_alerts` (integer, optional): Maximum number of alerts to return (default: 10)
-- `status_filter` (string, optional): Query string to filter alerts by status (default: excludes closed alerts)
+- `status_filter` (string, optional): Workflow status — `open`, `acknowledged` (aliases: `akn`, `ack`), or `closed`. Default excludes closed alerts.
 - `severity` (string, optional): Filter by severity level (low, medium, high, critical)
+- `hostname` (string, optional): Filter by `host.name`
+- `rule_name` (string, optional): Filter by detection rule name
+- `rule_id` (string, optional): Filter by detection rule ID
+- `include_investigated` (boolean, optional): Include alerts that already have `signal.ai.verdict`. Defaults to `true` when `status_filter` is `acknowledged` or `closed`.
 
 **Returns:**
 - `success` (boolean): Whether the operation succeeded
 - `count` (integer): Number of alerts returned
 - `alerts` (array): List of security alerts, each containing:
   - `id` (string): Alert identifier
-  - `title` (string): Alert title/name
+  - `title` / `rule_name` (string): Alert title / detection rule name
+  - `rule_id` (string): Detection rule ID when available
   - `severity` (string): Severity level
-  - `status` (string): Alert status (open, in_progress, closed, etc.)
+  - `status` (string): Alert status (open, acknowledged, closed, etc.)
   - `created_at` (string): ISO timestamp of alert creation
   - `description` (string): Alert description
   - `source` (string): Source system that generated the alert
   - `related_entities` (array): Related IPs, domains, hashes, etc.
+  - `verdict` (string|null): AI/analyst verdict when present
 
 **Usage Example:**
 ```json
 {
   "name": "get_security_alerts",
   "arguments": {
-    "hours_back": 48,
-    "max_alerts": 20,
-    "severity": "high"
+    "hours_back": 168,
+    "max_alerts": 50,
+    "rule_name": "Suspicious PowerShell Encoded Command",
+    "status_filter": "acknowledged"
   }
 }
 ```
@@ -1263,6 +1324,7 @@ Get security alerts directly from the SIEM platform. This tool retrieves active 
 **Use Cases:**
 - Monitor active security alerts
 - Triage incoming threats
+- Review acknowledged or closed alerts for a specific rule
 - Prioritize investigation work
 - Review alert backlog
 - Generate alert summaries
@@ -1499,24 +1561,26 @@ Do not fetch more than two full rules per investigation step.
 
 ### `get_rule_detections`
 
-Retrieve historical detections generated by a specific security detection rule. This helps understand rule effectiveness and review past alerts.
+Retrieve historical detections generated by a specific security detection rule (by ID and/or name). Includes acknowledged and closed alerts so you can review past firings.
 
 **Parameters:**
-- `rule_id` (string, required): Unique ID of the rule to list detections for
-- `alert_state` (string, optional): Filter by alert state (open, closed, etc.)
+- `rule_id` (string, optional): Unique ID of the rule (required if `rule_name` omitted)
+- `rule_name` (string, optional): Detection rule name (required if `rule_id` omitted)
+- `alert_state` (string, optional): Filter by workflow status — `open`, `acknowledged` (`akn`/`ack`), or `closed`
 - `hours_back` (integer, optional): How many hours back to look (default: 24)
 - `limit` (integer, optional): Maximum number of detections to return (default: 50)
 
 **Returns:**
 - `success` (boolean): Whether the operation succeeded
-- `rule_id` (string): The rule ID queried
+- `rule_id` / `rule_name` (string): The rule identifiers queried
 - `count` (integer): Number of detections returned
 - `detections` (array): List of detections, each containing:
-  - `id` (string): Detection identifier
-  - `alert_id` (string): Associated alert ID
+  - `id` / `alert_id` (string): Detection / alert identifier
   - `timestamp` (string): ISO timestamp of detection
   - `severity` (string): Severity level
   - `status` (string): Detection status
+  - `rule_name` / `rule_id` (string): Rule metadata when available
+  - `verdict` (string|null): AI/analyst verdict when present
   - `description` (string): Detection description
 
 **Usage Example:**
@@ -1524,7 +1588,8 @@ Retrieve historical detections generated by a specific security detection rule. 
 {
   "name": "get_rule_detections",
   "arguments": {
-    "rule_id": "rule-abc123",
+    "rule_name": "Suspicious PowerShell Encoded Command",
+    "alert_state": "closed",
     "hours_back": 168,
     "limit": 100
   }
@@ -1538,6 +1603,7 @@ Retrieve historical detections generated by a specific security detection rule. 
 - Identify false positives
 - Measure rule effectiveness
 - Audit rule behavior
+- Pull acknowledged/closed alerts for a named rule
 
 ---
 

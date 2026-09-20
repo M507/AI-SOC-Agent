@@ -3,6 +3,7 @@
 class ModalManager {
     constructor(controller) {
         this.controller = controller;
+        this._sessionAlertLoadToken = 0;
         this.bindFormHelpers();
     }
 
@@ -19,6 +20,12 @@ class ModalManager {
         const intervalInput = document.getElementById('autorun-interval');
         if (intervalInput) {
             intervalInput.addEventListener('input', () => this.updateIntervalPreview());
+        }
+        const clusterSelect = document.getElementById('session-cluster-select');
+        if (clusterSelect) {
+            clusterSelect.addEventListener('change', () => {
+                this.loadSessionAlertOptions();
+            });
         }
     }
 
@@ -45,6 +52,8 @@ class ModalManager {
         if (this.controller.elasticClusters) {
             this.controller.elasticClusters.fillSelect(document.getElementById('session-cluster-select'));
         }
+        this.resetSessionAlertSelect('Loading recent alerts…');
+        this.loadSessionAlertOptions();
     }
 
     /**
@@ -54,6 +63,123 @@ class ModalManager {
         const modal = document.getElementById('new-session-modal');
         if (modal) {
             modal.style.display = 'none';
+        }
+        this.resetSessionAlertSelect();
+    }
+
+    resetSessionAlertSelect(loadingLabel) {
+        const select = document.getElementById('session-alert-select');
+        if (!select) return;
+        select.innerHTML = '';
+        const none = document.createElement('option');
+        none.value = '';
+        none.textContent = 'None';
+        select.appendChild(none);
+        select.value = '';
+        if (loadingLabel) {
+            const loading = document.createElement('option');
+            loading.value = '';
+            loading.disabled = true;
+            loading.textContent = loadingLabel;
+            select.appendChild(loading);
+            select.disabled = true;
+        } else {
+            select.disabled = false;
+        }
+    }
+
+    formatAlertOptionLabel(alert) {
+        const severity = (alert.severity || 'unknown').toUpperCase();
+        const title = (alert.title || 'Untitled alert').trim();
+        const shortId = String(alert.id || '').slice(0, 8);
+        const truncated = title.length > 64 ? `${title.slice(0, 61)}…` : title;
+        return `${severity} · ${truncated} · ${shortId}`;
+    }
+
+    async loadSessionAlertOptions() {
+        const select = document.getElementById('session-alert-select');
+        if (!select) return;
+
+        const token = ++this._sessionAlertLoadToken;
+        const clusterId = this.controller.elasticClusters
+            ? this.controller.elasticClusters.selectedClusterId('session-cluster-select')
+            : null;
+
+        this.resetSessionAlertSelect('Loading recent alerts…');
+
+        if (!clusterId) {
+            if (token !== this._sessionAlertLoadToken) return;
+            this.resetSessionAlertSelect();
+            const empty = document.createElement('option');
+            empty.value = '';
+            empty.disabled = true;
+            empty.textContent = 'No Elastic cluster selected';
+            select.appendChild(empty);
+            select.disabled = true;
+            return;
+        }
+
+        const data = await this.controller.api.getRecentAlerts(clusterId, 10, 24);
+        if (token !== this._sessionAlertLoadToken) return;
+
+        this.resetSessionAlertSelect();
+
+        if (!data.success) {
+            const err = document.createElement('option');
+            err.value = '';
+            err.disabled = true;
+            err.textContent = data.error ? `Could not load alerts: ${data.error}` : 'Could not load alerts';
+            select.appendChild(err);
+            select.disabled = false;
+            return;
+        }
+
+        const alerts = Array.isArray(data.alerts) ? data.alerts : [];
+        if (!alerts.length) {
+            const empty = document.createElement('option');
+            empty.value = '';
+            empty.disabled = true;
+            empty.textContent = 'No recent alerts found';
+            select.appendChild(empty);
+            select.disabled = false;
+            return;
+        }
+
+        alerts.forEach((alert) => {
+            if (!alert || !alert.id) return;
+            const option = document.createElement('option');
+            option.value = alert.id;
+            option.textContent = this.formatAlertOptionLabel(alert);
+            option.title = `${alert.title || ''} (${alert.id})`;
+            select.appendChild(option);
+        });
+        select.disabled = false;
+        select.value = '';
+    }
+
+    /**
+     * Paste an alert UUID into the session prompt without sending.
+     */
+    seedCommandInputWithAlert(alertId) {
+        const id = String(alertId || '').trim();
+        if (!id) return;
+        const commandInput = document.getElementById('command-input');
+        if (!commandInput) return;
+
+        const current = commandInput.value || '';
+        if (current.includes(id)) {
+            commandInput.focus();
+            return;
+        }
+
+        const separator = current && !/\s$/.test(current) ? ' ' : '';
+        commandInput.value = current ? `${current}${separator}${id}` : id;
+        commandInput.focus();
+        try {
+            const end = commandInput.value.length;
+            commandInput.setSelectionRange(end, end);
+        } catch (_unused) {
+            // Some browsers reject setSelectionRange on certain input types.
         }
     }
 
@@ -111,6 +237,9 @@ class ModalManager {
             }
             return;
         }
+
+        const alertSelect = document.getElementById('session-alert-select');
+        const selectedAlertId = alertSelect && alertSelect.value ? alertSelect.value.trim() : '';
         
         const clusterId = this.controller.elasticClusters
             ? this.controller.elasticClusters.selectedClusterId('session-cluster-select')
@@ -122,6 +251,9 @@ class ModalManager {
             await this.controller.loadSessions();
             if (data.session && data.session.id) {
                 await this.controller.sessionManager.switchToSession(data.session.id);
+                if (selectedAlertId) {
+                    this.seedCommandInputWithAlert(selectedAlertId);
+                }
             }
         } else if (window.toast) {
             window.toast.error(data.error || 'Could not create session', { key: 'session' });

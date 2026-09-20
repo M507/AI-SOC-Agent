@@ -64,10 +64,14 @@ SOLUTION_SHORT: Dict[str, str] = {
     "RU": "Rules",
 }
 
-_ACRONYMS = {"ip", "ioc", "dns", "kql", "kb", "ti", "edr", "ai"}
+_ACRONYMS = {"ip", "ioc", "dns", "kql", "eql", "dsl", "esql", "kb", "ti", "edr", "ai"}
 _LABEL_OVERRIDES = {
     "lookup_hash_ti": "Look up hash in threat intel",
     "search_kql_query": "Run a KQL search",
+    "search_lucene_query": "Run a Lucene search",
+    "search_eql_query": "Run an EQL search",
+    "search_dsl_query": "Run an Elasticsearch DSL search",
+    "search_esql_query": "Run an ES|QL search",
     "get_ioc_matches": "Get IOC matches",
     "kb_list_clients": "List knowledge-base clients",
     "kb_get_client_infra": "Get client infrastructure",
@@ -139,6 +143,10 @@ SIEM_SKILLS: Tuple[str, ...] = (
     "search_user_activity",
     "pivot_on_indicator",
     "search_kql_query",
+    "search_lucene_query",
+    "search_eql_query",
+    "search_dsl_query",
+    "search_esql_query",
     "get_recent_alerts",
     "get_network_events",
     "get_dns_events",
@@ -188,7 +196,7 @@ SKILL_GROUPS: Tuple[Dict[str, object], ...] = (
         "id": "SIEM",
         "name": "Elastic / ELK skills",
         "solutions": ("SIEM",),
-        "help": "Search, alerts, detections, Elastic Defend isolation, and Home Lab rule suggestions against the Elastic cluster bound to this tab.",
+        "help": "Search, alerts, detections, Elastic Defend isolation, and Home Lab rule suggestions against the Elastic cluster bound to this tab. Alert skills support rule name/id and status filters (open/acknowledged/closed).",
         "skills": SIEM_SKILLS,
     },
     {

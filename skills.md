@@ -70,6 +70,10 @@ Case management tools when this cluster may talk to TheHive. IRIS uses the same 
 
 Search, alerts, detections, Elastic Defend isolation, and Home Lab rule suggestions against the Elastic cluster bound to this tab.
 
+`get_security_alerts` / `get_rule_detections` support filtering by rule name/id and workflow status (`open`, `acknowledged`/`akn`, `closed`), including historical ack/closed review.
+
+Query languages: `search_kql_query` (KQL), `search_lucene_query` (Lucene), `search_eql_query` (EQL), `search_dsl_query` (Query DSL JSON), `search_esql_query` (ES|QL).
+
 **Solution metric:** `SIEM`
 
 | Skill | Label |
@@ -82,6 +86,10 @@ Search, alerts, detections, Elastic Defend isolation, and Home Lab rule suggesti
 | `search_user_activity` | Search User Activity |
 | `pivot_on_indicator` | Pivot On Indicator |
 | `search_kql_query` | Run a KQL search |
+| `search_lucene_query` | Run a Lucene search |
+| `search_eql_query` | Run an EQL search |
+| `search_dsl_query` | Run an Elasticsearch DSL search |
+| `search_esql_query` | Run an ES|QL search |
 | `get_recent_alerts` | Get Recent Alerts |
 | `get_network_events` | Get Network Events |
 | `get_dns_events` | Get DNS Events |
@@ -224,7 +232,7 @@ Not gated by a solution metric in the skill vector.
 
 ---
 
-**Unique MSV skills:** 80  
-**Listed above (IRIS+TH share case tools):** 103 rows  
-**Including core:** 81
+**Unique MSV skills:** 84  
+**Listed above (IRIS+TH share case tools):** 107 rows  
+**Including core:** 85
 

@@ -172,3 +172,61 @@ def test_test_cluster_keeps_saved_verify_ssl(tmp_path, monkeypatch):
     assert response.status_code == 200, response.text
     assert probed["verify_ssl"] is False
     assert response.json()["ok"] is True
+
+
+def test_recent_alerts_returns_picker_payload(tmp_path, monkeypatch):
+    client, _config_path = _authed_client(tmp_path, monkeypatch)
+    created = client.post(
+        "/api/elastic/clusters",
+        json={
+            "name": "Lab",
+            "base_url": "https://elastic.example:9200",
+            "api_key": "encoded-test-api-key",
+            "verify_ssl": False,
+        },
+    )
+    assert created.status_code == 200, created.text
+    cluster_id = created.json()["clusters"][0]["id"]
+
+    class FakeClient:
+        def get_security_alerts(self, **kwargs):
+            assert kwargs["max_alerts"] == 10
+            assert kwargs["hours_back"] == 24
+            assert kwargs["include_investigated"] is True
+            return [
+                {
+                    "id": "abc-123-uuid",
+                    "title": "Suspicious login",
+                    "severity": "high",
+                    "status": "open",
+                    "created_at": "2026-09-21T00:00:00.000Z",
+                },
+                {
+                    "id": "",
+                    "title": "Missing id should be skipped",
+                    "severity": "low",
+                },
+            ]
+
+    monkeypatch.setattr(
+        "src.ai_controller.web.routes_elastic.client_for_id",
+        lambda _cluster_id=None: FakeClient(),
+    )
+
+    response = client.get(f"/api/elastic/recent-alerts?cluster_id={cluster_id}&limit=10")
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["success"] is True
+    assert len(body["alerts"]) == 1
+    assert body["alerts"][0]["id"] == "abc-123-uuid"
+    assert body["alerts"][0]["title"] == "Suspicious login"
+    assert body["alerts"][0]["severity"] == "high"
+
+
+def test_recent_alerts_without_cluster_is_empty(tmp_path, monkeypatch):
+    client, _config_path = _authed_client(tmp_path, monkeypatch)
+    response = client.get("/api/elastic/recent-alerts")
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["success"] is True
+    assert body["alerts"] == []

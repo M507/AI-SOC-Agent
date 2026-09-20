@@ -22,6 +22,10 @@ AUTH = {"Authorization": f"Bearer {TOKEN}"}
 class FakeSIEM:
     """Minimal SIEM client for MCP tool execution tests."""
 
+    def __init__(self):
+        self.last_security_alerts_kwargs = None
+        self.last_rule_detections_kwargs = None
+
     def search_security_events(self, query: str, limit: int = 100) -> QueryResult:
         return QueryResult(
             query=query,
@@ -37,14 +41,28 @@ class FakeSIEM:
             ],
         )
 
-    def get_security_alerts(self, **_kwargs):
+    def get_security_alerts(self, **kwargs):
+        self.last_security_alerts_kwargs = kwargs
         return [
             {
                 "id": "alert-1",
                 "title": "Suspicious login",
+                "rule_name": kwargs.get("rule_name") or "Suspicious login",
                 "severity": "high",
-                "status": "open",
+                "status": kwargs.get("status_filter") or "open",
                 "@timestamp": "2026-08-17T00:00:00Z",
+            }
+        ]
+
+    def get_rule_detections(self, **kwargs):
+        self.last_rule_detections_kwargs = kwargs
+        return [
+            {
+                "id": "det-1",
+                "alert_id": "det-1",
+                "status": kwargs.get("alert_state") or "closed",
+                "rule_name": kwargs.get("rule_name") or "Rule X",
+                "timestamp": "2026-08-17T00:00:00Z",
             }
         ]
 
@@ -223,6 +241,76 @@ def test_mcp_rejects_disabled_elk_skill(monkeypatch):
     error = response.json().get("error") or {}
     assert error.get("code") == -32601
     assert "disabled" in error.get("message", "").lower()
+
+
+def test_mcp_get_security_alerts_passes_rule_and_status_filters(monkeypatch):
+    monkeypatch.setattr(
+        "src.core.elastic_clusters.skill_vector_for_cluster",
+        lambda cluster_id=None: "MSV:1/SIEM:Y",
+    )
+    fake = FakeSIEM()
+    client = _mcp_client(siem=fake)
+    response = client.post(
+        "/rpc",
+        headers=AUTH,
+        json={
+            "jsonrpc": "2.0",
+            "id": 11,
+            "method": "tools/call",
+            "params": {
+                "name": "get_security_alerts",
+                "arguments": {
+                    "hours_back": 72,
+                    "max_alerts": 5,
+                    "rule_name": "Suspicious PowerShell",
+                    "status_filter": "akn",
+                    "include_investigated": True,
+                },
+            },
+        },
+    )
+    assert response.status_code == 200, response.text
+    assert "error" not in response.json()
+    assert fake.last_security_alerts_kwargs is not None
+    assert fake.last_security_alerts_kwargs["rule_name"] == "Suspicious PowerShell"
+    assert fake.last_security_alerts_kwargs["status_filter"] == "akn"
+    assert fake.last_security_alerts_kwargs["include_investigated"] is True
+    text = response.json()["result"]["content"][0]["text"]
+    assert "Suspicious PowerShell" in text or "acknowledged" in text or "alert-1" in text
+
+
+def test_mcp_get_rule_detections_by_rule_name(monkeypatch):
+    monkeypatch.setattr(
+        "src.core.elastic_clusters.skill_vector_for_cluster",
+        lambda cluster_id=None: "MSV:1/SIEM:Y",
+    )
+    fake = FakeSIEM()
+    client = _mcp_client(siem=fake)
+    response = client.post(
+        "/rpc",
+        headers=AUTH,
+        json={
+            "jsonrpc": "2.0",
+            "id": 12,
+            "method": "tools/call",
+            "params": {
+                "name": "get_rule_detections",
+                "arguments": {
+                    "rule_name": "Lateral Movement",
+                    "alert_state": "closed",
+                    "hours_back": 168,
+                },
+            },
+        },
+    )
+    assert response.status_code == 200, response.text
+    assert "error" not in response.json()
+    assert fake.last_rule_detections_kwargs is not None
+    assert fake.last_rule_detections_kwargs["rule_name"] == "Lateral Movement"
+    assert fake.last_rule_detections_kwargs["alert_state"] == "closed"
+    assert fake.last_rule_detections_kwargs.get("rule_id") in (None, "")
+    text = response.json()["result"]["content"][0]["text"]
+    assert "Lateral Movement" in text or "det-1" in text
 
 
 def _live_es_client():

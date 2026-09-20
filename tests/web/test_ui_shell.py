@@ -18,6 +18,8 @@ def test_index_uses_toast_region_instead_of_inline_llm_status():
     assert "/static/css/toast.css" in html
     assert "empty-new-session-btn" in html
     assert "empty-new-autorun-btn" in html
+    assert 'id="session-alert-select"' in html
+    assert "None" in html.split('id="session-alert-select"', 1)[1].split("</select>", 1)[0]
 
 
 def test_toast_assets_exist_and_default_to_four_seconds():
@@ -49,6 +51,16 @@ def test_requests_view_is_in_the_shell():
     assert "requests.css" in html
     assert "setActiveSection('requests')" in app_js
     assert "RequestsManager" in app_js
+
+
+def test_new_session_modal_seeds_selected_alert_uuid_into_prompt():
+    modals = (WEB / "static" / "modals.js").read_text(encoding="utf-8")
+    api = (WEB / "static" / "api.js").read_text(encoding="utf-8")
+    assert "session-alert-select" in modals
+    assert "loadSessionAlertOptions" in modals
+    assert "seedCommandInputWithAlert" in modals
+    assert "getRecentAlerts" in api
+    assert "/api/elastic/recent-alerts" in api
 
 
 def test_mcp_readiness_banner_is_actionable_and_accessible():

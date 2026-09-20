@@ -1250,7 +1250,11 @@ class SamiGPTMCPServer:
         - get_ip_address_report: Get IP reputation, geolocation, and related alerts
         - search_user_activity: Search security events related to a specific user
         - pivot_on_indicator: Search for all events related to an IOC (hash, IP, domain, etc.)
-        - search_kql_query: Execute KQL or advanced queries for deeper investigations
+        - search_kql_query: Execute Kibana Query Language (KQL) searches
+        - search_lucene_query: Execute Lucene query_string searches
+        - search_eql_query: Execute Elastic Event Query Language (EQL) hunts
+        - search_dsl_query: Execute Elasticsearch Query DSL (JSON)
+        - search_esql_query: Execute ES|QL queries
         
         See TOOLS.md for detailed documentation and usage examples.
         """
@@ -1375,13 +1379,17 @@ class SamiGPTMCPServer:
 
         self.tools["search_kql_query"] = {
             "name": "search_kql_query",
-            "description": "Execute a KQL (Kusto Query Language) or advanced query for deeper investigations. Supports complex queries including advanced filtering, aggregations, time-based analysis, cross-index searches, and complex joins. Supports both KQL syntax and vendor-specific query DSL (e.g., Elasticsearch Query DSL).",
+            "description": (
+                "Execute a Kibana Query Language (KQL) search. "
+                "For Lucene, EQL, Query DSL, or ES|QL use search_lucene_query, "
+                "search_eql_query, search_dsl_query, or search_esql_query."
+            ),
             "inputSchema": {
                 "type": "object",
                 "properties": {
                     "kql_query": {
                         "type": "string",
-                        "description": "KQL query string or advanced query DSL (JSON for Elasticsearch)",
+                        "description": "KQL query string",
                     },
                     "limit": {
                         "type": "integer",
@@ -1397,10 +1405,123 @@ class SamiGPTMCPServer:
             },
         }
 
+        self.tools["search_lucene_query"] = {
+            "name": "search_lucene_query",
+            "description": (
+                "Search security indices with Lucene query_string syntax "
+                "(e.g. process.name:powershell AND host.name:workstation-*)."
+            ),
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "lucene_query": {
+                        "type": "string",
+                        "description": "Lucene query string",
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Maximum number of events to return",
+                        "default": 500,
+                    },
+                    "hours_back": {
+                        "type": "integer",
+                        "description": "Optional time window in hours",
+                    },
+                    "index_pattern": {
+                        "type": "string",
+                        "description": "Optional Elasticsearch index pattern override",
+                    },
+                },
+                "required": ["lucene_query"],
+            },
+        }
+
+        self.tools["search_eql_query"] = {
+            "name": "search_eql_query",
+            "description": (
+                "Run an Elastic Event Query Language (EQL) hunt for process/network "
+                "sequences (e.g. process where process.name == \"cmd.exe\")."
+            ),
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "eql_query": {
+                        "type": "string",
+                        "description": "EQL query",
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Maximum number of events to return",
+                        "default": 100,
+                    },
+                    "hours_back": {
+                        "type": "integer",
+                        "description": "Optional time window in hours",
+                    },
+                    "index_pattern": {
+                        "type": "string",
+                        "description": "Optional Elasticsearch index pattern override",
+                    },
+                },
+                "required": ["eql_query"],
+            },
+        }
+
+        self.tools["search_dsl_query"] = {
+            "name": "search_dsl_query",
+            "description": "Run a JSON Elasticsearch Query DSL body against security indices.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "dsl_query": {
+                        "type": "string",
+                        "description": "JSON Elasticsearch Query DSL object as a string",
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Maximum number of events to return",
+                        "default": 500,
+                    },
+                    "hours_back": {
+                        "type": "integer",
+                        "description": "Optional time window in hours",
+                    },
+                    "index_pattern": {
+                        "type": "string",
+                        "description": "Optional Elasticsearch index pattern override",
+                    },
+                },
+                "required": ["dsl_query"],
+            },
+        }
+
+        self.tools["search_esql_query"] = {
+            "name": "search_esql_query",
+            "description": (
+                "Run an Elastic ES|QL query (FROM ... | WHERE ... | KEEP ...). "
+                "Include LIMIT in the query or rely on the limit parameter."
+            ),
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "esql_query": {
+                        "type": "string",
+                        "description": "ES|QL query text",
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Appended as LIMIT when missing from the query",
+                        "default": 500,
+                    },
+                },
+                "required": ["esql_query"],
+            },
+        }
+
         # Alert summarization / grouping tool
         self.tools["get_recent_alerts"] = {
             "name": "get_recent_alerts",
-            "description": "Get recent SIEM alerts (last N hours) and smart-group similar alerts together for AI triage.",
+            "description": "Get recent SIEM alerts (last N hours) and smart-group similar alerts together for AI triage. Excludes already-investigated (verdicted) alerts. Filter by rule name/id, status, severity, or hostname.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -1416,7 +1537,7 @@ class SamiGPTMCPServer:
                     },
                     "status_filter": {
                         "type": "string",
-                        "description": "Filter by alert status (implementation-specific string filter)",
+                        "description": "Filter by workflow status: open, acknowledged (akn/ack), or closed. Default excludes closed.",
                     },
                     "severity": {
                         "type": "string",
@@ -1425,6 +1546,14 @@ class SamiGPTMCPServer:
                     "hostname": {
                         "type": "string",
                         "description": "Filter alerts by hostname (matches host.name field)",
+                    },
+                    "rule_name": {
+                        "type": "string",
+                        "description": "Filter alerts by detection rule name",
+                    },
+                    "rule_id": {
+                        "type": "string",
+                        "description": "Filter alerts by detection rule ID",
                     },
                 },
             },
@@ -1642,7 +1771,13 @@ class SamiGPTMCPServer:
         # Alert Management Tools
         self.tools["get_security_alerts"] = {
             "name": "get_security_alerts",
-            "description": "Get security alerts directly from the SIEM platform.",
+            "description": (
+                "Get security alerts from the SIEM. Filter by workflow status "
+                "(open, acknowledged/akn, closed), rule name/id, severity, or hostname. "
+                "Default excludes closed and already-investigated alerts. Use "
+                "status_filter=acknowledged|closed (or include_investigated=true) to "
+                "review historical ack/closed alerts by rule."
+            ),
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -1658,11 +1793,30 @@ class SamiGPTMCPServer:
                     },
                     "status_filter": {
                         "type": "string",
-                        "description": "Filter by status",
+                        "description": "Workflow status: open, acknowledged (akn/ack), or closed. Default excludes closed.",
                     },
                     "severity": {
                         "type": "string",
                         "description": "Filter by severity (low, medium, high, critical)",
+                    },
+                    "hostname": {
+                        "type": "string",
+                        "description": "Filter by host.name",
+                    },
+                    "rule_name": {
+                        "type": "string",
+                        "description": "Filter by detection rule name",
+                    },
+                    "rule_id": {
+                        "type": "string",
+                        "description": "Filter by detection rule ID",
+                    },
+                    "include_investigated": {
+                        "type": "boolean",
+                        "description": (
+                            "Include alerts that already have signal.ai.verdict. "
+                            "Defaults to true when status_filter is acknowledged or closed."
+                        ),
                     },
                 },
             },
@@ -2018,17 +2172,25 @@ class SamiGPTMCPServer:
 
         self.tools["get_rule_detections"] = {
             "name": "get_rule_detections",
-            "description": "Retrieve historical detections generated by a specific security detection rule.",
+            "description": (
+                "Retrieve historical detections for a security detection rule "
+                "(including acknowledged and closed). Identify the rule with "
+                "rule_id and/or rule_name."
+            ),
             "inputSchema": {
                 "type": "object",
                 "properties": {
                     "rule_id": {
                         "type": "string",
-                        "description": "Unique ID of the rule",
+                        "description": "Unique ID of the rule (required if rule_name omitted)",
+                    },
+                    "rule_name": {
+                        "type": "string",
+                        "description": "Detection rule name (required if rule_id omitted)",
                     },
                     "alert_state": {
                         "type": "string",
-                        "description": "Filter by alert state",
+                        "description": "Filter by workflow status: open, acknowledged (akn/ack), or closed",
                     },
                     "hours_back": {
                         "type": "integer",
@@ -2041,7 +2203,6 @@ class SamiGPTMCPServer:
                         "default": 50,
                     },
                 },
-                "required": ["rule_id"],
             },
         }
 
@@ -3634,6 +3795,44 @@ To be populated during investigation.
             )
             self._mcp_logger.debug(f"Tool {tool_name} completed successfully")
             return result
+        elif tool_name == "search_lucene_query" and self.siem_client:
+            result = tools_siem.search_lucene_query(
+                lucene_query=args["lucene_query"],
+                limit=args.get("limit", 500),
+                hours_back=args.get("hours_back"),
+                index_pattern=args.get("index_pattern"),
+                client=self.siem_client,
+            )
+            self._mcp_logger.debug(f"Tool {tool_name} completed successfully")
+            return result
+        elif tool_name == "search_eql_query" and self.siem_client:
+            result = tools_siem.search_eql_query(
+                eql_query=args["eql_query"],
+                limit=args.get("limit", 100),
+                hours_back=args.get("hours_back"),
+                index_pattern=args.get("index_pattern"),
+                client=self.siem_client,
+            )
+            self._mcp_logger.debug(f"Tool {tool_name} completed successfully")
+            return result
+        elif tool_name == "search_dsl_query" and self.siem_client:
+            result = tools_siem.search_dsl_query(
+                dsl_query=args["dsl_query"],
+                limit=args.get("limit", 500),
+                hours_back=args.get("hours_back"),
+                index_pattern=args.get("index_pattern"),
+                client=self.siem_client,
+            )
+            self._mcp_logger.debug(f"Tool {tool_name} completed successfully")
+            return result
+        elif tool_name == "search_esql_query" and self.siem_client:
+            result = tools_siem.search_esql_query(
+                esql_query=args["esql_query"],
+                limit=args.get("limit", 500),
+                client=self.siem_client,
+            )
+            self._mcp_logger.debug(f"Tool {tool_name} completed successfully")
+            return result
         elif tool_name == "get_recent_alerts" and self.siem_client:
             result = tools_siem.get_recent_alerts(
                 hours_back=args.get("hours_back", 1),
@@ -3641,6 +3840,8 @@ To be populated during investigation.
                 status_filter=args.get("status_filter"),
                 severity=args.get("severity"),
                 hostname=args.get("hostname"),
+                rule_name=args.get("rule_name"),
+                rule_id=args.get("rule_id"),
                 client=self.siem_client,
             )
             self._mcp_logger.debug(
@@ -3653,6 +3854,10 @@ To be populated during investigation.
                 max_alerts=args.get("max_alerts", 10),
                 status_filter=args.get("status_filter"),
                 severity=args.get("severity"),
+                hostname=args.get("hostname"),
+                rule_name=args.get("rule_name"),
+                rule_id=args.get("rule_id"),
+                include_investigated=args.get("include_investigated"),
                 client=self.siem_client,
             )
             self._mcp_logger.debug(f"Tool {tool_name} completed successfully")
@@ -3769,7 +3974,8 @@ To be populated during investigation.
             return result
         elif tool_name == "get_rule_detections" and self.siem_client:
             result = tools_siem.get_rule_detections(
-                rule_id=args["rule_id"],
+                rule_id=args.get("rule_id"),
+                rule_name=args.get("rule_name"),
                 alert_state=args.get("alert_state"),
                 hours_back=args.get("hours_back", 24),
                 limit=args.get("limit", 50),

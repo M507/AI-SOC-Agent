@@ -3,12 +3,13 @@
     "soc1_triage_agent": {
       "name": "SOC1 Triage Agent",
       "tier": "soc1",
-      "description": "Handles initial alert triage and false positive identification",
+      "description": "Handles initial alert triage and false positive identification (alert-only; no case creation)",
       "capabilities": [
         "initial_triage",
         "basic_enrichment",
         "false_positive_identification",
-        "netbox_infra_lookup"
+        "netbox_infra_lookup",
+        "same_type_alert_history"
       ],
       "runbooks": [
         "soc1/triage/initial_alert_triage",
@@ -20,21 +21,14 @@
         "soc1/cases/malware_initial_triage"
       ],
       "tools": [
-        "create_case",
-        "review_case",
-        "list_cases",
-        "search_cases",
-        "update_case",
-        "add_case_comment",
-        "attach_observable_to_case",
-        "update_case_status",
-        "assign_case",
-        "get_case_timeline",
-        "add_case_task",
-        "list_case_tasks",
+        "get_recent_alerts",
         "get_security_alerts",
         "get_security_alert_by_id",
         "get_siem_event_by_id",
+        "get_rule_detections",
+        "update_alert_verdict",
+        "add_alert_note",
+        "close_alert",
         "lookup_entity",
         "get_ioc_matches",
         "get_file_report",
@@ -50,6 +44,7 @@
         "netbox_lookup_host",
         "netbox_lookup_prefix",
         "netbox_search",
+        "create_approval_request",
         "create_fine_tuning_recommendation",
         "create_visibility_recommendation",
         "list_fine_tuning_recommendations",

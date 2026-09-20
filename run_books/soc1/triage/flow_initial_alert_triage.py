@@ -70,7 +70,7 @@ def create_parallel_flow(steps, decisions, output_path):
         '    STEP1 [label="Step 1\\nGet Recent Alerts\\n[SIEM] get_recent_alerts", shape=box, style=rounded, fillcolor=lightblue];',
         '    STEP2 [label="Step 2\\nRetrieve Alert Details\\n[SIEM] get_security_alert_by_id\\nCRITICAL: Examine events field\\n(actual triggering events)", shape=box, style=rounded, fillcolor=lightblue];',
         '    STEP3 [label="Step 3\\nSet Verdict in-progress\\n[SIEM] update_alert_verdict", shape=box, style=rounded, fillcolor=lightblue];',
-        '    QUICK_ASSESS [label="Step 4\\nQuick Assessment\\n[KB] kb_list_clients\\n[KB] kb_get_client_infra\\n[SIEM] get_ioc_matches", shape=diamond, style=filled, fillcolor=lightyellow];',
+        '    QUICK_ASSESS [label="Step 4\\nQuick Assessment\\n[NB] netbox_lookup_host/ip\\n[NB] role/tags/description\\n[SIEM] get_ioc_matches", shape=diamond, style=filled, fillcolor=lightyellow];',
         '',
         '    // Direct closure path with tools',
         '    STEP4_CLOSE [label="Step 4.3\\nDirect Closure Actions\\n[SIEM] add_alert_note\\n[SIEM] update_alert_verdict", shape=box, style=rounded, fillcolor=lightcyan];',
@@ -88,7 +88,7 @@ def create_parallel_flow(steps, decisions, output_path):
         '        fillcolor=lightcyan;',
         '        fontsize=11;',
         '',
-        '        KB_CHECK [label="Step 8.1\\nKB Verification\\nExtract entities from\\nevents field (Step 2)\\n[KB] kb_list_clients\\n[KB] kb_get_client_infra", shape=box, style=rounded, fillcolor=white];',
+        '        NB_CHECK [label="Step 8.1\\nNetBox Role/Infra\\nExtract entities from\\nevents field (Step 2)\\n[NB] netbox_lookup_*\\nRead role/tags/description", shape=box, style=rounded, fillcolor=white];',
         '        IOC_CHECK [label="Step 8.2\\nIOC Check\\n[SIEM] get_ioc_matches", shape=box, style=rounded, fillcolor=white];',
         '        SIEM_SEARCH [label="Step 8.3\\nSIEM Search\\nCRITICAL: Use events from\\nStep 2 first\\n[SIEM] get_siem_event_by_id\\n[SIEM] search_security_events\\n[SIEM] get_network_events\\n[SIEM] get_dns_events\\n[SIEM] get_email_events\\n[SIEM] get_alerts_by_entity\\n[SIEM] get_alerts_by_time_window\\n[SIEM] lookup_entity", shape=box, style=rounded, fillcolor=white];',
         '        ENRICHMENT [label="Step 8.4\\nEntity Enrichment\\n[CTI] lookup_hash_ti\\n[SIEM] get_file_report\\n[SIEM] get_ip_address_report\\n[SIEM] lookup_entity\\n[SIEM] get_ioc_matches", shape=box, style=rounded, fillcolor=white];',
@@ -116,7 +116,7 @@ def create_parallel_flow(steps, decisions, output_path):
         '    // Final action branches with tools',
         '    STEP11_FP [label="Step 11.2\\nIf FP/BTP\\n[SIEM] add_alert_note\\n[CM] add_case_comment (if case)\\n[CM] update_case_status (if case)\\n[SIEM] update_alert_verdict\\n[ENG] list_fine_tuning_recommendations\\n[ENG] create_fine_tuning_recommendation\\n[ENG] add_comment_to_fine_tuning_recommendation", shape=box, style=rounded, fillcolor=lightgreen];',
         '',
-        '    STEP11_TP [label="Step 11.3\\nIf Confirmed TP\\nPrefer Existing Case When Related\\n[CM] create_case (if new)\\n[SIEM] add_alert_note\\n[CM] add_case_comment\\n[CM] attach_observable_to_case\\n[CM] update_case_status\\n[SIEM] update_alert_verdict\\n[CM] add_case_task", shape=box, style=rounded, fillcolor=lightcoral];',
+        '    STEP11_TP [label="Step 11.3\nIf Confirmed TP / Uncertain\nNo case creation\n[SIEM] add_alert_note\n[SIEM] update_alert_verdict\nCite NetBox + same-type history", shape=box, style=rounded, fillcolor=lightcoral];'
         '',
         '    STEP11_TP_UNCERTAIN [label="Step 11.3.0\\nUpdate Related\\nUncertain Alerts\\n(If Any)\\n[SIEM] update_alert_verdict\\n(uncertain -> TP)\\n[SIEM] add_alert_note\\n(Link to case)", shape=diamond, style=filled, fillcolor=lightyellow];',
         '',
@@ -137,7 +137,7 @@ def create_parallel_flow(steps, decisions, output_path):
         '    QUICK_ASSESS -> CASE_STRATEGY [label="Needs\\nInvestigation"];',
         '    CASE_STRATEGY -> STEP5_DUP [label="Exact\\nDuplicate", style=dashed, color=orange, penwidth=2];',
         '    STEP5_DUP -> END_DUP;',
-        '    CASE_STRATEGY -> KB_CHECK [label="Investigate", style=bold];',
+        '    CASE_STRATEGY -> NB_CHECK [label="Investigate", style=bold];',
         '    CASE_STRATEGY -> IOC_CHECK [label="Investigate", style=bold];',
         '    CASE_STRATEGY -> SIEM_SEARCH [label="Investigate", style=bold];',
         '    CASE_STRATEGY -> ENRICHMENT [label="Investigate", style=bold];',
@@ -145,7 +145,7 @@ def create_parallel_flow(steps, decisions, output_path):
         '    CASE_STRATEGY -> UNCERTAIN_SEARCH [label="Investigate", style=bold];',
         '',
         '    // All investigation steps converge',
-        '    KB_CHECK -> CONVERGE;',
+        '    NB_CHECK -> CONVERGE;',
         '    IOC_CHECK -> CONVERGE;',
         '    SIEM_SEARCH -> CONVERGE;',
         '    ENRICHMENT -> CONVERGE;',
@@ -158,7 +158,7 @@ def create_parallel_flow(steps, decisions, output_path):
         '',
         '    // Final action branches',
         '    FINAL_ACTION -> STEP11_FP [label="FP/BTP", style=dashed, color=green, penwidth=2];',
-        '    FINAL_ACTION -> STEP11_TP [label="TP", style=dashed, color=red, penwidth=2];',
+        '    STEP11_TP [label="Step 11.3\nIf Confirmed TP / Uncertain\nNo case creation\n[SIEM] add_alert_note\n[SIEM] update_alert_verdict\nCite NetBox + same-type history", shape=box, style=rounded, fillcolor=lightcoral];'
         '    FINAL_ACTION -> STEP11_UNCERTAIN [label="Uncertain", style=dashed, color=orange, penwidth=2];',
         '',
         '    STEP11_FP -> END_CLOSE;',
@@ -174,7 +174,7 @@ def create_parallel_flow(steps, decisions, output_path):
         '    END_FP_DIRECT [label="END\\nClosed Directly\\n(No Case)\\n[SIEM] add_alert_note\\n[SIEM] update_alert_verdict\\n[ENG] Recommendations", shape=ellipse, style=filled, fillcolor=lightgreen];',
         '    END_DUP [label="END\\nDuplicate Noted\\n[CM] add_case_comment\\n[SIEM] add_alert_note\\n[SIEM] update_alert_verdict", shape=ellipse, style=filled, fillcolor=lightgreen];',
         '    END_CLOSE [label="END\\nCase Closed\\n[CM] add_case_comment\\n[CM] update_case_status\\n[SIEM] add_alert_note\\n[SIEM] update_alert_verdict", shape=ellipse, style=filled, fillcolor=lightgreen];',
-        '    END_ESCALATE [label="END\\nCase Used (Existing or New)\\nEscalated to SOC2\\n[CM] create_case (if needed)\\n[CM] add_case_comment\\n[CM] attach_observable_to_case\\n[CM] update_case_status\\n[CM] add_case_task\\n[CM] list_case_tasks\\n[CM] update_case_task_status\\n[SIEM] add_alert_note\\n[SIEM] update_alert_verdict\\n(Updated related uncertain alerts)", shape=ellipse, style=filled, fillcolor=lightcoral];',
+        '    END_ESCALATE [label="END\nAlert documented (no case)\n[SIEM] add_alert_note\n[SIEM] update_alert_verdict\nHuman handoff via alert note", shape=ellipse, style=filled, fillcolor=lightcoral];'
         '    END_UNCERTAIN [label="END\\nUncertain\\nNo Case Created\\n[SIEM] add_alert_note\\n[SIEM] update_alert_verdict\\n(verdict=\\"uncertain\\")", shape=ellipse, style=filled, fillcolor=lightyellow];',
         '',
         '    // Legend',
@@ -186,14 +186,14 @@ def create_parallel_flow(steps, decisions, output_path):
         '',
         '        LEGEND_SIEM [label="[SIEM] SIEM Tools\\nInvestigation & Alert Management", shape=box, style=rounded, fillcolor=lightcyan];',
         '        LEGEND_CASE [label="[CM] Case Management Tools\\nCase Operations & Tracking", shape=box, style=rounded, fillcolor=lightpink];',
-        '        LEGEND_KB [label="[KB] KB Tools\\nKnowledge Base", shape=box, style=rounded, fillcolor=lightblue];',
+        '        LEGEND_NB [label="[NB] NetBox Tools\\nInfra knowledge base\\n(role/purpose)", shape=box, style=rounded, fillcolor=lightblue];',
         '        LEGEND_CTI [label="[CTI] CTI Tools\\nThreat Intelligence", shape=box, style=rounded, fillcolor=lightyellow];',
         '        LEGEND_ENG [label="[ENG] Engineering Tools\\nRecommendations", shape=box, style=rounded, fillcolor=lightgreen];',
         '        LEGEND_DECISION [label="Decision Point", shape=diamond, style=filled, fillcolor=lightyellow];',
         '',
         '        LEGEND_SIEM -> LEGEND_CASE [style=invis];',
-        '        LEGEND_CASE -> LEGEND_KB [style=invis];',
-        '        LEGEND_KB -> LEGEND_CTI [style=invis];',
+        '        LEGEND_CASE -> LEGEND_NB [style=invis];',
+        '        LEGEND_NB -> LEGEND_CTI [style=invis];',
         '        LEGEND_CTI -> LEGEND_ENG [style=invis];',
         '        LEGEND_ENG -> LEGEND_DECISION [style=invis];',
         '    }',
@@ -284,7 +284,7 @@ def main():
     print("Key Features:")
     print("=" * 60)
     print("\n1. Parallel Investigation:")
-    print("   - KB Verification (KB tools)")
+    print("   - NetBox Role/Infra (NetBox tools)")
     print("   - IOC Check (SIEM tools)")
     print("   - SIEM Search (SIEM tools)")
     print("   - Entity Enrichment (CTI + SIEM tools)")

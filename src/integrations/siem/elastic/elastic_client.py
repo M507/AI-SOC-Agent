@@ -28,6 +28,25 @@ from .elastic_http import ElasticHttpClient
 
 logger = get_logger("sami.integrations.elastic.client")
 
+# Elastic Security workflow statuses (kibana.alert.workflow_status / signal.status).
+_ALERT_STATUS_ALIASES = {
+    "akn": "acknowledged",
+    "ack": "acknowledged",
+    "acked": "acknowledged",
+    "acknowledge": "acknowledged",
+    "in_progress": "in-progress",
+    "inprogress": "in-progress",
+}
+
+# Statuses that imply historical review — include already-triaged (verdicted) alerts.
+_HISTORICAL_STATUSES = frozenset({"closed", "acknowledged"})
+
+_ALERT_INDEX_PATTERNS = [
+    "alerts-*,.siem-signals-*,logs-endpoint.alerts-*",
+    "alerts-*",
+    "_all",
+]
+
 _AGENT_ID_RE = re.compile(
     r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
     re.I,
@@ -827,6 +846,305 @@ class ElasticSIEMClient:
             logger.exception(f"Error executing KQL query: {e}")
             raise IntegrationError(f"Failed to execute KQL query: {e}") from e
 
+    _DEFAULT_EVENT_INDEX_PATTERNS = [
+        "logs-*,security-*,winlogbeat-*,filebeat-*,alerts-*,.siem-signals-*",
+        "_all",
+    ]
+
+    def _infer_source_type(self, index: str) -> SourceType:
+        index_l = (index or "").lower()
+        if "winlogbeat" in index_l or "windows" in index_l or "endpoint" in index_l:
+            return SourceType.ENDPOINT
+        if "network" in index_l or "firewall" in index_l:
+            return SourceType.NETWORK
+        if "auth" in index_l or "login" in index_l:
+            return SourceType.AUTH
+        if "cloud" in index_l:
+            return SourceType.CLOUD
+        return SourceType.OTHER
+
+    def _hit_to_siem_event(self, hit: Dict[str, Any]) -> SiemEvent:
+        source = hit.get("_source", {}) or {}
+        timestamp_str = source.get("@timestamp") or source.get("timestamp")
+        timestamp = None
+        if timestamp_str:
+            try:
+                timestamp = datetime.fromisoformat(str(timestamp_str).replace("Z", "+00:00"))
+            except Exception:
+                timestamp = None
+        if not timestamp:
+            timestamp = datetime.utcnow()
+
+        host = source.get("host", {}).get("name") if isinstance(source.get("host"), dict) else source.get("host")
+        username = source.get("user", {}).get("name") if isinstance(source.get("user"), dict) else source.get("user")
+        ip = source.get("source", {}).get("ip") if isinstance(source.get("source"), dict) else source.get("source.ip")
+        process_name = (
+            source.get("process", {}).get("name")
+            if isinstance(source.get("process"), dict)
+            else source.get("process.name")
+        )
+        file_hash = None
+        file_obj = source.get("file")
+        if isinstance(file_obj, dict):
+            hashes = file_obj.get("hash") if isinstance(file_obj.get("hash"), dict) else {}
+            file_hash = hashes.get("sha256") or hashes.get("md5")
+        if not file_hash:
+            file_hash = source.get("file.hash.sha256")
+
+        return SiemEvent(
+            id=hit.get("_id", ""),
+            timestamp=timestamp,
+            source_type=self._infer_source_type(hit.get("_index", "")),
+            message=source.get("message")
+            or (source.get("event", {}) or {}).get("original", "")
+            or (source.get("event", {}) or {}).get("reason", "")
+            or "",
+            host=host,
+            username=username,
+            ip=ip,
+            process_name=process_name,
+            file_hash=file_hash,
+            raw=source,
+        )
+
+    def _hits_to_query_result(
+        self,
+        query_label: str,
+        hits: List[Dict[str, Any]],
+        total_count: int,
+        limit: int,
+    ) -> QueryResult:
+        events = [self._hit_to_siem_event(hit) for hit in hits[:limit]]
+        return QueryResult(query=query_label, events=events, total_count=total_count)
+
+    @staticmethod
+    def _apply_hours_back_filter(es_query: Dict[str, Any], hours_back: Optional[int]) -> Dict[str, Any]:
+        if not hours_back:
+            return es_query
+        time_filter = {"range": {"@timestamp": {"gte": f"now-{hours_back}h"}}}
+        if "query" in es_query:
+            if "bool" in es_query["query"]:
+                es_query["query"]["bool"].setdefault("must", []).append(time_filter)
+            else:
+                es_query["query"] = {
+                    "bool": {
+                        "must": [es_query["query"], time_filter],
+                    }
+                }
+        else:
+            es_query["query"] = time_filter
+        return es_query
+
+    @staticmethod
+    def _extract_total_count(response: Dict[str, Any], fallback: int = 0) -> int:
+        total = response.get("hits", {}).get("total", fallback)
+        if isinstance(total, dict):
+            return int(total.get("value", fallback))
+        try:
+            return int(total)
+        except (TypeError, ValueError):
+            return fallback
+
+    def search_lucene_query(
+        self,
+        lucene_query: str,
+        limit: int = 500,
+        hours_back: Optional[int] = None,
+        index_pattern: Optional[str] = None,
+    ) -> QueryResult:
+        """Execute a Lucene ``query_string`` search against security indices."""
+        try:
+            es_query: Dict[str, Any] = {
+                "query": {
+                    "query_string": {
+                        "query": lucene_query,
+                        "default_field": "message",
+                        "analyze_wildcard": True,
+                        "lenient": True,
+                    }
+                },
+                "size": limit,
+                "sort": [{"@timestamp": {"order": "desc"}}],
+            }
+            es_query = self._apply_hours_back_filter(es_query, hours_back)
+
+            patterns = (
+                [index_pattern, "_all"]
+                if index_pattern
+                else list(self._DEFAULT_EVENT_INDEX_PATTERNS)
+            )
+            response = self._search_with_fallback(patterns, es_query)
+            hits = response.get("hits", {}).get("hits", [])
+            return self._hits_to_query_result(
+                lucene_query,
+                hits,
+                self._extract_total_count(response, len(hits)),
+                limit,
+            )
+        except Exception as e:
+            logger.exception(f"Error executing Lucene query: {e}")
+            raise IntegrationError(f"Failed to execute Lucene query: {e}") from e
+
+    def search_eql_query(
+        self,
+        eql_query: str,
+        limit: int = 100,
+        hours_back: Optional[int] = None,
+        index_pattern: Optional[str] = None,
+    ) -> QueryResult:
+        """
+        Execute an Elastic Event Query Language (EQL) search.
+
+        Uses ``POST /{index}/_eql/search``. Best for process/network sequence hunts.
+        """
+        try:
+            body: Dict[str, Any] = {
+                "query": eql_query,
+                "size": limit,
+            }
+            if hours_back:
+                body["filter"] = {
+                    "range": {"@timestamp": {"gte": f"now-{hours_back}h"}}
+                }
+
+            indices = index_pattern or "logs-*,winlogbeat-*,.alerts-security.*"
+            response = self._http.post(f"/{indices}/_eql/search", json_data=body)
+
+            # EQL returns hits.events (event queries) or hits.sequences
+            hits_block = response.get("hits", {}) or {}
+            events_raw = hits_block.get("events") or []
+            if not events_raw and hits_block.get("sequences"):
+                # Flatten sequence events for a consistent QueryResult
+                for sequence in hits_block.get("sequences") or []:
+                    events_raw.extend(sequence.get("events") or [])
+
+            total = hits_block.get("total")
+            if isinstance(total, dict):
+                total_count = int(total.get("value", len(events_raw)))
+            elif total is not None:
+                total_count = int(total)
+            else:
+                total_count = len(events_raw)
+
+            return self._hits_to_query_result(eql_query, events_raw, total_count, limit)
+        except Exception as e:
+            logger.exception(f"Error executing EQL query: {e}")
+            raise IntegrationError(f"Failed to execute EQL query: {e}") from e
+
+    def search_dsl_query(
+        self,
+        dsl_query: str,
+        limit: int = 500,
+        hours_back: Optional[int] = None,
+        index_pattern: Optional[str] = None,
+    ) -> QueryResult:
+        """Execute a raw Elasticsearch Query DSL search (JSON body)."""
+        try:
+            try:
+                es_query = json.loads(dsl_query)
+            except (json.JSONDecodeError, TypeError) as exc:
+                raise IntegrationError(
+                    "dsl_query must be a JSON Elasticsearch Query DSL object"
+                ) from exc
+
+            if not isinstance(es_query, dict):
+                raise IntegrationError("dsl_query JSON must be an object")
+
+            if "size" not in es_query:
+                es_query["size"] = limit
+            if "sort" not in es_query:
+                es_query["sort"] = [{"@timestamp": {"order": "desc"}}]
+
+            es_query = self._apply_hours_back_filter(es_query, hours_back)
+
+            patterns = (
+                [index_pattern, "_all"]
+                if index_pattern
+                else list(self._DEFAULT_EVENT_INDEX_PATTERNS)
+            )
+            response = self._search_with_fallback(patterns, es_query)
+            hits = response.get("hits", {}).get("hits", [])
+            return self._hits_to_query_result(
+                dsl_query,
+                hits,
+                self._extract_total_count(response, len(hits)),
+                limit,
+            )
+        except IntegrationError:
+            raise
+        except Exception as e:
+            logger.exception(f"Error executing DSL query: {e}")
+            raise IntegrationError(f"Failed to execute DSL query: {e}") from e
+
+    def search_esql_query(
+        self,
+        esql_query: str,
+        limit: int = 500,
+    ) -> QueryResult:
+        """
+        Execute an ES|QL query via ``POST /_query``.
+
+        The query should include its own ``FROM`` / ``LIMIT`` clauses. When
+        ``LIMIT`` is absent, one is appended using ``limit``.
+        """
+        try:
+            query_text = esql_query.strip().rstrip(";")
+            if " limit " not in query_text.lower():
+                query_text = f"{query_text} | LIMIT {int(limit)}"
+
+            response = self._http.post(
+                "/_query",
+                json_data={"query": query_text, "locale": "en-US"},
+            )
+
+            columns = response.get("columns") or []
+            values = response.get("values") or []
+            col_names = [c.get("name") for c in columns]
+
+            events: List[SiemEvent] = []
+            for row in values[:limit]:
+                row_map = {
+                    col_names[i]: row[i]
+                    for i in range(min(len(col_names), len(row)))
+                    if col_names[i]
+                }
+                timestamp = datetime.utcnow()
+                ts_val = row_map.get("@timestamp") or row_map.get("timestamp")
+                if ts_val:
+                    try:
+                        timestamp = datetime.fromisoformat(str(ts_val).replace("Z", "+00:00"))
+                    except Exception:
+                        pass
+
+                message_parts = [
+                    f"{k}={v}"
+                    for k, v in row_map.items()
+                    if k not in {"@timestamp", "timestamp"} and v is not None
+                ]
+                events.append(
+                    SiemEvent(
+                        id=str(row_map.get("_id") or row_map.get("event.id") or len(events)),
+                        timestamp=timestamp,
+                        source_type=SourceType.OTHER,
+                        message="; ".join(message_parts)[:2000],
+                        host=row_map.get("host.name") or row_map.get("host"),
+                        username=row_map.get("user.name") or row_map.get("user"),
+                        ip=row_map.get("source.ip") or row_map.get("destination.ip"),
+                        process_name=row_map.get("process.name"),
+                        file_hash=row_map.get("file.hash.sha256"),
+                        raw=row_map,
+                    )
+                )
+
+            return QueryResult(
+                query=esql_query,
+                events=events,
+                total_count=len(values),
+            )
+        except Exception as e:
+            logger.exception(f"Error executing ES|QL query: {e}")
+            raise IntegrationError(f"Failed to execute ES|QL query: {e}") from e
+
     def _kql_to_elasticsearch(self, kql_query: str, limit: int = 500, hours_back: Optional[int] = None) -> Dict[str, Any]:
         """
         Convert a KQL-like query to Elasticsearch Query DSL.
@@ -923,6 +1241,90 @@ class ElasticSIEMClient:
 
     # Alert Management Methods
 
+    @staticmethod
+    def _normalize_alert_status(status: Optional[str]) -> Optional[str]:
+        if status is None:
+            return None
+        normalized = str(status).strip().lower()
+        if not normalized:
+            return None
+        return _ALERT_STATUS_ALIASES.get(normalized, normalized)
+
+    @staticmethod
+    def _alert_status_clause(status: str) -> Dict[str, Any]:
+        """Match Elastic workflow status across legacy and Kibana alert fields."""
+        return {
+            "bool": {
+                "should": [
+                    {"term": {"signal.status": status}},
+                    {"term": {"kibana.alert.workflow_status": status}},
+                    {"term": {"kibana.alert.workflow_status.keyword": status}},
+                ],
+                "minimum_should_match": 1,
+            }
+        }
+
+    @staticmethod
+    def _alert_rule_name_clause(rule_name: str) -> Dict[str, Any]:
+        return {
+            "bool": {
+                "should": [
+                    {"match_phrase": {"signal.rule.name": rule_name}},
+                    {"match_phrase": {"kibana.alert.rule.name": rule_name}},
+                    {"match_phrase": {"rule.name": rule_name}},
+                ],
+                "minimum_should_match": 1,
+            }
+        }
+
+    @staticmethod
+    def _alert_rule_id_clause(rule_id: str) -> Dict[str, Any]:
+        return {
+            "bool": {
+                "should": [
+                    {"term": {"signal.rule.id": rule_id}},
+                    {"term": {"signal.rule.rule_id": rule_id}},
+                    {"term": {"kibana.alert.rule.uuid": rule_id}},
+                    {"term": {"kibana.alert.rule.rule_id": rule_id}},
+                    {"term": {"rule.id": rule_id}},
+                ],
+                "minimum_should_match": 1,
+            }
+        }
+
+    @staticmethod
+    def _resolve_include_investigated(
+        status_filter: Optional[str],
+        include_investigated: Optional[bool],
+    ) -> bool:
+        if include_investigated is not None:
+            return bool(include_investigated)
+        # Historical status reviews need verdicted/closed alerts.
+        return status_filter in _HISTORICAL_STATUSES
+
+    def _extract_rule_fields(self, source: Dict[str, Any], signal: Dict[str, Any]) -> Dict[str, str]:
+        rule = signal.get("rule") if isinstance(signal.get("rule"), dict) else {}
+        source_rule = source.get("rule") if isinstance(source.get("rule"), dict) else {}
+
+        rule_name = (
+            rule.get("name")
+            or source.get("kibana.alert.rule.name", "")
+            or source_rule.get("name", "")
+            or source.get("message", "")
+            or source.get("event", {}).get("reason", "")
+            or ""
+        )
+        rule_id = (
+            rule.get("id")
+            or rule.get("rule_id")
+            or source.get("kibana.alert.rule.uuid", "")
+            or source.get("kibana.alert.rule.rule_id", "")
+            or source_rule.get("id", "")
+            or source_rule.get("rule_id", "")
+            or ""
+        )
+        return {"rule_name": rule_name, "rule_id": str(rule_id) if rule_id else ""}
+
     def get_security_alerts(
         self,
         hours_back: int = 24,
@@ -930,136 +1332,128 @@ class ElasticSIEMClient:
         status_filter: Optional[str] = None,
         severity: Optional[str] = None,
         hostname: Optional[str] = None,
+        rule_name: Optional[str] = None,
+        rule_id: Optional[str] = None,
+        include_investigated: Optional[bool] = None,
     ) -> List[Dict[str, Any]]:
         """
         Get security alerts from Elasticsearch.
-        
-        Searches for alerts in security indices, typically in alerts-* or .siem-signals-* indices.
-        
-        **CRITICAL:** Automatically excludes alerts that have already been investigated
-        (alerts with signal.ai.verdict field). This prevents SOC1 from re-investigating
-        alerts that have already been triaged. The verdict field is only set after an
-        alert has been investigated, so its presence indicates the alert should be skipped.
-        
-        Args:
-            hours_back: How many hours to look back
-            max_alerts: Maximum number of alerts to return
-            status_filter: Filter by status
-            severity: Filter by severity
-            hostname: Optional hostname to filter alerts by (matches host.name field)
+
+        Searches alerts-* / .siem-signals-* indices with optional filters for
+        workflow status (open / acknowledged / closed), rule name/id, severity,
+        and hostname.
+
+        By default excludes closed alerts and alerts that already have
+        ``signal.ai.verdict`` (triage queue). Pass ``status_filter="closed"`` /
+        ``"acknowledged"`` (or ``include_investigated=True``) to include them
+        for historical review.
         """
         try:
-            # Build query for alerts
-            query = {
-                "query": {
-                    "bool": {
-                        "must": [
-                            {"range": {"@timestamp": {"gte": f"now-{hours_back}h"}}}
-                        ]
-                    }
-                },
-                "size": max_alerts,
-                "sort": [{"@timestamp": {"order": "desc"}}]
-            }
-            
-            # Add status filter
+            status_filter = self._normalize_alert_status(status_filter)
+            include_investigated = self._resolve_include_investigated(
+                status_filter, include_investigated
+            )
+
+            must_clauses: List[Dict[str, Any]] = [
+                {"range": {"@timestamp": {"gte": f"now-{hours_back}h"}}}
+            ]
+            must_not_clauses: List[Dict[str, Any]] = []
+
             if status_filter:
-                query["query"]["bool"]["must"].append({"match": {"signal.status": status_filter}})
+                must_clauses.append(self._alert_status_clause(status_filter))
             else:
-                # Default: exclude closed alerts
-                query["query"]["bool"]["must_not"] = [{"term": {"signal.status": "closed"}}]
-            
-            # Add severity filter
+                # Default: exclude closed alerts (both legacy and Kibana fields)
+                must_not_clauses.append(self._alert_status_clause("closed"))
+
             if severity:
-                query["query"]["bool"]["must"].append({"match": {"signal.severity": severity}})
-            
-            # Add hostname filter
+                must_clauses.append({
+                    "bool": {
+                        "should": [
+                            {"match": {"signal.rule.severity": severity}},
+                            {"match": {"signal.severity": severity}},
+                            {"match": {"kibana.alert.severity": severity}},
+                        ],
+                        "minimum_should_match": 1,
+                    }
+                })
+
             if hostname:
-                query["query"]["bool"]["must"].append({
+                must_clauses.append({
                     "bool": {
                         "should": [
                             {"match": {"host.name": hostname}},
                             {"match": {"hostname": hostname}},
                             {"match": {"host": hostname}},
-                        ]
+                        ],
+                        "minimum_should_match": 1,
                     }
                 })
-            
-            # CRITICAL: Exclude alerts that have already been investigated (have signal.ai.verdict)
-            # This prevents SOC1 from re-investigating alerts that have already been triaged
-            # The verdict field is only set after an alert has been investigated
-            # Ensure must_not array exists (it may have been created by status filter above)
-            if "must_not" not in query["query"]["bool"]:
-                query["query"]["bool"]["must_not"] = []
-            query["query"]["bool"]["must_not"].append({
-                "exists": {"field": "signal.ai.verdict"}
-            })
-            
-            # Search with fallback index patterns
-            indices_patterns = [
-                "alerts-*,.siem-signals-*,logs-endpoint.alerts-*",
-                "alerts-*",
-                "_all",  # Fallback to all indices if specific patterns fail
-            ]
-            response = self._search_with_fallback(indices_patterns, query)
-            
+
+            if rule_name:
+                must_clauses.append(self._alert_rule_name_clause(rule_name))
+
+            if rule_id:
+                must_clauses.append(self._alert_rule_id_clause(rule_id))
+
+            if not include_investigated:
+                must_not_clauses.append({"exists": {"field": "signal.ai.verdict"}})
+
+            bool_query: Dict[str, Any] = {"must": must_clauses}
+            if must_not_clauses:
+                bool_query["must_not"] = must_not_clauses
+
+            query = {
+                "query": {"bool": bool_query},
+                "size": max_alerts,
+                "sort": [{"@timestamp": {"order": "desc"}}],
+            }
+
+            response = self._search_with_fallback(_ALERT_INDEX_PATTERNS, query)
             hits = response.get("hits", {}).get("hits", [])
             alerts = []
-            
+
             for hit in hits:
                 source = hit.get("_source", {})
-                signal = source.get("signal", {})
-                
-                # CRITICAL: Extract verdict from signal.ai.verdict to determine if alert has been investigated
-                # The verdict field (signal.ai.verdict) indicates the alert has already been triaged
-                signal_ai = signal.get("ai", {})
-                verdict = signal_ai.get("verdict") if signal_ai else None
-                
-                # Skip alerts that have already been investigated (have signal.ai.verdict)
-                # This is a safety check in case the query filter didn't catch it
-                if verdict:
-                    continue  # Skip this alert - it has already been investigated
-                
-                # Get title: prefer signal.rule.name, fallback to kibana.alert.rule.name, then rule.name, then message, then event.reason
-                title = ""
-                if isinstance(signal.get("rule"), dict):
-                    title = signal.get("rule", {}).get("name", "")
-                if not title:
-                    title = source.get("kibana.alert.rule.name", "")
-                if not title:
-                    # Check for endpoint detection format (rule.name directly on document)
-                    rule_obj = source.get("rule", {})
-                    if isinstance(rule_obj, dict):
-                        title = rule_obj.get("name", "")
-                if not title:
-                    # Check message field (common in endpoint detections)
-                    title = source.get("message", "")
-                if not title:
-                    title = source.get("event", {}).get("reason", "")
-                
-                # Get severity: prefer signal.severity, fallback to kibana.alert.severity
-                severity = signal.get("severity") or source.get("kibana.alert.severity", "medium")
-                
-                # Get status: prefer signal.status, fallback to kibana.alert.workflow_status
-                status = signal.get("status") or source.get("kibana.alert.workflow_status", "open")
-                
+                signal = source.get("signal", {}) if isinstance(source.get("signal"), dict) else {}
+                signal_ai = signal.get("ai", {}) if isinstance(signal.get("ai"), dict) else {}
+                verdict = signal_ai.get("verdict")
+
+                # Safety net when exclude-investigated is active
+                if verdict and not include_investigated:
+                    continue
+
+                rule_fields = self._extract_rule_fields(source, signal)
+                title = rule_fields["rule_name"]
+                alert_severity = (
+                    signal.get("severity")
+                    or source.get("kibana.alert.severity")
+                    or "medium"
+                )
+                status = (
+                    signal.get("status")
+                    or source.get("kibana.alert.workflow_status")
+                    or "open"
+                )
+
                 alerts.append({
                     "id": hit.get("_id", ""),
                     "title": title,
-                    "severity": severity,
+                    "rule_name": rule_fields["rule_name"],
+                    "rule_id": rule_fields["rule_id"],
+                    "severity": alert_severity,
                     "status": status,
                     "created_at": source.get("@timestamp", ""),
                     "description": self._extract_description_from_alert(source, signal),
                     "source": "elastic",
                     "related_entities": self._extract_entities_from_alert(source),
-                    "verdict": verdict,  # Include verdict field (from signal.ai.verdict) - None for uninvestigated alerts
+                    "verdict": verdict,
                     "signal": {
                         "ai": {
-                            "verdict": verdict  # Include full path for explicit checking
+                            "verdict": verdict,
                         }
                     },
                 })
-            
+
             return alerts
         except Exception as e:
             logger.exception(f"Error getting security alerts: {e}")
@@ -2599,61 +2993,79 @@ class ElasticSIEMClient:
 
     def get_rule_detections(
         self,
-        rule_id: str,
+        rule_id: Optional[str] = None,
         alert_state: Optional[str] = None,
         hours_back: int = 24,
         limit: int = 50,
+        rule_name: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
-        """Get historical detections from a specific rule."""
+        """
+        Get historical detections from a specific rule by ID and/or name.
+
+        Unlike ``get_security_alerts``, this always includes investigated/closed
+        alerts so analysts can review past firings. Filter with ``alert_state``
+        (``open``, ``acknowledged``/``akn``, ``closed``).
+        """
+        if not rule_id and not rule_name:
+            raise IntegrationError("get_rule_detections requires rule_id and/or rule_name")
+
         try:
-            query = {
-                "query": {
-                    "bool": {
-                        "must": [
-                            {"range": {"@timestamp": {"gte": f"now-{hours_back}h"}}},
-                            {
-                                "bool": {
-                                    "should": [
-                                        {"term": {"signal.rule.id": rule_id}},
-                                        {"term": {"signal.rule.rule_id": rule_id}},
-                                    ]
-                                }
-                            }
-                        ]
-                    }
-                },
-                "size": limit,
-                "sort": [{"@timestamp": {"order": "desc"}}]
-            }
-            
-            if alert_state:
-                query["query"]["bool"]["must"].append({"term": {"signal.status": alert_state}})
-            
-            # Search with fallback index patterns
-            indices_patterns = [
-                ".siem-signals-*,alerts-*",
-                "alerts-*",
-                "_all",  # Fallback to all indices if specific patterns fail
+            alert_state = self._normalize_alert_status(alert_state)
+            must_clauses: List[Dict[str, Any]] = [
+                {"range": {"@timestamp": {"gte": f"now-{hours_back}h"}}}
             ]
-            response = self._search_with_fallback(indices_patterns, query)
-            
+
+            rule_clauses: List[Dict[str, Any]] = []
+            if rule_id:
+                rule_clauses.append(self._alert_rule_id_clause(rule_id))
+            if rule_name:
+                rule_clauses.append(self._alert_rule_name_clause(rule_name))
+
+            if len(rule_clauses) == 1:
+                must_clauses.append(rule_clauses[0])
+            else:
+                # Both provided: match alerts that satisfy either identifier
+                must_clauses.append({
+                    "bool": {
+                        "should": rule_clauses,
+                        "minimum_should_match": 1,
+                    }
+                })
+
+            if alert_state:
+                must_clauses.append(self._alert_status_clause(alert_state))
+
+            query = {
+                "query": {"bool": {"must": must_clauses}},
+                "size": limit,
+                "sort": [{"@timestamp": {"order": "desc"}}],
+            }
+
+            response = self._search_with_fallback(_ALERT_INDEX_PATTERNS, query)
             hits = response.get("hits", {}).get("hits", [])
             detections = []
-            
+
             for hit in hits:
                 source = hit.get("_source", {})
-                signal = source.get("signal", {})
-                
+                signal = source.get("signal", {}) if isinstance(source.get("signal"), dict) else {}
+                rule_fields = self._extract_rule_fields(source, signal)
+                signal_ai = signal.get("ai", {}) if isinstance(signal.get("ai"), dict) else {}
+
                 detections.append({
                     "id": hit.get("_id", ""),
                     "alert_id": hit.get("_id", ""),
                     "timestamp": source.get("@timestamp", ""),
-                    "severity": signal.get("severity", "medium"),
-                    "status": signal.get("status", "open"),
-                    "description": signal.get("rule", {}).get("description", "") if isinstance(signal.get("rule"), dict) else "",
+                    "severity": signal.get("severity") or source.get("kibana.alert.severity", "medium"),
+                    "status": signal.get("status") or source.get("kibana.alert.workflow_status", "open"),
+                    "rule_name": rule_fields["rule_name"],
+                    "rule_id": rule_fields["rule_id"],
+                    "verdict": signal_ai.get("verdict"),
+                    "description": self._extract_description_from_alert(source, signal),
                 })
-            
+
             return detections
+        except IntegrationError:
+            raise
         except Exception as e:
             logger.exception(f"Error getting rule detections: {e}")
             raise IntegrationError(f"Failed to get rule detections: {e}") from e

@@ -25,12 +25,11 @@ Irreversible MCP tools **file a request** instead of executing:
 
 ## SOC1 Fundamental Principles
 
-### SOC1 (Tier 1) - Alert-First Triage
 *   **MUST ALWAYS BEGIN FROM SECURITY ALERTS (`${ALERT_ID}`)**, never from existing cases.
-*   **Primary role is to close false positives** quickly without creating unnecessary cases.
-*   **If uncertain about legitimacy**: Leave the alert as an open case with ALL alert details documented (alert ID, event data, context, detection rule name, timestamps, host/user info, and anything else relevant).
-*   **Every open case MUST include comprehensive alert details** for downstream analysts.
+*   **Primary role is to close false positives** quickly without creating cases.
+*   **If uncertain about legitimacy**: Write a full alert note and set an honest verdict (`uncertain` / `true_positive`). Do **not** create a case.
 *   Use `get_security_alert_by_id` as the FIRST step in every workflow.
+*   Use `get_rule_detections` / `get_security_alerts` to review past **closed** and **acknowledged** alerts of the same rule/type before deciding.
 
 ## Required Structure
 
@@ -66,13 +65,13 @@ Runbooks are structured markdown documents that the MCP server parses for metada
 
 *   **Tools (`## Tools`):**
     *   Group tools by functional area (matching existing runbooks):
-        *   **Case Management Tools:** `review_case`, `add_case_comment`, `attach_observable_to_case`, `search_cases`, `update_case_status`, `add_case_task`.
-        *   **SIEM Tools:** `get_security_alert_by_id`, `search_security_events`, `lookup_entity`, `get_ioc_matches`, `get_file_report`, `get_ip_address_report`, `pivot_on_indicator`, `get_entities_related_to_file`, `get_file_behavior_summary`, `get_threat_intel`.
+        *   **SIEM Tools:** `get_security_alert_by_id`, `get_rule_detections`, `get_security_alerts` (incl. `status_filter=closed|acknowledged`), `search_security_events`, `lookup_entity`, `get_ioc_matches`, `get_file_report`, `get_ip_address_report`, `pivot_on_indicator`, `get_entities_related_to_file`, `get_file_behavior_summary`, `get_threat_intel`.
         *   **NetBox Tools:** `netbox_lookup_ip`, `netbox_lookup_host`, `netbox_lookup_prefix`, `netbox_search`.
         *   **CTI Tools:** `lookup_hash_ti` (and others as applicable).
         *   **EDR Tools:** `get_endpoint_summary`, `isolate_endpoint`, `kill_process_on_endpoint`, `collect_forensic_artifacts` (where relevant).
         *   **Runbook & Agent Tools (when applicable):** `list_runbooks`, `get_runbook`, `execute_runbook`, `list_agent_profiles`, `get_agent_profile`, `route_case_to_agent`, `execute_as_agent`.
     *   Tool names **must** be wrapped in backticks (`` `tool_name` ``) so `RunbookManager` can extract them.
+    *   SOC1 triage runbooks must **not** list `create_case` or other case-write tools.
 
 *   **Workflow Steps (`## Workflow Steps`):**
     *   Detail the ordered sequence of actions the AI/analyst should follow.
@@ -80,12 +79,12 @@ Runbooks are structured markdown documents that the MCP server parses for metada
     *   **MANDATORY FIRST STEP:** SOC1 runbooks MUST start with "Receive Alert (MANDATORY)" and call `get_security_alert_by_id` with `${ALERT_ID}` as the FIRST action.
     *   Example: `1.  **Receive Alert (MANDATORY):** Obtain ${ALERT_ID} from SIEM alert queue. MUST use \`get_security_alert_by_id\` as FIRST action.`
     *   Within each step, explicitly reference which MCP tools to call, under what conditions, and what data to store.
-    *   Make decisions and branching explicit (e.g., "If IOC matches found, escalate for deeper investigation", "If uncertain, leave as open case with ALL alert details").
-    *   Document that if uncertain about legitimacy, leave as open case with ALL alert details.
+    *   Make decisions and branching explicit (e.g., "If IOC matches found, escalate for deeper investigation", "If uncertain, write a full alert note (no case)").
+    *   Document that if uncertain about legitimacy, document on the alert with a full note (no case).
 
 *   **Completion Criteria (`## Completion Criteria`):**
     *   Bullet list describing when the runbook is considered successfully completed.
-    *   SOC1 runbooks MUST include "Workflow started from `${ALERT_ID}`" and "`get_security_alert_by_id` called as FIRST step". If case created, MUST include "ALL alert details included in case".
+    *   SOC1 runbooks MUST include "Workflow started from `${ALERT_ID}`" and "`get_security_alert_by_id` called as FIRST step". If not closing, MUST include "ALL alert details in the alert note".
     *   Mirror the style of existing runbooks:
         *   "All primary entities have been enriched…"
         *   "Appropriate action (closure or escalation) has been taken…"
@@ -93,15 +92,15 @@ Runbooks are structured markdown documents that the MCP server parses for metada
 
 *   **Escalation Criteria (`## Escalation Criteria`) (when applicable):**
     *   Clearly enumerate when to escalate / hand off for deeper work.
-    *   SOC1 escalates when uncertain about legitimacy (leave as open case with ALL alert details) OR when suspicious/true positive indicators are found.
+    *   SOC1 escalates when uncertain about legitimacy (document on the alert with a full note (no case)) OR when suspicious/true positive indicators are found.
     *   Examples:
         *   "True positive indicators are found…"
-        *   "Uncertain about legitimacy - leave as open case with comprehensive alert details…"
+        *   "Uncertain about legitimacy - document on the alert with a full note (no case)…"
 
 *   **Warnings / Notes (`## Warning`, `## Notes`) (optional but recommended):**
     *   Capture important safety warnings (e.g., disruptive actions like isolation or process termination).
     *   Provide operational notes for analysts/agents following the runbook.
-    *   Emphasize "MUST ALWAYS START FROM `${ALERT_ID}`", "If uncertain leave as open case with ALL alert details", "Primary role is closing false positives".
+    *   Emphasize "MUST ALWAYS START FROM `${ALERT_ID}`", "If uncertain document on the alert with a full note (no case)", "Primary role is closing false positives".
 
 ## Workflow Diagrams (Recommended)
 
