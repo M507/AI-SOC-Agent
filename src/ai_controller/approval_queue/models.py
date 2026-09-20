@@ -12,6 +12,7 @@ from uuid import uuid4
 class RequestStatus(str, Enum):
     PENDING = "pending"
     INFORMATIONAL = "informational"
+    ACKNOWLEDGED = "acknowledged"
     DENIED = "denied"
     EXECUTED = "executed"
     FAILED = "failed"
@@ -91,12 +92,15 @@ class ApprovalRequest:
     decision: Optional[Decision] = None
     execution_result: Optional[Dict[str, Any]] = None
     error: Optional[str] = None
+    archived: bool = False
+    archived_at: Optional[datetime] = None
 
     def to_dict(self) -> Dict[str, Any]:
         data = asdict(self)
         data["status"] = self.status.value
         data["created_at"] = self.created_at.isoformat()
         data["updated_at"] = self.updated_at.isoformat()
+        data["archived_at"] = self.archived_at.isoformat() if self.archived_at else None
         data["decision"] = self.decision.to_dict() if self.decision else None
         data["follow_ups"] = {
             key: plan.to_dict() if isinstance(plan, FollowUpPlan) else plan
@@ -110,6 +114,11 @@ class ApprovalRequest:
         payload["status"] = RequestStatus(payload.get("status") or RequestStatus.PENDING.value)
         payload["created_at"] = datetime.fromisoformat(payload["created_at"])
         payload["updated_at"] = datetime.fromisoformat(payload["updated_at"])
+        if payload.get("archived_at"):
+            payload["archived_at"] = datetime.fromisoformat(payload["archived_at"])
+        else:
+            payload["archived_at"] = None
+        payload["archived"] = bool(payload.get("archived", False))
         payload["decision"] = Decision.from_dict(payload.get("decision"))
         raw_follow = payload.get("follow_ups") or {}
         payload["follow_ups"] = {
@@ -119,4 +128,24 @@ class ApprovalRequest:
         }
         payload.setdefault("child_request_ids", [])
         allowed = {item.name for item in fields(cls)}
-        return cls(**{key: value for key, value in payload.items() if key in allowed})
+        request = cls(**{key: value for key, value in payload.items() if key in allowed})
+        # Backfill: settled statuses from before the archive flag count as archived.
+        if not request.archived and request.status in _SETTLED_STATUSES:
+            request.archived = True
+            request.archived_at = request.archived_at or request.updated_at
+        return request
+
+
+_SETTLED_STATUSES = {
+    RequestStatus.ACKNOWLEDGED,
+    RequestStatus.DENIED,
+    RequestStatus.EXECUTED,
+    RequestStatus.FAILED,
+}
+
+
+def is_archived(request: ApprovalRequest) -> bool:
+    """True when a request is hidden from the default Open queue."""
+    if request.archived:
+        return True
+    return request.status in _SETTLED_STATUSES

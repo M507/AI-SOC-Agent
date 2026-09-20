@@ -671,7 +671,12 @@ class APIClient {
             const query = status ? `?status=${encodeURIComponent(status)}` : '';
             return await this.request(`/api/requests${query}`);
         } catch (error) {
-            return { success: false, requests: [], counts: { pending: 0, all: 0 }, error: error.message };
+            return {
+                success: false,
+                requests: [],
+                counts: { pending: 0, open: 0, archived: 0, all: 0 },
+                error: error.message,
+            };
         }
     }
 
@@ -691,8 +696,20 @@ class APIClient {
         return this._requestDecision(`/api/requests/${encodeURIComponent(requestId)}/deny`, { comment });
     }
 
+    async acknowledgeRequest(requestId, comment = '') {
+        return this._requestDecision(`/api/requests/${encodeURIComponent(requestId)}/acknowledge`, { comment });
+    }
+
     async answerRequest(requestId, answer, comment = '') {
         return this._requestDecision(`/api/requests/${encodeURIComponent(requestId)}/answer`, { answer, comment });
+    }
+
+    async bulkRequests(action, requestIds, comment = '') {
+        return this._requestDecision('/api/requests/bulk', {
+            action,
+            request_ids: requestIds,
+            comment,
+        });
     }
 
     async _requestDecision(url, body) {

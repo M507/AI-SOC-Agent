@@ -14,8 +14,8 @@
 }
 
 .requests-list-pane {
-    width: 340px;
-    min-width: 280px;
+    width: 360px;
+    min-width: 300px;
     border-right: 1px solid #3e3e42;
     display: flex;
     flex-direction: column;
@@ -45,6 +45,43 @@
     color: #ffffff;
 }
 
+.requests-bulk-bar {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    padding: 10px 12px;
+    border-bottom: 1px solid #3e3e42;
+    background: #1e2a32;
+}
+
+.requests-bulk-bar[hidden] {
+    display: none;
+}
+
+.requests-bulk-summary {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    align-items: baseline;
+    color: #d4d4d4;
+    font-size: 12px;
+}
+
+.requests-bulk-summary strong {
+    color: #ffffff;
+    font-size: 13px;
+}
+
+.requests-bulk-hint {
+    color: #858585;
+}
+
+.requests-bulk-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+
 .requests-list {
     flex: 1;
     overflow-y: auto;
@@ -58,14 +95,13 @@
 }
 
 .request-card {
+    display: flex;
+    align-items: stretch;
+    gap: 0;
     width: 100%;
-    text-align: left;
-    border: none;
     border-bottom: 1px solid #3e3e42;
     background: transparent;
     color: inherit;
-    padding: 12px 14px;
-    cursor: pointer;
 }
 
 .request-card:hover {
@@ -77,11 +113,47 @@
     box-shadow: inset 3px 0 0 #007acc;
 }
 
+.request-card.is-checked {
+    background: #243040;
+}
+
+.request-card.active.is-checked {
+    background: #1e2a38;
+}
+
+.request-card-check {
+    display: flex;
+    align-items: flex-start;
+    padding: 14px 0 14px 12px;
+    cursor: pointer;
+    flex-shrink: 0;
+}
+
+.request-card-check input {
+    width: 15px;
+    height: 15px;
+    margin: 2px 0 0;
+    accent-color: #007acc;
+    cursor: pointer;
+}
+
+.request-card-body {
+    flex: 1;
+    min-width: 0;
+    text-align: left;
+    border: none;
+    background: transparent;
+    color: inherit;
+    padding: 12px 14px 12px 10px;
+    cursor: pointer;
+}
+
 .request-card-title {
     font-size: 13px;
     font-weight: 600;
     color: #ffffff;
     margin-bottom: 4px;
+    line-height: 1.35;
 }
 
 .request-card-meta {
@@ -95,14 +167,56 @@
 
 .requests-detail {
     flex: 1;
+    min-width: 0;
     overflow-y: auto;
-    padding: 20px 24px 32px;
+    display: flex;
+    flex-direction: column;
+    padding: 0;
 }
 
 .requests-detail-empty {
     color: #858585;
     font-size: 14px;
-    padding: 40px 0;
+    padding: 40px 24px;
+}
+
+.request-decision-bar {
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    padding: 14px 24px;
+    background: rgba(30, 30, 30, 0.96);
+    border-bottom: 1px solid #3e3e42;
+    backdrop-filter: blur(6px);
+}
+
+.request-decision-bar.is-info,
+.request-decision-bar.is-settled {
+    background: #252526;
+}
+
+.request-decision-copy {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px 12px;
+    align-items: center;
+    font-size: 13px;
+    color: #d4d4d4;
+}
+
+.request-decision-label {
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: #858585;
+}
+
+.request-detail-body {
+    padding: 16px 24px 32px;
 }
 
 .request-detail-title {
@@ -144,6 +258,7 @@
 .request-payload dd {
     color: #d4d4d4;
     word-break: break-word;
+    white-space: pre-wrap;
 }
 
 .request-followups {
@@ -170,14 +285,13 @@
     display: flex;
     flex-wrap: wrap;
     gap: 8px;
-    margin-top: 20px;
 }
 
 .request-comment {
     width: 100%;
-    margin-top: 12px;
-    min-height: 64px;
+    min-height: 56px;
     resize: vertical;
+    margin: 0;
 }
 
 .risk-badge,
@@ -208,6 +322,20 @@
 .status-badge.informational {
     background: #1b4f72;
     color: #d6eaf8;
+}
+
+.status-badge.acknowledged {
+    background: #1f5c3a;
+    color: #d4edda;
+}
+
+.status-badge.archived {
+    background: #3a3a3a;
+    color: #c8c8c8;
+}
+
+.request-card.is-archived .request-card-title {
+    color: #c8c8c8;
 }
 
 .status-badge.denied {
@@ -302,4 +430,18 @@
     font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
     white-space: pre-wrap;
     color: #d4d4d4;
+}
+
+@media (max-width: 900px) {
+    .requests-layout {
+        flex-direction: column;
+    }
+
+    .requests-list-pane {
+        width: 100%;
+        min-width: 0;
+        max-height: 40%;
+        border-right: none;
+        border-bottom: 1px solid #3e3e42;
+    }
 }

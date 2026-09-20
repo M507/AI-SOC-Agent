@@ -9,12 +9,13 @@ from ...core.logging import get_logger
 from .actions import get_handler
 from .catalog import get_action_spec, list_action_specs
 from .clients import resolve_clients
-from .models import ApprovalRequest, Decision, FollowUpPlan, RequestStatus
+from .models import ApprovalRequest, Decision, FollowUpPlan, RequestStatus, is_archived
 from .store import RequestStore
 
 logger = get_logger("sami.approval_queue")
 
 _CRITICAL_FOLLOW_UPS = {"isolate_endpoint", "kill_process", "disable_user", "reset_credentials"}
+_OPEN_STATUSES = {RequestStatus.PENDING, RequestStatus.INFORMATIONAL, RequestStatus.AWAITING_INTEGRATION}
 
 _queue: Optional["ApprovalQueue"] = None
 
@@ -44,24 +45,33 @@ class ApprovalQueue:
         status: Optional[str] = None,
         cluster_id: Optional[str] = None,
     ) -> List[ApprovalRequest]:
-        if status == "pending":
+        items = self.store.list(cluster_id=cluster_id)
+        filter_key = (status or "all").strip().lower()
+        if filter_key in {"pending", "open"}:
             items = [
                 item
-                for item in self.store.list(cluster_id=cluster_id)
-                if item.status in {RequestStatus.PENDING, RequestStatus.INFORMATIONAL}
+                for item in items
+                if not is_archived(item) and item.status in _OPEN_STATUSES
             ]
             items = [self.ensure_enriched(item) for item in items]
-            return sorted(items, key=lambda item: item.created_at, reverse=True)
-        parsed = RequestStatus(status) if status else None
-        items = self.store.list(status=parsed, cluster_id=cluster_id)
-        if parsed in {RequestStatus.PENDING, RequestStatus.INFORMATIONAL} or status is None:
+        elif filter_key == "archived":
+            items = [item for item in items if is_archived(item)]
+        elif filter_key == "all":
             items = [
                 self.ensure_enriched(item)
                 if item.status in {RequestStatus.PENDING, RequestStatus.INFORMATIONAL}
                 else item
                 for item in items
             ]
-        return items
+        else:
+            try:
+                parsed = RequestStatus(filter_key)
+            except ValueError as exc:
+                raise ValueError(f"Unknown request filter {status!r}") from exc
+            items = [item for item in items if item.status == parsed]
+            if parsed in {RequestStatus.PENDING, RequestStatus.INFORMATIONAL}:
+                items = [self.ensure_enriched(item) for item in items]
+        return sorted(items, key=lambda item: item.created_at, reverse=True)
 
     def get(self, request_id: str) -> Optional[ApprovalRequest]:
         request = self.store.get(request_id)
@@ -72,11 +82,32 @@ class ApprovalQueue:
         return request
 
     def counts(self) -> Dict[str, int]:
+        items = self.store.list()
+        open_count = sum(
+            1
+            for item in items
+            if not is_archived(item) and item.status in _OPEN_STATUSES
+        )
+        archived_count = sum(1 for item in items if is_archived(item))
+        informational = sum(
+            1
+            for item in items
+            if item.status == RequestStatus.INFORMATIONAL and not is_archived(item)
+        )
         return {
-            "pending": self.store.count(RequestStatus.PENDING) + self.store.count(RequestStatus.INFORMATIONAL),
-            "informational": self.store.count(RequestStatus.INFORMATIONAL),
-            "all": self.store.count(),
+            "pending": open_count,
+            "open": open_count,
+            "archived": archived_count,
+            "informational": informational,
+            "all": len(items),
         }
+
+    @staticmethod
+    def _mark_archived(request: ApprovalRequest) -> ApprovalRequest:
+        request.archived = True
+        request.archived_at = request.archived_at or datetime.now()
+        request.updated_at = datetime.now()
+        return request
 
     def create(
         self,
@@ -177,18 +208,39 @@ class ApprovalQueue:
     def deny(self, request_id: str, comment: Optional[str] = None, actor: str = "analyst") -> ApprovalRequest:
         request = self._require(request_id)
         if request.status == RequestStatus.INFORMATIONAL:
-            raise ValueError("Informational requests have no action to deny")
+            raise ValueError("Informational requests have no action to deny — mark them Done instead")
         if request.status != RequestStatus.PENDING:
             raise ValueError("Only pending requests can be denied")
         request.status = RequestStatus.DENIED
         request.decision = Decision(action="deny", actor=actor, comment=comment)
-        request.updated_at = datetime.now()
+        self._mark_archived(request)
+        return self.store.put(request)
+
+    def acknowledge(
+        self,
+        request_id: str,
+        comment: Optional[str] = None,
+        actor: str = "analyst",
+    ) -> ApprovalRequest:
+        """Mark an informational request as reviewed (Done). Archives it out of Open."""
+        request = self._require(request_id)
+        if request.status != RequestStatus.INFORMATIONAL:
+            raise ValueError("Only informational requests can be marked Done")
+        request.status = RequestStatus.ACKNOWLEDGED
+        request.decision = Decision(action="acknowledge", actor=actor, comment=comment)
+        request.execution_result = {
+            "success": True,
+            "informational": True,
+            "archived": True,
+            "message": "Marked as reviewed and archived. No side effects.",
+        }
+        self._mark_archived(request)
         return self.store.put(request)
 
     def approve(self, request_id: str, comment: Optional[str] = None, actor: str = "analyst") -> ApprovalRequest:
         request = self._require(request_id)
         if request.status == RequestStatus.INFORMATIONAL:
-            raise ValueError("Informational requests have no action to approve")
+            raise ValueError("Informational requests have no action to approve — mark them Done instead")
         if request.status != RequestStatus.PENDING:
             raise ValueError("Only pending requests can be approved")
         spec = get_action_spec(request.action_type)
@@ -197,6 +249,98 @@ class ApprovalQueue:
         request.decision = Decision(action="approve", actor=actor, comment=comment)
         request.updated_at = datetime.now()
         return self._execute(request)
+
+    def bulk(
+        self,
+        action: str,
+        request_ids: List[str],
+        comment: Optional[str] = None,
+        actor: str = "analyst",
+    ) -> Dict[str, Any]:
+        """Approve, deny, or acknowledge many requests. Skips items that cannot take that action."""
+        normalized = str(action or "").strip().lower()
+        if normalized in {"done", "ack"}:
+            normalized = "acknowledge"
+        if normalized not in {"approve", "deny", "acknowledge"}:
+            raise ValueError("Bulk action must be approve, deny, or acknowledge")
+        results: List[Dict[str, Any]] = []
+        succeeded = 0
+        skipped = 0
+        failed = 0
+        for request_id in request_ids:
+            try:
+                request = self._require(request_id)
+            except KeyError:
+                failed += 1
+                results.append({"id": request_id, "success": False, "error": "not found"})
+                continue
+            spec = get_action_spec(request.action_type)
+            informational = request.status == RequestStatus.INFORMATIONAL or (
+                spec is not None and spec.execution == "informational" and request.status == RequestStatus.INFORMATIONAL
+            )
+            if normalized == "acknowledge":
+                if request.status != RequestStatus.INFORMATIONAL:
+                    skipped += 1
+                    results.append(
+                        {
+                            "id": request_id,
+                            "success": False,
+                            "skipped": True,
+                            "error": "Only informational requests can be marked Done",
+                            "status": request.status.value,
+                        }
+                    )
+                    continue
+            elif informational:
+                skipped += 1
+                results.append(
+                    {
+                        "id": request_id,
+                        "success": False,
+                        "skipped": True,
+                        "error": "Informational requests have no approve/deny action — mark them Done instead",
+                        "status": request.status.value,
+                    }
+                )
+                continue
+            if normalized == "approve" and spec and spec.asks_question:
+                skipped += 1
+                results.append(
+                    {
+                        "id": request_id,
+                        "success": False,
+                        "skipped": True,
+                        "error": "Needs an individual yes/no answer",
+                        "status": request.status.value,
+                    }
+                )
+                continue
+            try:
+                if normalized == "approve":
+                    updated = self.approve(request_id, comment=comment, actor=actor)
+                elif normalized == "deny":
+                    updated = self.deny(request_id, comment=comment, actor=actor)
+                else:
+                    updated = self.acknowledge(request_id, comment=comment, actor=actor)
+                succeeded += 1
+                results.append(
+                    {
+                        "id": request_id,
+                        "success": True,
+                        "status": updated.status.value,
+                        "error": updated.error,
+                    }
+                )
+            except Exception as exc:
+                failed += 1
+                results.append({"id": request_id, "success": False, "error": str(exc)})
+        return {
+            "action": normalized,
+            "succeeded": succeeded,
+            "skipped": skipped,
+            "failed": failed,
+            "results": results,
+        }
 
     def answer(
         self,
@@ -229,6 +373,7 @@ class ApprovalQueue:
                 "success": True,
                 "message": f"Recorded answer '{normalized}' with no follow-up action.",
             }
+            self._mark_archived(request)
             return self.store.put(request)
 
         child_spec = get_action_spec(follow.action_type)
@@ -248,6 +393,7 @@ class ApprovalQueue:
                     else f"Recorded answer '{normalized}'."
                 ),
             }
+            self._mark_archived(request)
             return self.store.put(request)
 
         child = self.create(
@@ -281,6 +427,10 @@ class ApprovalQueue:
             }
             if child.error:
                 request.error = child.error
+            if request.status == RequestStatus.AWAITING_INTEGRATION:
+                request.archived = False
+            else:
+                self._mark_archived(request)
         else:
             request.status = RequestStatus.EXECUTED
             request.execution_result = {
@@ -290,6 +440,7 @@ class ApprovalQueue:
                 "follow_up_action": follow.action_type,
                 "message": "Follow-up is high risk and was filed as a separate pending request.",
             }
+            self._mark_archived(request)
         return self.store.put(request)
 
     def _execute(self, request: ApprovalRequest) -> ApprovalRequest:
@@ -304,7 +455,7 @@ class ApprovalQueue:
             request.status = RequestStatus.FAILED
             request.error = str(exc)
             request.execution_result = {"success": False, "error": str(exc)}
-            request.updated_at = datetime.now()
+            self._mark_archived(request)
             return self.store.put(request)
 
         request.execution_result = result if isinstance(result, dict) else {"result": result}
@@ -312,12 +463,15 @@ class ApprovalQueue:
         if isinstance(result, dict) and result.get("needs_integration"):
             request.status = RequestStatus.AWAITING_INTEGRATION
             request.error = result.get("message")
+            request.archived = False
         elif isinstance(result, dict) and result.get("success") is False:
             request.status = RequestStatus.FAILED
             request.error = str(result.get("error") or result.get("message") or "Execution failed")
+            self._mark_archived(request)
         else:
             request.status = RequestStatus.EXECUTED
             request.error = None
+            self._mark_archived(request)
         return self.store.put(request)
 
     def _require(self, request_id: str) -> ApprovalRequest:

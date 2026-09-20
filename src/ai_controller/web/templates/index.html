@@ -357,15 +357,18 @@
                             <h2>Requests</h2>
                             <div class="session-actions">
                                 <span id="requests-pending-label" class="cluster-pill">Open items</span>
+                                <button type="button" class="btn btn-secondary btn-sm" data-request-select-all="actionable" title="Select all open approvals and informational notes">Select open</button>
                             </div>
                         </div>
                         <div class="requests-layout">
                             <aside class="requests-list-pane">
                                 <div class="requests-filters">
-                                    <button type="button" class="requests-filter active" data-request-filter="pending">Open</button>
+                                    <button type="button" class="requests-filter active" data-request-filter="open">Open</button>
+                                    <button type="button" class="requests-filter" data-request-filter="archived">Archived</button>
                                     <button type="button" class="requests-filter" data-request-filter="all">All</button>
                                 </div>
-                                <div id="requests-list" class="requests-list"></div>
+                                <div id="requests-bulk-bar" class="requests-bulk-bar" hidden></div>
+                                <div id="requests-list" class="requests-list" role="list"></div>
                             </aside>
                             <section id="requests-detail" class="requests-detail" aria-live="polite">
                                 <div class="requests-detail-empty">Select a request to review it.</div>

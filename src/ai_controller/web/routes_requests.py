@@ -38,9 +38,18 @@ class AnswerPayload(BaseModel):
     comment: Optional[str] = None
 
 
+class BulkPayload(BaseModel):
+    action: str
+    request_ids: list[str] = Field(default_factory=list)
+    comment: Optional[str] = None
+
+
 def _payload(request: ApprovalRequest) -> Dict[str, Any]:
     data = request.to_dict()
     data["cluster"] = cluster_summary(request.cluster_id)
+    from ..approval_queue.models import is_archived
+
+    data["archived"] = is_archived(request)
     return data
 
 
@@ -92,6 +101,39 @@ async def get_request(request_id: str):
     request = get_queue().get(request_id)
     if request is None:
         raise HTTPException(status_code=404, detail="Request not found")
+    return {"success": True, "request": _payload(request)}
+
+
+@router.post("/bulk")
+async def bulk_requests(body: BulkPayload):
+    if not body.request_ids:
+        raise HTTPException(status_code=400, detail="request_ids is required")
+    queue = get_queue()
+    try:
+        result = queue.bulk(action=body.action, request_ids=body.request_ids, comment=body.comment)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    logger.info(
+        "Bulk %s on %s request(s): succeeded=%s skipped=%s failed=%s",
+        body.action,
+        len(body.request_ids),
+        result.get("succeeded"),
+        result.get("skipped"),
+        result.get("failed"),
+    )
+    return {"success": True, "counts": queue.counts(), **result}
+
+
+@router.post("/{request_id}/acknowledge")
+async def acknowledge_request(request_id: str, body: DecisionPayload = DecisionPayload()):
+    queue = get_queue()
+    try:
+        request = queue.acknowledge(request_id, comment=body.comment)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Request not found")
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    logger.info("Acknowledged informational request %s", request_id)
     return {"success": True, "request": _payload(request)}
 
 
