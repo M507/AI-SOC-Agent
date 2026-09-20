@@ -82,65 +82,10 @@ def load_agent_profiles_config() -> Dict[str, Any]:
                 "auto_select_runbook": True,
                 "max_concurrent_cases": 10,
             },
-            "soc2_investigation_agent": {
-                "name": "SOC2 Investigation Agent",
-                "tier": "soc2",
-                "description": "Performs deep investigation and correlation analysis",
-                "capabilities": [
-                    "deep_investigation",
-                    "correlation_analysis",
-                    "threat_hunting",
-                    "containment_recommendations",
-                ],
-                "runbooks": [
-                    "soc2/investigation/case_analysis",
-                ],
-                "case_runbooks": [
-                    "soc2/cases/malware_deep_analysis",
-                    "soc2/cases/suspicious_login_investigation",
-                ],
-                "decision_authority": {
-                    "close_false_positives": True,
-                    "close_benign_true_positives": True,
-                    "escalate_to_soc2": False,
-                    "escalate_to_soc3": True,
-                    "containment_actions": False,
-                    "forensic_collection": False,
-                },
-                "auto_select_runbook": True,
-                "max_concurrent_cases": 5,
-            },
-            "soc3_response_agent": {
-                "name": "SOC3 Response Agent",
-                "tier": "soc3",
-                "description": "Executes incident response and containment actions",
-                "capabilities": [
-                    "incident_response",
-                    "containment_execution",
-                    "forensic_collection",
-                ],
-                "runbooks": [
-                    "soc3/response/endpoint_isolation",
-                    "soc3/response/process_termination",
-                    "soc3/forensics/artifact_collection",
-                ],
-                "decision_authority": {
-                    "close_false_positives": True,
-                    "close_benign_true_positives": True,
-                    "escalate_to_soc2": False,
-                    "escalate_to_soc3": False,
-                    "containment_actions": True,
-                    "forensic_collection": True,
-                },
-                "auto_select_runbook": True,
-                "max_concurrent_cases": 3,
-            },
         },
         "routing_rules": {
             "new_alert": "soc1_triage_agent",
-            "review_cases": "soc2_investigation_agent",
-            "requires_containment": "soc3_response_agent",
-            "forensic_collection": "soc3_response_agent",
+            "review_cases": "soc1_triage_agent",
         },
     }
 
