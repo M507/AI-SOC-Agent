@@ -166,6 +166,18 @@ def _cards() -> List[IntegrationCard]:
             )
         )
 
+    netbox = raw.get("netbox") if isinstance(raw.get("netbox"), dict) else {}
+    cards.append(
+        IntegrationCard(
+            "netbox",
+            "NetBox",
+            "Asset inventory",
+            "DCIM/IPAM lookups for hosts, IPs, and prefixes.",
+            _host(netbox.get("base_url")),
+            _is_configured(netbox.get("base_url"), netbox.get("api_token") or netbox.get("token")),
+        )
+    )
+
     eng = raw.get("eng") if isinstance(raw.get("eng"), dict) else {}
     provider = str(eng.get("provider") or "trello").lower()
     provider_cfg = eng.get(provider) if isinstance(eng.get(provider), dict) else {}
@@ -316,6 +328,13 @@ async def _test_integration(card_id: str) -> Dict[str, Any]:
                 result["level"] = "warning"
                 result["message"] += " Service reachability passed; run an indicator lookup to validate the full workflow."
         return result
+
+    if card_id == "netbox":
+        from ...integrations.netbox import NetBoxAPIClient
+
+        client = NetBoxAPIClient.from_config(load_config_from_file())
+        ok = await asyncio.to_thread(client.ping)
+        return _result(ok, "NetBox API status check passed." if ok else "NetBox API status check failed.")
 
     if card_id == "engineering":
         config = load_config_from_file()

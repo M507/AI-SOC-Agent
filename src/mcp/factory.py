@@ -25,6 +25,7 @@ from ..integrations.edr.elastic_defend.elastic_defend_client import ElasticDefen
 from ..integrations.eng.clickup.clickup_client import ClickUpClient
 from ..integrations.eng.github.github_client import GitHubClient
 from ..integrations.eng.trello.trello_client import TrelloClient
+from ..integrations.netbox import NetBoxAPIClient
 from ..integrations.siem.elastic.elastic_client import ElasticSIEMClient
 from .mcp_server import SamiGPTMCPServer
 
@@ -206,6 +207,18 @@ def _init_cti_clients(config: SamiConfig, mcp_logger: logging.Logger):
     return cti_clients
 
 
+def _init_netbox_client(config: SamiConfig, mcp_logger: logging.Logger):
+    if not config.netbox:
+        return None
+    try:
+        client = NetBoxAPIClient.from_config(config)
+        mcp_logger.info("NetBox client initialized")
+        return client
+    except Exception as e:
+        mcp_logger.error("Failed to initialize NetBox client: %s", e, exc_info=True)
+        return None
+
+
 def _init_eng_client(config: SamiConfig, mcp_logger: logging.Logger):
     if not config.eng:
         return None
@@ -249,6 +262,7 @@ def build_mcp_server(config: Optional[SamiConfig] = None) -> MCPBuildResult:
     siem_clients, default_cluster_id, siem_client = _init_siem_clients(config, mcp_logger)
     edr_client = _init_edr_client(config, mcp_logger)
     cti_clients = _init_cti_clients(config, mcp_logger)
+    netbox_client = _init_netbox_client(config, mcp_logger)
     eng_client = _init_eng_client(config, mcp_logger)
 
     server = SamiGPTMCPServer(
@@ -259,6 +273,7 @@ def build_mcp_server(config: Optional[SamiConfig] = None) -> MCPBuildResult:
         edr_client=edr_client,
         cti_client=cti_clients[0] if cti_clients else None,
         cti_clients=cti_clients or None,
+        netbox_client=netbox_client,
         eng_client=eng_client,
     )
 
@@ -267,16 +282,18 @@ def build_mcp_server(config: Optional[SamiConfig] = None) -> MCPBuildResult:
         "siem": siem_client is not None,
         "edr": edr_client is not None,
         "cti": bool(cti_clients),
+        "netbox": netbox_client is not None,
         "eng": eng_client is not None,
         "tools_count": len(server.tools),
     }
     mcp_logger.info(
-        "MCP server built with %s tools (case=%s siem=%s edr=%s cti=%s eng=%s)",
+        "MCP server built with %s tools (case=%s siem=%s edr=%s cti=%s netbox=%s eng=%s)",
         integrations["tools_count"],
         integrations["case_management"],
         integrations["siem"],
         integrations["edr"],
         integrations["cti"],
+        integrations["netbox"],
         integrations["eng"],
     )
     return MCPBuildResult(server=server, integrations=integrations)

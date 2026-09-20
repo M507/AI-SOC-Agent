@@ -41,7 +41,7 @@ from ..integrations.kb import FileSystemKBClient
 from ..integrations.eng.trello.trello_client import TrelloClient
 from ..integrations.eng.clickup.clickup_client import ClickUpClient
 from ..integrations.eng.github.github_client import GitHubClient
-from ..orchestrator import tools_case, tools_cti, tools_edr, tools_siem, tools_kb, tools_eng
+from ..orchestrator import tools_case, tools_cti, tools_edr, tools_siem, tools_kb, tools_eng, tools_netbox
 from .rules_engine import RulesEngine
 from .agent_profiles import AgentProfileManager
 from .runbook_manager import RunbookManager
@@ -160,6 +160,7 @@ class SamiGPTMCPServer:
         cti_client: Optional[Any] = None,
         cti_clients: Optional[list] = None,
         kb_client: Optional[KBClient] = None,
+        netbox_client: Optional[Any] = None,
         eng_client: Optional[Union[TrelloClient, ClickUpClient, GitHubClient]] = None,
     ):
         """
@@ -173,6 +174,9 @@ class SamiGPTMCPServer:
             edr_client: EDR client.
             cti_client: CTI (Cyber Threat Intelligence) client (single, for backward compatibility).
             cti_clients: List of CTI clients (for multi-platform support).
+            kb_client: Knowledge-base client.
+            netbox_client: NetBox DCIM/IPAM client.
+            eng_client: Engineering board client.
         """
         self.case_client = case_client
         self._siem_clients: Dict[str, SIEMClient] = dict(siem_clients or {})
@@ -192,6 +196,7 @@ class SamiGPTMCPServer:
             self.cti_client = cti_client
         # KB client defaults to filesystem-based client so it is always available
         self.kb_client: KBClient = kb_client or FileSystemKBClient()
+        self.netbox_client = netbox_client
         self.eng_client = eng_client
         self.rules_engine = RulesEngine(
             case_client=case_client,
@@ -268,6 +273,7 @@ class SamiGPTMCPServer:
                 "edr": self.edr_client is not None,
                 "cti": bool(self.cti_clients),
                 "kb": self.kb_client is not None,
+                "netbox": self.netbox_client is not None,
                 "eng": self.eng_client is not None,
             },
             "elastic_clusters": sorted(self._siem_clients.keys()),
@@ -287,6 +293,8 @@ class SamiGPTMCPServer:
         self._register_edr_tools()
         # CTI tools
         self._register_cti_tools()
+        # NetBox DCIM/IPAM tools
+        self._register_netbox_tools()
         # Rules engine tools
         self._register_rules_tools()
         # Runbook and agent profile tools
@@ -2229,6 +2237,110 @@ class SamiGPTMCPServer:
             },
         }
 
+    def _register_netbox_tools(self) -> None:
+        """
+        Register NetBox DCIM/IPAM enrichment tools.
+
+        Available tools:
+        - netbox_lookup_ip
+        - netbox_lookup_host
+        - netbox_lookup_prefix
+        - netbox_search
+        """
+        if not self.netbox_client:
+            self._mcp_logger.warning(
+                "NetBox tools not registered: No NetBox client configured. "
+                "Configure netbox in config.json to enable NetBox tools."
+            )
+            return
+        self._mcp_logger.info("Registering 4 NetBox tools")
+
+        self.tools["netbox_lookup_ip"] = {
+            "name": "netbox_lookup_ip",
+            "description": (
+                "Look up an IP address in NetBox IPAM. Returns assignment (device or VM), "
+                "DNS name, status, VRF/tenant, and description. Use during investigations to "
+                "identify what asset owns an IP seen in alerts or logs."
+            ),
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "ip": {
+                        "type": "string",
+                        "description": "IPv4/IPv6 address to look up (with or without prefix length)",
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Maximum results (default 25)",
+                    },
+                },
+                "required": ["ip"],
+            },
+        }
+        self.tools["netbox_lookup_host"] = {
+            "name": "netbox_lookup_host",
+            "description": (
+                "Search NetBox for devices and virtual machines by name/hostname. "
+                "Returns role, site, status, primary IP, and description."
+            ),
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "name": {
+                        "type": "string",
+                        "description": "Device or VM name / hostname to search",
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Maximum results (default 25)",
+                    },
+                },
+                "required": ["name"],
+            },
+        }
+        self.tools["netbox_lookup_prefix"] = {
+            "name": "netbox_lookup_prefix",
+            "description": (
+                "Look up NetBox IPAM prefixes. Pass a CIDR to match that prefix, or an IP "
+                "to find the containing prefix (site, role, description)."
+            ),
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "CIDR (e.g. 10.7.7.0/24) or IP whose containing prefix to find",
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Maximum results (default 25)",
+                    },
+                },
+                "required": ["query"],
+            },
+        }
+        self.tools["netbox_search"] = {
+            "name": "netbox_search",
+            "description": (
+                "Free-text search across NetBox devices, virtual machines, and IP addresses. "
+                "Use when you have a partial hostname, DNS name, or asset label."
+            ),
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "Free-text search query",
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Maximum results per object type (default 25)",
+                    },
+                },
+                "required": ["query"],
+            },
+        }
+
     def _register_rules_tools(self) -> None:
         """
         Register rules engine tools.
@@ -3796,6 +3908,48 @@ To be populated during investigation.
                 clients=self.cti_clients if self.cti_clients else None,  # Pass list of clients
             )
             self._mcp_logger.debug(f"Tool {tool_name} completed successfully")
+            return result
+
+        # NetBox tools
+        elif tool_name == "netbox_lookup_ip" and self.netbox_client:
+            result = tools_netbox.netbox_lookup_ip(
+                ip=args["ip"],
+                client=self.netbox_client,
+                limit=int(args.get("limit") or 25),
+            )
+            self._mcp_logger.debug(
+                f"Tool {tool_name} completed: {result.get('count', 0)} IP record(s)"
+            )
+            return result
+        elif tool_name == "netbox_lookup_host" and self.netbox_client:
+            result = tools_netbox.netbox_lookup_host(
+                name=args["name"],
+                client=self.netbox_client,
+                limit=int(args.get("limit") or 25),
+            )
+            self._mcp_logger.debug(
+                f"Tool {tool_name} completed: {result.get('count', 0)} host(s)"
+            )
+            return result
+        elif tool_name == "netbox_lookup_prefix" and self.netbox_client:
+            result = tools_netbox.netbox_lookup_prefix(
+                query=args["query"],
+                client=self.netbox_client,
+                limit=int(args.get("limit") or 25),
+            )
+            self._mcp_logger.debug(
+                f"Tool {tool_name} completed: {result.get('count', 0)} prefix(es)"
+            )
+            return result
+        elif tool_name == "netbox_search" and self.netbox_client:
+            result = tools_netbox.netbox_search(
+                query=args["query"],
+                client=self.netbox_client,
+                limit=int(args.get("limit") or 25),
+            )
+            self._mcp_logger.debug(
+                f"Tool {tool_name} completed: {result.get('count', 0)} total hit(s)"
+            )
             return result
 
         # Rules engine tools

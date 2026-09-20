@@ -16,7 +16,7 @@
   "elastic": {
     "_comment": "List of Elastic/Kibana clusters. Sessions and autoruns bind to one cluster id. Auth is api_key or username+password. default_skill_vector is a CVSS-style MCP Skill Vector (MSV:1/IRIS:Y/...) copied onto new clusters; each cluster.skill_vector can override it.",
     "default_cluster_id": "default",
-    "default_skill_vector": "MSV:1/IRIS:Y/TH:Y/SIEM:Y/EDR:Y/CTI:Y/KB:Y/ENG:Y/RB:Y/AG:Y/RU:Y",
+    "default_skill_vector": "MSV:1/IRIS:Y/TH:Y/SIEM:Y/EDR:Y/CTI:Y/KB:Y/NB:Y/ENG:Y/RB:Y/AG:Y/RU:Y",
     "clusters": [
       {
         "id": "default",
@@ -27,7 +27,7 @@
         "password": "",
         "timeout_seconds": 30,
         "verify_ssl": true,
-        "skill_vector": "MSV:1/IRIS:Y/TH:Y/SIEM:Y/EDR:Y/CTI:Y/KB:Y/ENG:Y/RB:Y/AG:Y/RU:Y"
+        "skill_vector": "MSV:1/IRIS:Y/TH:Y/SIEM:Y/EDR:Y/CTI:Y/KB:Y/NB:Y/ENG:Y/RB:Y/AG:Y/RU:Y"
       }
     ]
   },
@@ -51,6 +51,13 @@
     "timeout_seconds": 30,
     "verify_ssl": false
   },
+  "netbox": {
+    "_comment": "NetBox DCIM/IPAM. Map NETBOX_URL→base_url, NETBOX_TOKEN→api_token.",
+    "base_url": "http://10.10.10.79:8851",
+    "api_token": "",
+    "timeout_seconds": 30,
+    "verify_ssl": false
+  },
   "ai_controller": {
     "_comment": "AI Controller configuration for managing agent executions",
     "storage_dir": "data/ai_controller",
@@ -58,8 +65,8 @@
     "web_host": "0.0.0.0"
   },
   "llm": {
-    "_comment": "LLM backend used by the web UI for freeform prompts. provider: cursor_agent | openai | openrouter | openwebui | custom",
-    "provider": "cursor_agent",
+    "_comment": "LLM backend used by the web UI for freeform prompts. provider: cursor_agent | openai | openrouter | openwebui | custom. Map OPENWEBUI_URL→base_url, OPENWEBUI_KEY→api_key, OPENWEBUI_MODEL→model.",
+    "provider": "openwebui",
     "max_tool_iterations": 12,
     "system_prompt": "",
     "cursor_agent": {
@@ -77,8 +84,8 @@
     },
     "openwebui": {
       "api_key": "",
-      "base_url": "http://127.0.0.1:8080/",
-      "model": ""
+      "base_url": "http://10.10.10.82:8080",
+      "model": "auto"
     },
     "custom": {
       "api_key": "",

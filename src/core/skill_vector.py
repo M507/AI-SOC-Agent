@@ -3,7 +3,7 @@ MCP Skill Vector (MSV) — CVSS-style enablement string.
 
 Stored on each Elastic cluster (and as a default for new clusters):
 
-    MSV:1/IRIS:Y/TH:Y/SIEM:Y/EDR:N/CTI:Y/KB:Y/ENG:N/RB:Y/AG:Y/RU:Y/SK:create_case=N
+    MSV:1/IRIS:Y/TH:Y/SIEM:Y/EDR:N/CTI:Y/KB:Y/NB:Y/ENG:N/RB:Y/AG:Y/RU:Y/SK:create_case=N
 
 Solution metrics are Y or N. Optional SK overrides flip individual tools:
   SK:create_case=N   disable one skill even if its solution is on
@@ -29,6 +29,7 @@ SOLUTION_ORDER: Tuple[str, ...] = (
     "EDR",
     "CTI",
     "KB",
+    "NB",
     "ENG",
     "RB",
     "AG",
@@ -42,6 +43,7 @@ SOLUTION_LABELS: Dict[str, str] = {
     "EDR": "EDR",
     "CTI": "Threat intel",
     "KB": "Knowledge base",
+    "NB": "NetBox",
     "ENG": "Engineering",
     "RB": "Runbooks",
     "AG": "Agent profiles",
@@ -55,6 +57,7 @@ SOLUTION_SHORT: Dict[str, str] = {
     "EDR": "EDR",
     "CTI": "CTI",
     "KB": "KB",
+    "NB": "NetBox",
     "ENG": "Eng",
     "RB": "Runbooks",
     "AG": "Agents",
@@ -68,6 +71,10 @@ _LABEL_OVERRIDES = {
     "get_ioc_matches": "Get IOC matches",
     "kb_list_clients": "List knowledge-base clients",
     "kb_get_client_infra": "Get client infrastructure",
+    "netbox_lookup_ip": "Look up IP in NetBox",
+    "netbox_lookup_host": "Look up host in NetBox",
+    "netbox_lookup_prefix": "Look up prefix in NetBox",
+    "netbox_search": "Search NetBox assets",
     "get_all_uncertain_alerts_for_host": "Uncertain alerts for a host",
     "create_fine_tuning_recommendation": "File a fine-tune suggestion",
     "create_visibility_recommendation": "File a visibility-gap note",
@@ -77,6 +84,13 @@ _LABEL_OVERRIDES = {
     "isolate_endpoint": "Isolate endpoint (Elastic Defend)",
     "release_endpoint_isolation": "Release endpoint isolation",
 }
+
+NETBOX_SKILLS: Tuple[str, ...] = (
+    "netbox_lookup_ip",
+    "netbox_lookup_host",
+    "netbox_lookup_prefix",
+    "netbox_search",
+)
 
 
 def human_skill_label(skill: str) -> str:
@@ -204,6 +218,13 @@ SKILL_GROUPS: Tuple[Dict[str, object], ...] = (
         "solutions": ("KB",),
         "help": "Client infrastructure notes used during investigations.",
         "skills": ("kb_list_clients", "kb_get_client_infra"),
+    },
+    {
+        "id": "NB",
+        "name": "NetBox skills",
+        "solutions": ("NB",),
+        "help": "DCIM/IPAM lookups against NetBox for host, IP, and prefix enrichment.",
+        "skills": NETBOX_SKILLS,
     },
     {
         "id": "ENG",

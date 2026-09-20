@@ -80,6 +80,20 @@ class CTIConfig:
 
 
 @dataclass
+class NetBoxConfig:
+    """
+    Configuration for NetBox DCIM/IPAM integration.
+
+    Map NETBOX_URL→base_url, NETBOX_TOKEN→api_token.
+    """
+
+    base_url: str
+    api_token: str
+    timeout_seconds: int = 30
+    verify_ssl: bool = True
+
+
+@dataclass
 class TrelloConfig:
     """
     Configuration for Trello integration.
@@ -226,6 +240,7 @@ class SamiConfig:
     elastic: Optional[ElasticConfig] = None
     edr: Optional[EDRConfig] = None
     cti: Optional[CTIConfig] = None
+    netbox: Optional[NetBoxConfig] = None
     eng: Optional[EngConfig] = None
     logging: Optional[LoggingConfig] = None
     web: Optional[WebConfig] = None

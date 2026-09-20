@@ -25,6 +25,7 @@ from .config import (
     LLMConfig,
     LoggingConfig,
     MCPRuntimeConfig,
+    NetBoxConfig,
     SamiConfig,
     TheHiveConfig,
     TrelloConfig,
@@ -88,6 +89,14 @@ def _config_to_dict(config: SamiConfig) -> Dict[str, Any]:
             "api_key": config.cti.api_key,
             "timeout_seconds": config.cti.timeout_seconds,
             "verify_ssl": config.cti.verify_ssl,
+        }
+
+    if config.netbox:
+        result["netbox"] = {
+            "base_url": config.netbox.base_url,
+            "api_token": config.netbox.api_token,
+            "timeout_seconds": config.netbox.timeout_seconds,
+            "verify_ssl": config.netbox.verify_ssl,
         }
 
     if config.eng:
@@ -217,6 +226,18 @@ def _dict_to_config(data: Dict[str, Any]) -> SamiConfig:
                 verify_ssl=cti_data.get("verify_ssl", True),
             )
 
+    netbox_cfg: Optional[NetBoxConfig] = None
+    if "netbox" in data and data["netbox"]:
+        nb_data = data["netbox"]
+        token = nb_data.get("api_token") or nb_data.get("token")
+        if nb_data.get("base_url") and token:
+            netbox_cfg = NetBoxConfig(
+                base_url=nb_data["base_url"],
+                api_token=token,
+                timeout_seconds=nb_data.get("timeout_seconds", 30),
+                verify_ssl=nb_data.get("verify_ssl", True),
+            )
+
     eng_cfg: Optional[EngConfig] = None
     if "eng" in data and data["eng"]:
         eng_data = data["eng"]
@@ -307,6 +328,7 @@ def _dict_to_config(data: Dict[str, Any]) -> SamiConfig:
         elastic=elastic_cfg,
         edr=edr_cfg,
         cti=cti_cfg,
+        netbox=netbox_cfg,
         eng=eng_cfg,
         logging=logging_cfg,
         ai_controller=ai_controller_cfg,
@@ -416,11 +438,33 @@ def _env_dict_to_config(env_dict: Dict[str, Any]) -> SamiConfig:
             verify_ssl=verify_ssl,
         )
 
+    netbox_cfg: Optional[NetBoxConfig] = None
+    netbox_url = env_dict.get("NETBOX_URL") or env_dict.get("SAMIGPT_NETBOX_URL")
+    netbox_token = env_dict.get("NETBOX_TOKEN") or env_dict.get("SAMIGPT_NETBOX_TOKEN")
+    if netbox_url and netbox_token:
+        timeout = int(
+            env_dict.get(
+                "NETBOX_TIMEOUT_SECONDS",
+                env_dict.get("SAMIGPT_NETBOX_TIMEOUT_SECONDS", "30"),
+            )
+        )
+        verify_ssl = env_dict.get(
+            "NETBOX_VERIFY_SSL",
+            env_dict.get("SAMIGPT_NETBOX_VERIFY_SSL", "true"),
+        ).lower() in ("true", "1", "yes")
+        netbox_cfg = NetBoxConfig(
+            base_url=netbox_url,
+            api_token=netbox_token,
+            timeout_seconds=timeout,
+            verify_ssl=verify_ssl,
+        )
+
     return SamiConfig(
         thehive=thehive_cfg,
         iris=iris_cfg,
         elastic=elastic_cfg,
         edr=edr_cfg,
+        netbox=netbox_cfg,
         logging=logging_cfg,
     )
 
@@ -599,6 +643,20 @@ def save_config_to_env_file(config: SamiConfig, env_path: str = ENV_FILE) -> Non
             lines.append("# EDR Configuration (disabled)")
             lines.append("# SAMIGPT_EDR_URL=")
             lines.append("# SAMIGPT_EDR_API_KEY=")
+            lines.append("")
+
+        # NetBox
+        if config.netbox:
+            lines.append("# NetBox DCIM/IPAM")
+            lines.append(f"NETBOX_URL={config.netbox.base_url}")
+            lines.append(f'NETBOX_TOKEN="{config.netbox.api_token}"')
+            lines.append(f"NETBOX_TIMEOUT_SECONDS={config.netbox.timeout_seconds}")
+            lines.append(f"NETBOX_VERIFY_SSL={'true' if config.netbox.verify_ssl else 'false'}")
+            lines.append("")
+        else:
+            lines.append("# NetBox DCIM/IPAM (disabled)")
+            lines.append("# NETBOX_URL=")
+            lines.append("# NETBOX_TOKEN=")
             lines.append("")
 
         with open(env_file, "w") as f:

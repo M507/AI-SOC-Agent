@@ -16,6 +16,7 @@ from ...core.elastic_clusters import client_for_id, skill_vector_for_cluster
 from ...core.logging import get_logger
 from ...core.skill_vector import (
     CASE_SKILLS,
+    NETBOX_SKILLS,
     SIEM_SKILLS,
     SKILL_GROUPS,
     human_skill_label,
@@ -31,6 +32,7 @@ INTEGRATION_SOLUTIONS = {
     "edr": "EDR",
     "cti": "CTI",
     "cti_opencti": "CTI",
+    "netbox": "NB",
     "engineering": "ENG",
 }
 
@@ -90,6 +92,13 @@ SIEM_ARGS: Dict[str, Dict[str, Any]] = {
     "search_security_rules": {"query": "__sami_skill_test__"},
     "search_lab_detection_rules": {"query": "powershell", "limit": 3},
     "get_lab_detection_rule": {"rule_name": "PowerShell"},
+}
+
+NETBOX_ARGS: Dict[str, Dict[str, Any]] = {
+    "netbox_lookup_ip": {"ip": "203.0.113.1", "limit": 1},
+    "netbox_lookup_host": {"name": "__sami_skill_test__", "limit": 1},
+    "netbox_lookup_prefix": {"query": "203.0.113.0/24", "limit": 1},
+    "netbox_search": {"query": "__sami_skill_test__", "limit": 1},
 }
 
 
@@ -200,6 +209,12 @@ def _build_context(integration_id: str) -> ProbeContext:
 
             client = LocalTipCTIClient.from_config(scoped)
         return ProbeContext(integration_id, SamiGPTMCPServer(cti_client=client), client)
+
+    if integration_id == "netbox":
+        from ...integrations.netbox import NetBoxAPIClient
+
+        client = NetBoxAPIClient.from_config(config)
+        return ProbeContext(integration_id, SamiGPTMCPServer(netbox_client=client), client)
 
     if integration_id == "engineering":
         provider = str(config.eng.provider if config.eng else "trello").lower()
@@ -518,6 +533,12 @@ async def test_skill(context: ProbeContext, skill: str) -> Dict[str, Any]:
                     if context.integration_id == "cti"
                     else "Dummy threat-intel lookup completed."
                 ),
+            }
+        elif skill in NETBOX_SKILLS:
+            args = NETBOX_ARGS.get(skill) or {"limit": 1}
+            payload = {
+                "result": await _execute(context.server, skill, args),
+                "success_message": "NetBox read-only lookup completed.",
             }
         elif solution_for_integration(context.integration_id) == "ENG":
             payload = await _test_eng_skill(context, skill)
