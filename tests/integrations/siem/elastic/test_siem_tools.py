@@ -27,6 +27,10 @@ from src.orchestrator.tools_siem import (
     search_user_activity,
     pivot_on_indicator,
     search_kql_query,
+    search_lucene_query,
+    search_eql_query,
+    search_dsl_query,
+    search_esql_query,
     get_recent_alerts,
     get_security_alerts,
     get_security_alert_by_id,
@@ -169,8 +173,26 @@ def main():
         hours_back=24,
         client=siem_client
     )
-    
-    # Test KQL query with Elasticsearch Query DSL
+
+    results["search_lucene_query"] = run_tool_test(
+        "search_lucene_query",
+        search_lucene_query,
+        lucene_query='process.name:powershell.exe',
+        limit=10,
+        hours_back=24,
+        client=siem_client,
+    )
+
+    results["search_eql_query"] = run_tool_test(
+        "search_eql_query",
+        search_eql_query,
+        eql_query='process where process.name == "powershell.exe"',
+        limit=10,
+        hours_back=24,
+        client=siem_client,
+    )
+
+    # Test dedicated DSL skill (prefer search_dsl_query over stuffing JSON into KQL)
     es_query_dsl = json.dumps({
         "query": {
             "bool": {
@@ -181,8 +203,26 @@ def main():
         },
         "size": 10
     })
+    results["search_dsl_query"] = run_tool_test(
+        "search_dsl_query",
+        search_dsl_query,
+        dsl_query=es_query_dsl,
+        limit=10,
+        hours_back=24,
+        client=siem_client,
+    )
+
+    results["search_esql_query"] = run_tool_test(
+        "search_esql_query",
+        search_esql_query,
+        esql_query='FROM logs-* | WHERE host.name IS NOT NULL | KEEP @timestamp, host.name | LIMIT 5',
+        limit=5,
+        client=siem_client,
+    )
+
+    # Legacy: KQL skill still accepts DSL JSON for compatibility
     results["search_kql_query_es_dsl"] = run_tool_test(
-        "search_kql_query (Elasticsearch DSL)",
+        "search_kql_query (Elasticsearch DSL compatibility)",
         search_kql_query,
         kql_query=es_query_dsl,
         limit=10,

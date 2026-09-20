@@ -38,7 +38,7 @@ This runbook explicitly **excludes**:
 ## Tools
 
 *   **CTI Tools:** `lookup_hash_ti`
-*   **SIEM Tools:** `lookup_entity`, `get_ioc_matches`, `get_file_report`, `get_ip_address_report`
+*   **SIEM Tools:** `lookup_entity`, `get_ioc_matches`, `get_file_report`, `get_ip_address_report`, `search_security_events`, `search_kql_query`, `search_lucene_query`, `search_eql_query`, `search_dsl_query`, `search_esql_query`
 
 ## Workflow Steps
 

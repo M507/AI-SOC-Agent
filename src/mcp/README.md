@@ -41,15 +41,19 @@ Tools for managing security incidents and cases:
 - `assign_case` - Assign to analysts
 - `get_case_timeline` - View case history
 
-### SIEM Tools (7 tools)
-Tools for security event analysis:
-- `search_security_events` - Query security logs
-- `get_file_report` - Analyze files by hash
-- `get_file_behavior_summary` - File behavior analysis
-- `get_entities_related_to_file` - Find related entities
-- `get_ip_address_report` - IP reputation and context
-- `search_user_activity` - User activity investigation
-- `pivot_on_indicator` - IOC-based investigation
+### SIEM Tools
+
+Elastic/ELK tools are registered when SIEM is configured. The live catalog is driven by `SIEM_SKILLS` in `src/core/skill_vector.py` and documented in `skills.md` / `TOOLS.md`.
+
+Core search / investigation (query languages):
+- `search_security_events` — general event search
+- `search_kql_query` — Kibana Query Language (KQL)
+- `search_lucene_query` — Lucene `query_string`
+- `search_eql_query` — Event Query Language (EQL)
+- `search_dsl_query` — Elasticsearch Query DSL (JSON)
+- `search_esql_query` — ES|QL
+
+Also includes alerts (`get_security_alerts`, `get_recent_alerts`, `get_rule_detections`, …), enrichment, Elastic Defend isolation, and Home Lab rule suggestions. Enable/disable groups in the Elastic Settings UI skill vector.
 
 ### EDR Tools (6 tools)
 Tools for endpoint investigation and response:

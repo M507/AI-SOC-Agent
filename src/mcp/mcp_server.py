@@ -2996,6 +2996,7 @@ To be populated during investigation.
             "description": profile.description,
             "capabilities": profile.capabilities,
             "runbooks": profile.runbooks,
+            "tools": profile.tools or [],
             "decision_authority": {
                 "close_false_positives": profile.decision_authority.close_false_positives,
                 "close_benign_true_positives": profile.decision_authority.close_benign_true_positives,

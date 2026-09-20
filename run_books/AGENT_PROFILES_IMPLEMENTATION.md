@@ -23,10 +23,12 @@ Configured in `config/agent_profiles.json`:
 
 ## MCP tools
 
-- `list_agent_profiles` / `get_agent_profile` — inspect the SOC1 profile
+- `list_agent_profiles` / `get_agent_profile` — inspect the SOC1 profile (includes the configured `tools` list)
 - `route_case_to_agent` — currently routes to `soc1_triage_agent`
 - `execute_as_agent` — loads the agent profile, selects a SOC1 runbook, returns runbook content for the model to follow
 - `list_runbooks` / `get_runbook` / `execute_runbook` — discover and load markdown under `run_books/soc1/`
+
+SOC1 SIEM query skills (also gated by the Elastic skill vector / UI): `search_security_events`, `search_kql_query`, `search_lucene_query`, `search_eql_query`, `search_dsl_query`, `search_esql_query`. Full catalog: `skills.md`.
 
 ## Routing
 

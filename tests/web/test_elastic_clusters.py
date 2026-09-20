@@ -90,6 +90,15 @@ def test_new_cluster_inherits_default_skill_vector(tmp_path, monkeypatch):
     elk = next(group for group in catalog["skill_catalog"]["groups"] if group["id"] == "SIEM")
     assert any(skill["id"] == "get_recent_alerts" for skill in elk["skills"])
     assert any(skill["id"] == "search_security_events" for skill in elk["skills"])
+    for query_skill in (
+        "search_kql_query",
+        "search_lucene_query",
+        "search_eql_query",
+        "search_dsl_query",
+        "search_esql_query",
+    ):
+        assert any(skill["id"] == query_skill for skill in elk["skills"]), query_skill
+        assert all(skill["label"] for skill in elk["skills"] if skill["id"] == query_skill)
     netbox = next(group for group in catalog["skill_catalog"]["groups"] if group["id"] == "NB")
     assert any(skill["id"] == "netbox_lookup_ip" for skill in netbox["skills"])
     default_vector = catalog["default_skill_vector"]

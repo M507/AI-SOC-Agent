@@ -103,6 +103,7 @@ SOC1 **recommends** closures; an analyst must approve them in the SamiGPT **Requ
 
 - **Lightweight enrichment**
   - `get_ioc_matches`, `lookup_entity`, `get_file_report`, `get_ip_address_report`, `lookup_hash_ti`, targeted `search_security_events` as needed (3–5 entities max).
+  - When a free-form search is needed, pick the right query skill: `search_kql_query` (KQL), `search_lucene_query` (Lucene), `search_eql_query` (EQL process/sequences), `search_dsl_query` (JSON DSL), `search_esql_query` (ES|QL). Prefer structured tools (`get_alerts_by_entity`, `get_network_events`, …) first.
 
 - **Alert documentation only (verdict always required)**
   - **MANDATORY:** `update_alert_verdict` at lock (`in-progress`) and again with the **final** assessment before ending.

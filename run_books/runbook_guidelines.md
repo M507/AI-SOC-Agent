@@ -65,7 +65,7 @@ Runbooks are structured markdown documents that the MCP server parses for metada
 
 *   **Tools (`## Tools`):**
     *   Group tools by functional area (matching existing runbooks):
-        *   **SIEM Tools:** `get_security_alert_by_id`, `get_rule_detections`, `get_security_alerts` (incl. `status_filter=closed|acknowledged`), `search_security_events`, `lookup_entity`, `get_ioc_matches`, `get_file_report`, `get_ip_address_report`, `pivot_on_indicator`, `get_entities_related_to_file`, `get_file_behavior_summary`, `get_threat_intel`.
+        *   **SIEM Tools:** `get_security_alert_by_id`, `get_rule_detections`, `get_security_alerts` (incl. `status_filter=closed|acknowledged` and `rule_name`/`rule_id`), `search_security_events`, `search_kql_query`, `search_lucene_query`, `search_eql_query`, `search_dsl_query`, `search_esql_query`, `lookup_entity`, `get_ioc_matches`, `get_file_report`, `get_ip_address_report`, `pivot_on_indicator`, `get_entities_related_to_file`, `get_file_behavior_summary`, `get_threat_intel`.
         *   **NetBox Tools:** `netbox_lookup_ip`, `netbox_lookup_host`, `netbox_lookup_prefix`, `netbox_search`.
         *   **CTI Tools:** `lookup_hash_ti` (and others as applicable).
         *   **EDR Tools:** `get_endpoint_summary`, `isolate_endpoint`, `kill_process_on_endpoint`, `collect_forensic_artifacts` (where relevant).

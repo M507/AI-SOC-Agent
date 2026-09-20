@@ -158,7 +158,7 @@ class ModalManager {
     }
 
     /**
-     * Paste an alert UUID into the session prompt without sending.
+     * Paste an investigate-alert prompt into the session input without sending.
      */
     seedCommandInputWithAlert(alertId) {
         const id = String(alertId || '').trim();
@@ -166,14 +166,18 @@ class ModalManager {
         const commandInput = document.getElementById('command-input');
         if (!commandInput) return;
 
+        const prompt = `investigate this alert _id: ${id}`;
         const current = commandInput.value || '';
         if (current.includes(id)) {
+            if (!current.includes(prompt) && !current.trim()) {
+                commandInput.value = prompt;
+            }
             commandInput.focus();
             return;
         }
 
         const separator = current && !/\s$/.test(current) ? ' ' : '';
-        commandInput.value = current ? `${current}${separator}${id}` : id;
+        commandInput.value = current ? `${current}${separator}${prompt}` : prompt;
         commandInput.focus();
         try {
             const end = commandInput.value.length;

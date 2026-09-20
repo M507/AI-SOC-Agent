@@ -196,7 +196,7 @@ SKILL_GROUPS: Tuple[Dict[str, object], ...] = (
         "id": "SIEM",
         "name": "Elastic / ELK skills",
         "solutions": ("SIEM",),
-        "help": "Search, alerts, detections, Elastic Defend isolation, and Home Lab rule suggestions against the Elastic cluster bound to this tab. Alert skills support rule name/id and status filters (open/acknowledged/closed).",
+        "help": "Search, alerts, detections, Elastic Defend isolation, and Home Lab rule suggestions against the Elastic cluster bound to this tab. Alert skills support rule name/id and status filters (open/acknowledged/closed). Query languages: search_kql_query, search_lucene_query, search_eql_query, search_dsl_query, search_esql_query.",
         "skills": SIEM_SKILLS,
     },
     {

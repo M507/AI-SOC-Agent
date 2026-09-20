@@ -59,6 +59,7 @@ def test_new_session_modal_seeds_selected_alert_uuid_into_prompt():
     assert "session-alert-select" in modals
     assert "loadSessionAlertOptions" in modals
     assert "seedCommandInputWithAlert" in modals
+    assert "investigate this alert _id:" in modals
     assert "getRecentAlerts" in api
     assert "/api/elastic/recent-alerts" in api
 

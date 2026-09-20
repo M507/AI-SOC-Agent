@@ -1,0 +1,34 @@
+[Unit]
+Description=SamiGPT SOC AI Agent (servee)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/servee
+ExecStart=/opt/servee/venv/bin/python /opt/servee/app.py
+Restart=always
+RestartSec=5
+TimeoutStopSec=30
+KillMode=mixed
+
+# Runtime environment
+Environment=PYTHONUNBUFFERED=1
+Environment=SAMI_COOKIE_SECURE=1
+
+# Logs go to journal + app's own logs/ directory
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=servee
+
+# Hardening (keep writable dirs for config, certs, data, logs).
+# ProtectHome must stay off: the venv interpreter is often a symlink into
+# /root/.pyenv/... and ProtectHome=true makes that path disappear (203/EXEC).
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=false
+ReadWritePaths=/opt/servee
+
+[Install]
+WantedBy=multi-user.target

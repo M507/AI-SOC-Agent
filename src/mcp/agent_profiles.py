@@ -34,6 +34,7 @@ class AgentProfile:
     decision_authority: DecisionAuthority
     auto_select_runbook: bool = True
     max_concurrent_cases: int = 10
+    tools: Optional[List[str]] = None
 
     def get_starting_runbook(self) -> Optional[str]:
         """
@@ -129,7 +130,8 @@ class AgentProfileManager:
                 runbooks=agent_config.get("runbooks", []),
                 decision_authority=decision_auth,
                 auto_select_runbook=agent_config.get("auto_select_runbook", True),
-                max_concurrent_cases=agent_config.get("max_concurrent_cases", 10)
+                max_concurrent_cases=agent_config.get("max_concurrent_cases", 10),
+                tools=agent_config.get("tools") or [],
             )
             
             self.profiles[agent_id] = profile
@@ -220,6 +222,7 @@ class AgentProfileManager:
                 "description": profile.description,
                 "capabilities": profile.capabilities,
                 "runbook_count": len(profile.runbooks),
+                "tool_count": len(profile.tools or []),
                 "decision_authority": {
                     "close_false_positives": profile.decision_authority.close_false_positives,
                     "escalate_to_soc2": profile.decision_authority.escalate_to_soc2,

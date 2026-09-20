@@ -77,6 +77,37 @@ See "Connect MCP Server to AI Tools" below.
 and custom OpenAI-compatible APIs work without the Cursor IDE `cursor-agent` binary.
 Those providers call SamiGPT tools through the MCP server when it is running.
 
+#### Install as a systemd service (`servee`)
+
+To run SamiGPT as a boot-persistent service, use the installer under `servee/`.
+It copies the app to `/opt/servee`, creates a Python 3.10+ venv, installs
+dependencies, and enables + starts the `servee` unit (`Restart=always`).
+Re-running the script reinstalls cleanly and preserves `config.json`, `certs/`,
+`data/`, and `logs/`.
+
+```bash
+# Install or reinstall (requires root; stop any manual `python app.py` first)
+sudo ./servee/install.sh
+
+# Service control
+sudo systemctl status servee
+sudo systemctl restart servee
+sudo systemctl stop servee
+sudo systemctl start servee
+
+# Follow logs
+journalctl -u servee -f
+```
+
+Optional: point the installer at a specific Python 3.10+ binary:
+
+```bash
+sudo PYTHON_BIN=/path/to/python3.11 ./servee/install.sh
+```
+
+After install, the UI is at `https://<host>:8081` and MCP at `:8082`, with
+runtime files under `/opt/servee`.
+
 ## Overview
 
 SamiGPT acts as an MCP server that exposes security investigation and response capabilities as tools that can be used by AI agents, LLM tools, and automated workflows. It provides a unified, vendor-neutral API layer that connects to:

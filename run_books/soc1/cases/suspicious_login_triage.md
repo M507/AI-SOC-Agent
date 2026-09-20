@@ -37,7 +37,7 @@ This runbook explicitly **excludes**:
 ## Tools
 
 *   **Case Management Tools:** `review_case`, `add_case_comment`, `attach_observable_to_case`, `search_cases`, `add_case_task`
-*   **SIEM Tools:** `get_security_alert_by_id`, `lookup_entity`, `search_security_events`, `search_user_activity`, `get_ip_address_report`, `pivot_on_indicator`, `get_ioc_matches`, `get_alerts_by_entity`, `get_alerts_by_time_window`
+*   **SIEM Tools:** `get_security_alert_by_id`, `lookup_entity`, `search_security_events`, `search_kql_query`, `search_lucene_query`, `search_eql_query`, `search_dsl_query`, `search_esql_query`, `search_user_activity`, `get_ip_address_report`, `pivot_on_indicator`, `get_ioc_matches`, `get_alerts_by_entity`, `get_alerts_by_time_window`, `get_rule_detections`, `get_security_alerts`
 *   **Engineering Tools:** `list_fine_tuning_recommendations`, `create_fine_tuning_recommendation`, `add_comment_to_fine_tuning_recommendation`, `create_visibility_recommendation`
 
 ## Workflow Steps

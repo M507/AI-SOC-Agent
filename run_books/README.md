@@ -59,3 +59,5 @@ SOC1 handles initial triage. Confirmed true positives that need deeper work are 
 ## References
 
 - Original inspiration: [ADK Runbooks](https://github.com/dandye/adk_runbooks/tree/main)
+- Skill catalog: [`skills.md`](../skills.md) — includes Elastic query skills (`search_kql_query`, `search_lucene_query`, `search_eql_query`, `search_dsl_query`, `search_esql_query`)
+- Tool details: [`src/mcp/TOOLS.md`](../src/mcp/TOOLS.md)

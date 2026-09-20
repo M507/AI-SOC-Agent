@@ -45,7 +45,9 @@ Standardized SOC1 triage for SIEM alerts: start from the alert queue, **before a
 - `get_security_alert_by_id` — **open matching past alerts and read their verdicts + comments/notes**
 
 **SIEM – investigation**
-- `search_security_events`, `get_network_events`, `get_dns_events`, `get_email_events`
+- `search_security_events`
+- Query languages (pick the right one): `search_kql_query` (KQL), `search_lucene_query` (Lucene), `search_eql_query` (EQL sequences), `search_dsl_query` (JSON DSL), `search_esql_query` (ES|QL)
+- `get_network_events`, `get_dns_events`, `get_email_events`
 - `get_alerts_by_time_window`
 - `lookup_entity`, `get_ioc_matches`, `get_file_report`, `get_ip_address_report`
 

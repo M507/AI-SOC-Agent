@@ -230,6 +230,10 @@
                                 <p class="settings-help">
                                     Use the Elasticsearch API URL when possible (usually port 9200).
                                     Kibana (5601) can be saved and tested, but search tools expect Elasticsearch.
+                                    SIEM query skills include KQL, Lucene, EQL, Query DSL, and ES|QL
+                                    (<code>search_kql_query</code>, <code>search_lucene_query</code>,
+                                    <code>search_eql_query</code>, <code>search_dsl_query</code>,
+                                    <code>search_esql_query</code>) — toggle them under Edit skills.
                                 </p>
                                 <label for="elastic-auth-type">Authentication</label>
                                 <select id="elastic-auth-type">
@@ -495,7 +499,7 @@
                 <select id="session-alert-select">
                     <option value="">None</option>
                 </select>
-                <small>Pick a recent alert to paste its UUID into the prompt after the session opens. Nothing is sent automatically.</small>
+                <small>Pick a recent alert to paste “investigate this alert _id: …” into the prompt after the session opens. Nothing is sent automatically.</small>
             </div>
             <div class="modal-footer">
                 <button id="create-session-btn" class="btn btn-primary">Create</button>
