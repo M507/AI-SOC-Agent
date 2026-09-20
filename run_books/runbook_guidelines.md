@@ -68,6 +68,7 @@ Runbooks are structured markdown documents that the MCP server parses for metada
     *   Group tools by functional area (matching existing runbooks):
         *   **Case Management Tools:** `review_case`, `add_case_comment`, `attach_observable_to_case`, `search_cases`, `update_case_status`, `add_case_task`.
         *   **SIEM Tools:** `get_security_alert_by_id`, `search_security_events`, `lookup_entity`, `get_ioc_matches`, `get_file_report`, `get_ip_address_report`, `pivot_on_indicator`, `get_entities_related_to_file`, `get_file_behavior_summary`, `get_threat_intel`.
+        *   **NetBox Tools:** `netbox_lookup_ip`, `netbox_lookup_host`, `netbox_lookup_prefix`, `netbox_search`.
         *   **CTI Tools:** `lookup_hash_ti` (and others as applicable).
         *   **EDR Tools:** `get_endpoint_summary`, `isolate_endpoint`, `kill_process_on_endpoint`, `collect_forensic_artifacts` (where relevant).
         *   **Runbook & Agent Tools (when applicable):** `list_runbooks`, `get_runbook`, `execute_runbook`, `list_agent_profiles`, `get_agent_profile`, `route_case_to_agent`, `execute_as_agent`.
@@ -110,11 +111,11 @@ Runbooks **may** include a Mermaid sequence diagram to visualize the workflow, e
     *   Show interactions between:
         *   **Analyst/Agent** (human or autonomous agent).
         *   **MCP Server** (SamiGPT runbook/agent tools).
-        *   **Domain Integrations** (case management, SIEM, EDR, CTI).
-    *   Focus on the **actual tools** invoked (e.g., `execute_as_agent`, `execute_runbook`, `review_case`, `search_security_events`), not generic placeholders.
+        *   **Domain Integrations** (case management, SIEM, NetBox, EDR, CTI).
+    *   Focus on the **actual tools** invoked (e.g., `execute_as_agent`, `execute_runbook`, `review_case`, `search_security_events`, `netbox_lookup_ip`), not generic placeholders.
 
 *   **Example Participants:**
-    *   `Analyst`, `SOC1 Agent`, `MCP Server`, `Case Management`, `SIEM`, `EDR`, `CTI`.
+    *   `Analyst`, `SOC1 Agent`, `MCP Server`, `Case Management`, `SIEM`, `NetBox`, `EDR`, `CTI`.
 
 Diagrams are **recommended** for clarity but are not required for the MCP tooling to function; the primary source of truth remains the structured sections and workflow steps.
 

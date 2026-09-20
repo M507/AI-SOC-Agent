@@ -8,7 +8,7 @@
         "initial_triage",
         "basic_enrichment",
         "false_positive_identification",
-        "client_kb_access"
+        "netbox_infra_lookup"
       ],
       "runbooks": [
         "soc1/triage/initial_alert_triage",
@@ -46,8 +46,10 @@
         "get_alerts_by_entity",
         "get_alerts_by_time_window",
         "get_email_events",
-        "kb_list_clients",
-        "kb_get_client_infra",
+        "netbox_lookup_ip",
+        "netbox_lookup_host",
+        "netbox_lookup_prefix",
+        "netbox_search",
         "create_fine_tuning_recommendation",
         "create_visibility_recommendation",
         "list_fine_tuning_recommendations",
