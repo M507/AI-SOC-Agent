@@ -78,13 +78,14 @@ def resolve_clients(cluster_id: Optional[str] = None) -> ClientBundle:
         return bundle
 
     try:
-        from ...mcp.factory import load_runtime_config, _init_case_client, _init_edr_client
+        from ...mcp.factory import load_runtime_config, _init_case_client, _init_edr_client, _init_eng_client
         from ...core.logging import get_logger as _get
 
         config = load_runtime_config()
         silent = _get("sami.approval_queue.clients.init")
         bundle.case = _init_case_client(config, silent)
         bundle.edr = _init_edr_client(config, silent)
+        bundle.eng = _init_eng_client(config, silent)
     except Exception as exc:
-        logger.debug("Could not initialize case/EDR clients: %s", exc)
+        logger.debug("Could not initialize case/EDR/eng clients: %s", exc)
     return bundle

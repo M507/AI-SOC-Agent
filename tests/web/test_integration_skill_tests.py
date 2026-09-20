@@ -6,7 +6,7 @@ from src.ai_controller.web import integration_skill_tests as probes
 
 
 def test_every_integration_skill_has_inventory_policy():
-    for integration_id in ("iris", "thehive", "elastic:example", "edr", "cti", "engineering"):
+    for integration_id in ("iris", "thehive", "elastic:example", "edr", "cti", "netbox", "engineering"):
         skills = probes.skills_for_integration(integration_id)
         inventory = probes.skill_inventory(integration_id)
         assert skills

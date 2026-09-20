@@ -391,6 +391,7 @@ class IntegrationsSettingsManager {
             'SIEM': 'SI',
             'Endpoint security': 'ED',
             'Threat intelligence': 'TI',
+            'Asset inventory': 'NB',
             'Engineering': 'EN',
             'AI provider': 'AI',
             'Agent tools': 'MC',

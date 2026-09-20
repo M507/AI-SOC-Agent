@@ -506,6 +506,38 @@ class APIClient {
         }
     }
 
+    async getNetBoxSettings() {
+        try {
+            return await this.request('/api/netbox/settings');
+        } catch (error) {
+            return { success: false, settings: {}, error: error.message };
+        }
+    }
+
+    async saveNetBoxSettings(payload) {
+        try {
+            return await this.request('/api/netbox/settings', {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload || {}),
+            });
+        } catch (error) {
+            return { success: false, error: error.message };
+        }
+    }
+
+    async testNetBoxSettings(payload) {
+        try {
+            return await this.request('/api/netbox/test', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload || {}),
+            });
+        } catch (error) {
+            return { success: false, ok: false, error: error.message };
+        }
+    }
+
     async getElasticClusters() {
         try {
             return await this.request('/api/elastic/clusters');

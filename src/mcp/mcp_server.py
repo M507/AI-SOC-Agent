@@ -413,26 +413,29 @@ class SamiGPTMCPServer:
 
     def _register_eng_tools(self) -> None:
         """
-        Register engineering tools (Trello/ClickUp/GitHub).
-        
+        Register engineering tools (Trello/ClickUp/GitHub Issues).
+
         Available tools:
-        - list_fine_tuning_recommendations: List all fine-tuning recommendations (ClickUp only)
-        - list_visibility_recommendations: List all visibility/engineering recommendations (ClickUp only)
-        - add_comment_to_fine_tuning_recommendation: Add a comment to a fine-tuning recommendation task (ClickUp only)
-        - add_comment_to_visibility_recommendation: Add a comment to a visibility recommendation task (ClickUp only)
+        - list_fine_tuning_recommendations
+        - list_visibility_recommendations
+        - add_comment_to_fine_tuning_recommendation
+        - add_comment_to_visibility_recommendation
         """
         if not self.eng_client:
             self._mcp_logger.warning(
                 "Engineering tools not registered: No engineering client configured. "
-                "Configure Trello, ClickUp, or GitHub in config.json to enable engineering tools."
+                "Configure Trello, ClickUp, or GitHub Issues in config.json to enable engineering tools."
             )
             return
 
-        self._mcp_logger.info("Registering 4 engineering tools (Trello/ClickUp/GitHub)")
+        self._mcp_logger.info("Registering 4 engineering tools (Trello/ClickUp/GitHub Issues)")
 
         self.tools["list_fine_tuning_recommendations"] = {
             "name": "list_fine_tuning_recommendations",
-            "description": "List all fine-tuning recommendation tasks from the fine-tuning board (ClickUp only)",
+            "description": (
+                "List fine-tuning recommendation issues/tasks from the configured engineering "
+                "provider (GitHub Issues, ClickUp, or Trello)."
+            ),
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -472,7 +475,10 @@ class SamiGPTMCPServer:
 
         self.tools["list_visibility_recommendations"] = {
             "name": "list_visibility_recommendations",
-            "description": "List all visibility/engineering recommendation tasks from the engineering board (ClickUp only)",
+            "description": (
+                "List visibility-gap recommendation issues/tasks from the configured engineering "
+                "provider (GitHub Issues, ClickUp, or Trello)."
+            ),
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -512,13 +518,15 @@ class SamiGPTMCPServer:
 
         self.tools["add_comment_to_fine_tuning_recommendation"] = {
             "name": "add_comment_to_fine_tuning_recommendation",
-            "description": "Add a comment to a fine-tuning recommendation task (ClickUp only)",
+            "description": (
+                "Add a comment to a fine-tuning recommendation. For GitHub Issues, task_id is the issue number."
+            ),
             "inputSchema": {
                 "type": "object",
                 "properties": {
                     "task_id": {
                         "type": "string",
-                        "description": "ClickUp task ID"
+                        "description": "Issue number (GitHub) or task ID (ClickUp)"
                     },
                     "comment_text": {
                         "type": "string",
@@ -531,13 +539,15 @@ class SamiGPTMCPServer:
 
         self.tools["add_comment_to_visibility_recommendation"] = {
             "name": "add_comment_to_visibility_recommendation",
-            "description": "Add a comment to a visibility/engineering recommendation task (ClickUp only)",
+            "description": (
+                "Add a comment to a visibility recommendation. For GitHub Issues, task_id is the issue number."
+            ),
             "inputSchema": {
                 "type": "object",
                 "properties": {
                     "task_id": {
                         "type": "string",
-                        "description": "ClickUp task ID"
+                        "description": "Issue number (GitHub) or task ID (ClickUp)"
                     },
                     "comment_text": {
                         "type": "string",

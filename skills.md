@@ -162,9 +162,12 @@ DCIM/IPAM lookups against NetBox for host, IP, and prefix enrichment.
 
 ## Engineering skills (`ENG`)
 
-Trello / ClickUp / GitHub recommendation boards.
+GitHub Issues (or Trello / ClickUp) recommendation boards.
 
 **Solution metric:** `ENG`
+
+Configured provider: **GitHub Issues** on `M507/HomeLab-DaC`  
+Labels: `fine-tuning`, `visibility`
 
 | Skill | Label |
 |---|---|
@@ -172,6 +175,8 @@ Trello / ClickUp / GitHub recommendation boards.
 | `list_visibility_recommendations` | List Visibility Recommendations |
 | `add_comment_to_fine_tuning_recommendation` | Add Comment To Fine Tuning Recommendation |
 | `add_comment_to_visibility_recommendation` | Add Comment To Visibility Recommendation |
+
+`create_fine_tuning_recommendation` / `create_visibility_recommendation` file a Requests note and also open a GitHub Issue when ENG is GitHub.
 
 ## Runbook skills (`RB`)
 

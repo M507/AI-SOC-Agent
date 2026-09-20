@@ -82,11 +82,12 @@ def create_fine_tuning_recommendation(
         return {
             "success": True,
             "provider": "github",
-            "project_item": {
-                "id": result.get("id"),
-                "note": result.get("note"),
-                "url": result.get("url"),
-                "project_id": result.get("project_id"),
+            "issue": {
+                "id": str(result.get("number")),
+                "number": result.get("number"),
+                "title": result.get("title"),
+                "url": result.get("html_url"),
+                "state": result.get("state"),
             },
         }
     else:
@@ -164,11 +165,12 @@ def create_visibility_recommendation(
         return {
             "success": True,
             "provider": "github",
-            "project_item": {
-                "id": result.get("id"),
-                "note": result.get("note"),
-                "url": result.get("url"),
-                "project_id": result.get("project_id"),
+            "issue": {
+                "id": str(result.get("number")),
+                "number": result.get("number"),
+                "title": result.get("title"),
+                "url": result.get("html_url"),
+                "state": result.get("state"),
             },
         }
     else:
@@ -189,20 +191,7 @@ def list_fine_tuning_recommendations(
     """
     List all fine-tuning recommendations.
     
-    Currently only supports ClickUp. Trello and GitHub support can be added later.
-    
-    Args:
-        archived: Include archived tasks (ClickUp only, default: False)
-        include_closed: Include closed tasks (ClickUp only, default: True)
-        order_by: Order tasks by field (ClickUp only)
-        reverse: Reverse the order (ClickUp only, default: False)
-        subtasks: Include subtasks (ClickUp only, default: False)
-        statuses: Filter by status names (ClickUp only)
-        include_markdown_description: Include markdown in descriptions (ClickUp only, default: False)
-        client: TrelloClient, ClickUpClient, or GitHubClient instance (required)
-    
-    Returns:
-        Dictionary with list of recommendations
+    Supports ClickUp and GitHub Issues.
     """
     if not client:
         raise ValueError("Engineering client (TrelloClient, ClickUpClient, or GitHubClient) is required")
@@ -232,6 +221,29 @@ def list_fine_tuning_recommendations(
                 for task in tasks
             ],
         }
+    elif isinstance(client, GitHubClient):
+        issues = client.list_fine_tuning_recommendations(include_closed=include_closed)
+        return {
+            "success": True,
+            "provider": "github",
+            "repository": client.repository,
+            "count": len(issues),
+            "tasks": [
+                {
+                    "id": str(issue.get("number")),
+                    "name": issue.get("title"),
+                    "url": issue.get("html_url"),
+                    "status": issue.get("state"),
+                    "description": issue.get("body") or "",
+                    "labels": [
+                        label.get("name")
+                        for label in (issue.get("labels") or [])
+                        if isinstance(label, dict) and label.get("name")
+                    ],
+                }
+                for issue in issues
+            ],
+        }
     else:
         raise ValueError(f"list_fine_tuning_recommendations is not supported for client type: {type(client)}")
 
@@ -249,20 +261,7 @@ def list_visibility_recommendations(
     """
     List all visibility/engineering recommendations.
     
-    Currently only supports ClickUp. Trello and GitHub support can be added later.
-    
-    Args:
-        archived: Include archived tasks (ClickUp only, default: False)
-        include_closed: Include closed tasks (ClickUp only, default: True)
-        order_by: Order tasks by field (ClickUp only)
-        reverse: Reverse the order (ClickUp only, default: False)
-        subtasks: Include subtasks (ClickUp only, default: False)
-        statuses: Filter by status names (ClickUp only)
-        include_markdown_description: Include markdown in descriptions (ClickUp only, default: False)
-        client: TrelloClient, ClickUpClient, or GitHubClient instance (required)
-    
-    Returns:
-        Dictionary with list of recommendations
+    Supports ClickUp and GitHub Issues.
     """
     if not client:
         raise ValueError("Engineering client (TrelloClient, ClickUpClient, or GitHubClient) is required")
@@ -292,6 +291,29 @@ def list_visibility_recommendations(
                 for task in tasks
             ],
         }
+    elif isinstance(client, GitHubClient):
+        issues = client.list_visibility_recommendations(include_closed=include_closed)
+        return {
+            "success": True,
+            "provider": "github",
+            "repository": client.repository,
+            "count": len(issues),
+            "tasks": [
+                {
+                    "id": str(issue.get("number")),
+                    "name": issue.get("title"),
+                    "url": issue.get("html_url"),
+                    "status": issue.get("state"),
+                    "description": issue.get("body") or "",
+                    "labels": [
+                        label.get("name")
+                        for label in (issue.get("labels") or [])
+                        if isinstance(label, dict) and label.get("name")
+                    ],
+                }
+                for issue in issues
+            ],
+        }
     else:
         raise ValueError(f"list_visibility_recommendations is not supported for client type: {type(client)}")
 
@@ -302,17 +324,9 @@ def add_comment_to_fine_tuning_recommendation(
     client: Optional[Union[TrelloClient, ClickUpClient, GitHubClient]] = None,
 ) -> Dict[str, Any]:
     """
-    Add a comment to a fine-tuning recommendation task.
+    Add a comment to a fine-tuning recommendation.
     
-    Currently only supports ClickUp. Trello and GitHub support can be added later.
-    
-    Args:
-        task_id: Task ID
-        comment_text: Comment text/content
-        client: TrelloClient, ClickUpClient, or GitHubClient instance (required)
-    
-    Returns:
-        Dictionary with comment information
+    Supports ClickUp and GitHub Issues (task_id = issue number).
     """
     if not client:
         raise ValueError("Engineering client (TrelloClient, ClickUpClient, or GitHubClient) is required")
@@ -333,6 +347,23 @@ def add_comment_to_fine_tuning_recommendation(
             "task_id": task_id,
             "message": f"Comment added to fine-tuning recommendation task {task_id}",
         }
+    elif isinstance(client, GitHubClient):
+        comment = client.add_comment_to_fine_tuning_recommendation(
+            task_id=task_id,
+            comment_text=comment_text,
+        )
+        return {
+            "success": True,
+            "provider": "github",
+            "comment": {
+                "id": comment.get("id"),
+                "comment_text": comment.get("body", ""),
+                "user": (comment.get("user") or {}).get("login") if isinstance(comment.get("user"), dict) else None,
+                "url": comment.get("html_url"),
+            },
+            "task_id": task_id,
+            "message": f"Comment added to GitHub issue #{task_id}",
+        }
     else:
         raise ValueError(f"add_comment_to_fine_tuning_recommendation is not supported for client type: {type(client)}")
 
@@ -343,17 +374,9 @@ def add_comment_to_visibility_recommendation(
     client: Optional[Union[TrelloClient, ClickUpClient, GitHubClient]] = None,
 ) -> Dict[str, Any]:
     """
-    Add a comment to a visibility/engineering recommendation task.
+    Add a comment to a visibility recommendation.
     
-    Currently only supports ClickUp. Trello and GitHub support can be added later.
-    
-    Args:
-        task_id: Task ID
-        comment_text: Comment text/content
-        client: TrelloClient, ClickUpClient, or GitHubClient instance (required)
-    
-    Returns:
-        Dictionary with comment information
+    Supports ClickUp and GitHub Issues (task_id = issue number).
     """
     if not client:
         raise ValueError("Engineering client (TrelloClient, ClickUpClient, or GitHubClient) is required")
@@ -373,6 +396,23 @@ def add_comment_to_visibility_recommendation(
             },
             "task_id": task_id,
             "message": f"Comment added to visibility recommendation task {task_id}",
+        }
+    elif isinstance(client, GitHubClient):
+        comment = client.add_comment_to_visibility_recommendation(
+            task_id=task_id,
+            comment_text=comment_text,
+        )
+        return {
+            "success": True,
+            "provider": "github",
+            "comment": {
+                "id": comment.get("id"),
+                "comment_text": comment.get("body", ""),
+                "user": (comment.get("user") or {}).get("login") if isinstance(comment.get("user"), dict) else None,
+                "url": comment.get("html_url"),
+            },
+            "task_id": task_id,
+            "message": f"Comment added to GitHub issue #{task_id}",
         }
     else:
         raise ValueError(f"add_comment_to_visibility_recommendation is not supported for client type: {type(client)}")

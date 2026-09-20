@@ -93,6 +93,7 @@
                                 <!-- Add a button here plus a matching data-settings-page-content panel for each new Settings page. -->
                                 <button class="tab active" type="button" data-settings-page="llm">LLM</button>
                                 <button class="tab" type="button" data-settings-page="elastic">Elastic</button>
+                                <button class="tab" type="button" data-settings-page="netbox">NetBox</button>
                                 <button class="tab" type="button" data-settings-page="ui">UI</button>
                                 <button class="tab" type="button" data-settings-page="integrations">Integrations</button>
                             </div>
@@ -110,7 +111,7 @@
                     <div id="no-session-message" class="empty-state">
                         <div class="empty-state-body">
                             <h2>Start an investigation</h2>
-                            <p>Create a session and ask the agent about an alert, hash, host, or case. It uses MCP tools against your SIEM, cases, and threat intel.</p>
+                            <p>Create a session and ask the agent about an alert, hash, host, or case. It uses MCP tools against your SIEM, cases, NetBox inventory, and threat intel.</p>
                             <button type="button" id="empty-new-session-btn" class="btn btn-primary">New Session</button>
                         </div>
                     </div>
@@ -266,6 +267,40 @@
                                 <div class="settings-inline-row">
                                     <button type="button" id="elastic-clear-log-btn" class="btn btn-secondary btn-sm">Clear log</button>
                                 </div>
+                            </section>
+                        </div>
+                    </div>
+                    <div id="settings-netbox-content" class="settings-content" data-settings-page-content="netbox" style="display: none;">
+                        <div class="session-header">
+                            <div>
+                                <h2>NetBox</h2>
+                                <p class="settings-header-copy">DCIM/IPAM enrichment for hosts, IPs, and prefixes during investigations.</p>
+                            </div>
+                            <div class="session-actions">
+                                <button type="button" id="netbox-test-btn" class="btn btn-secondary btn-sm">Test connection</button>
+                                <button type="button" id="netbox-save-btn" class="btn btn-primary btn-sm">Save</button>
+                            </div>
+                        </div>
+                        <div class="settings-body">
+                            <section class="settings-card">
+                                <h3>Connection</h3>
+                                <p class="settings-help">
+                                    Map <code>NETBOX_URL</code> → Base URL and <code>NETBOX_TOKEN</code> → API token.
+                                    Skills: <code>netbox_lookup_ip</code>, <code>netbox_lookup_host</code>,
+                                    <code>netbox_lookup_prefix</code>, <code>netbox_search</code>.
+                                    Enable them on Elastic clusters with the <code>NB</code> skill-vector metric.
+                                </p>
+                                <label for="netbox-url">Base URL</label>
+                                <input type="url" id="netbox-url" placeholder="http://10.10.10.79:8851">
+                                <label for="netbox-token">API token</label>
+                                <input type="password" id="netbox-token" placeholder="nbt_…" autocomplete="off">
+                                <label for="netbox-timeout">Timeout (seconds)</label>
+                                <input type="number" id="netbox-timeout" min="1" max="300" value="30">
+                                <label class="settings-toggle">
+                                    <input type="checkbox" id="netbox-verify-ssl" checked>
+                                    <span class="toggle-label">Verify TLS certificates</span>
+                                </label>
+                                <p id="netbox-settings-status" class="settings-status" role="status" aria-live="polite" hidden></p>
                             </section>
                         </div>
                     </div>
@@ -604,7 +639,7 @@
     <script src="/static/toast.js?v=1"></script>
     
     <!-- API client (no dependencies) -->
-    <script src="/static/api.js?v=12"></script>
+    <script src="/static/api.js?v=13"></script>
     
     <!-- Component modules (depend on utils) -->
     <script src="/static/websocket.js?v=1"></script>
@@ -616,10 +651,11 @@
     <script src="/static/requests.js?v=1"></script>
     
     <!-- Main application (depends on all modules) -->
-    <script src="/static/settings.js?v=5"></script>
+    <script src="/static/settings.js?v=6"></script>
     <script src="/static/elastic_settings.js?v=7"></script>
-    <script src="/static/integrations_settings.js?v=3"></script>
-    <script src="/static/app.js?v=12"></script>
+    <script src="/static/netbox_settings.js?v=1"></script>
+    <script src="/static/integrations_settings.js?v=4"></script>
+    <script src="/static/app.js?v=13"></script>
 </body>
 </html>
 

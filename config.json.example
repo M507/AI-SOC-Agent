@@ -102,8 +102,8 @@
     "api_token": ""
   },
   "eng": {
-    "_comment": "Set 'provider' to 'trello', 'clickup', or 'github' to choose which platform to use",
-    "provider": "trello",
+    "_comment": "Set provider to github for GitHub Issues (repository = owner/repo). Labels separate fine-tune vs visibility.",
+    "provider": "github",
     "trello": {
       "api_key": "your-trello-api-key-here",
       "api_token": "your-trello-api-token-here",
@@ -120,9 +120,10 @@
       "verify_ssl": true
     },
     "github": {
-      "api_token": "your-github-personal-access-token-here",
-      "fine_tuning_project_id": "your-fine-tuning-project-id",
-      "engineering_project_id": "your-engineering-project-id",
+      "api_token": "",
+      "repository": "M507/HomeLab-DaC",
+      "fine_tuning_label": "fine-tuning",
+      "visibility_label": "visibility",
       "timeout_seconds": 30,
       "verify_ssl": true
     }

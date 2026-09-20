@@ -169,6 +169,42 @@
                     </div>
                 </section>
 
+                <!-- NetBox Configuration -->
+                <section class="config-section">
+                    <div class="section-header">
+                        <h2>NetBox - Asset Inventory (DCIM/IPAM)</h2>
+                        <label class="toggle">
+                            <input type="checkbox" id="netbox-enabled">
+                            <span class="slider"></span>
+                        </label>
+                    </div>
+                    <div class="config-content" id="netbox-content" style="display: none;">
+                        <div class="form-group">
+                            <label for="netbox-url">Base URL *</label>
+                            <input type="url" id="netbox-url" name="netbox-url" required
+                                   placeholder="http://10.10.10.79:8851">
+                        </div>
+                        <div class="form-group">
+                            <label for="netbox-api-token">API Token *</label>
+                            <input type="password" id="netbox-api-token" name="netbox-api-token" required
+                                   placeholder="nbt_…">
+                        </div>
+                        <div class="form-group">
+                            <label for="netbox-timeout">Timeout (seconds)</label>
+                            <input type="number" id="netbox-timeout" name="netbox-timeout" value="30" min="1">
+                        </div>
+                        <div class="form-group">
+                            <label class="checkbox-label">
+                                <input type="checkbox" id="netbox-verify-ssl" checked>
+                                Verify TLS certificates
+                            </label>
+                        </div>
+                        <button type="button" class="test-btn" onclick="testConnection('netbox')">
+                            Test Connection
+                        </button>
+                    </div>
+                </section>
+
                 <!-- Logging Configuration -->
                 <section class="config-section">
                     <div class="section-header">

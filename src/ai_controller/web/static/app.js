@@ -20,6 +20,7 @@ class AIController {
         this.modals = new ModalManager(this);
         this.settingsManager = new SettingsManager(this);
         this.elasticClusters = new ElasticClustersManager(this);
+        this.netboxSettings = new NetBoxSettingsManager(this);
         this.integrationsSettings = new IntegrationsSettingsManager(this);
         this.mcpPanel = new MCPPanel(this);
         this.requestsManager = new RequestsManager(this);
@@ -32,6 +33,7 @@ class AIController {
         this.loadConfig();
         this.settingsManager.load();
         this.elasticClusters.load();
+        this.netboxSettings.load();
         this.integrationsSettings.load();
         this.mcpPanel.refresh();
         this.refreshMCPReadiness({ notify: true });
@@ -598,6 +600,9 @@ class AIController {
             this.settingsManager.load();
             if (this.elasticClusters) {
                 this.elasticClusters.load();
+            }
+            if (this.netboxSettings) {
+                this.netboxSettings.load();
             }
             if (this.integrationsSettings) {
                 this.integrationsSettings.load();

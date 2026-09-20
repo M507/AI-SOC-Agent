@@ -83,7 +83,7 @@ def test_lists_integrations_without_secrets(tmp_path, monkeypatch):
     assert response.status_code == 200, response.text
     body = response.json()
     ids = {item["id"] for item in body["integrations"]}
-    assert {"thehive", "iris", "elastic:lab", "edr", "cti", "engineering", "llm", "mcp"} <= ids
+    assert {"thehive", "iris", "elastic:lab", "edr", "cti", "netbox", "engineering", "llm", "mcp"} <= ids
     assert next(item for item in body["integrations"] if item["id"] == "thehive")["configured"] is False
     elastic_card = next(item for item in body["integrations"] if item["id"] == "elastic:lab")
     assert elastic_card["configured"] is True

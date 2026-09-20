@@ -557,9 +557,19 @@ class MCPPanel {
         const pills = document.getElementById('mcp-integrations');
         if (pills) {
             const integrations = status.integrations || {};
+            const labels = {
+                case_management: 'Cases',
+                siem: 'SIEM',
+                edr: 'EDR',
+                cti: 'CTI',
+                kb: 'KB',
+                netbox: 'NetBox',
+                eng: 'Eng',
+            };
             pills.innerHTML = Object.keys(integrations).map((key) => {
                 const ok = Boolean(integrations[key]);
-                return `<span class="integration-pill ${ok ? 'is-on' : 'is-off'}">${key}${ok ? '' : ' off'}</span>`;
+                const label = labels[key] || key;
+                return `<span class="integration-pill ${ok ? 'is-on' : 'is-off'}">${label}${ok ? '' : ' off'}</span>`;
             }).join('');
         }
 

@@ -125,11 +125,16 @@ def _config_to_dict(config: SamiConfig) -> Dict[str, Any]:
         if config.eng.github:
             eng_dict["github"] = {
                 "api_token": config.eng.github.api_token,
-                "fine_tuning_project_id": config.eng.github.fine_tuning_project_id,
-                "engineering_project_id": config.eng.github.engineering_project_id,
+                "repository": config.eng.github.repository,
+                "fine_tuning_label": config.eng.github.fine_tuning_label,
+                "visibility_label": config.eng.github.visibility_label,
                 "timeout_seconds": config.eng.github.timeout_seconds,
                 "verify_ssl": config.eng.github.verify_ssl,
             }
+            if config.eng.github.fine_tuning_project_id:
+                eng_dict["github"]["fine_tuning_project_id"] = config.eng.github.fine_tuning_project_id
+            if config.eng.github.engineering_project_id:
+                eng_dict["github"]["engineering_project_id"] = config.eng.github.engineering_project_id
         if eng_dict:
             result["eng"] = eng_dict
 
@@ -273,10 +278,19 @@ def _dict_to_config(data: Dict[str, Any]) -> SamiConfig:
         if eng_data.get("github"):
             github_data = eng_data["github"]
             if github_data.get("api_token"):
+                repository = (
+                    github_data.get("repository")
+                    or github_data.get("repo")
+                    or github_data.get("issues_url")
+                    or ""
+                )
                 github_cfg = GitHubConfig(
                     api_token=github_data["api_token"],
-                    fine_tuning_project_id=github_data["fine_tuning_project_id"],
-                    engineering_project_id=github_data["engineering_project_id"],
+                    repository=str(repository or ""),
+                    fine_tuning_label=github_data.get("fine_tuning_label", "fine-tuning"),
+                    visibility_label=github_data.get("visibility_label", "visibility"),
+                    fine_tuning_project_id=github_data.get("fine_tuning_project_id"),
+                    engineering_project_id=github_data.get("engineering_project_id"),
                     timeout_seconds=github_data.get("timeout_seconds", 30),
                     verify_ssl=github_data.get("verify_ssl", True),
                 )
@@ -789,6 +803,19 @@ def update_config_dict(
                 timeout_seconds=edr_updates.get("timeout_seconds", 30),
                 verify_ssl=edr_updates.get("verify_ssl", True),
                 additional_params=edr_updates.get("additional_params"),
+            )
+
+    # Update NetBox
+    if "netbox" in updates:
+        nb_updates = updates["netbox"]
+        if nb_updates is None:
+            config.netbox = None
+        elif nb_updates.get("base_url") and nb_updates.get("api_token"):
+            config.netbox = NetBoxConfig(
+                base_url=nb_updates["base_url"],
+                api_token=nb_updates["api_token"],
+                timeout_seconds=nb_updates.get("timeout_seconds", 30),
+                verify_ssl=nb_updates.get("verify_ssl", True),
             )
 
     # Save updated config to both files

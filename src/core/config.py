@@ -124,12 +124,19 @@ class ClickUpConfig:
 @dataclass
 class GitHubConfig:
     """
-    Configuration for GitHub integration.
+    Configuration for GitHub Issues engineering integration.
+
+    ``repository`` is ``owner/repo`` (e.g. M507/HomeLab-DaC).
+    Fine-tune vs visibility recommendations are separated by labels.
+    Legacy ``*_project_id`` fields are ignored when ``repository`` is set.
     """
 
     api_token: str
-    fine_tuning_project_id: str
-    engineering_project_id: str
+    repository: str = ""
+    fine_tuning_label: str = "fine-tuning"
+    visibility_label: str = "visibility"
+    fine_tuning_project_id: Optional[str] = None  # legacy Projects API
+    engineering_project_id: Optional[str] = None  # legacy Projects API
     timeout_seconds: int = 30
     verify_ssl: bool = True
 

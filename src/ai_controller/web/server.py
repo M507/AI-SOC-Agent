@@ -31,6 +31,7 @@ from .routes_llm import router as llm_router
 from .routes_mcp import router as mcp_router
 from .routes_elastic import router as elastic_router
 from .routes_integrations import router as integrations_router
+from .routes_netbox import router as netbox_router
 from .routes_requests import router as requests_router
 
 logger = get_logger("sami.ai_controller.web.server")
@@ -118,6 +119,7 @@ app.include_router(llm_router)
 app.include_router(mcp_router)
 app.include_router(elastic_router)
 app.include_router(integrations_router)
+app.include_router(netbox_router)
 app.include_router(requests_router)
 
 # Initialize components

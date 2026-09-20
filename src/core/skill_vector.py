@@ -230,7 +230,7 @@ SKILL_GROUPS: Tuple[Dict[str, object], ...] = (
         "id": "ENG",
         "name": "Engineering skills",
         "solutions": ("ENG",),
-        "help": "Trello / ClickUp / GitHub recommendation boards.",
+        "help": "GitHub Issues (or Trello / ClickUp) recommendation boards.",
         "skills": (
             "list_fine_tuning_recommendations",
             "list_visibility_recommendations",

@@ -62,3 +62,17 @@ def test_mcp_readiness_banner_is_actionable_and_accessible():
     assert "refreshMCPReadiness({ notify: true })" in app_js
     assert "openMCPReadinessAction()" in app_js
     assert "openwebui-mcp-card" in app_js
+
+
+def test_netbox_settings_page_is_wired():
+    html = INDEX.read_text(encoding="utf-8")
+    app_js = APP_JS.read_text(encoding="utf-8")
+    integrations = (WEB / "static" / "integrations_settings.js").read_text(encoding="utf-8")
+
+    assert 'data-settings-page="netbox"' in html
+    assert 'data-settings-page-content="netbox"' in html
+    assert 'id="netbox-url"' in html
+    assert "netbox_settings.js" in html
+    assert "NetBoxSettingsManager" in app_js
+    assert "netboxSettings.load()" in app_js
+    assert "Asset inventory" in integrations

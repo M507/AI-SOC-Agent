@@ -64,6 +64,10 @@ function setupEventListeners() {
         toggleSection('edr', e.target.checked);
     });
 
+    document.getElementById('netbox-enabled').addEventListener('change', (e) => {
+        toggleSection('netbox', e.target.checked);
+    });
+
     // Form submission
     document.getElementById('config-form').addEventListener('submit', (e) => {
         e.preventDefault();
@@ -168,6 +172,21 @@ async function loadConfig() {
         } else {
             document.getElementById('edr-enabled').checked = false;
             toggleSection('edr', false);
+        }
+
+        // Load NetBox config
+        if (config.netbox) {
+            document.getElementById('netbox-enabled').checked = true;
+            document.getElementById('netbox-url').value = config.netbox.base_url || '';
+            if (config.netbox.api_token && config.netbox.api_token !== '***') {
+                document.getElementById('netbox-api-token').value = config.netbox.api_token || '';
+            }
+            document.getElementById('netbox-timeout').value = config.netbox.timeout_seconds || 30;
+            document.getElementById('netbox-verify-ssl').checked = config.netbox.verify_ssl !== false;
+            toggleSection('netbox', true);
+        } else {
+            document.getElementById('netbox-enabled').checked = false;
+            toggleSection('netbox', false);
         }
         
         // Load Logging config
@@ -281,6 +300,14 @@ async function saveConfig() {
                 base_url: document.getElementById('edr-url').value,
                 api_key: document.getElementById('edr-api-key').value,
                 timeout_seconds: parseInt(document.getElementById('edr-timeout').value) || 30,
+            } : { enabled: false },
+
+            netbox: document.getElementById('netbox-enabled').checked ? {
+                enabled: true,
+                base_url: document.getElementById('netbox-url').value,
+                api_token: document.getElementById('netbox-api-token').value,
+                timeout_seconds: parseInt(document.getElementById('netbox-timeout').value) || 30,
+                verify_ssl: document.getElementById('netbox-verify-ssl').checked,
             } : { enabled: false },
             
             logging: {

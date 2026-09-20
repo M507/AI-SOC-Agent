@@ -86,11 +86,15 @@ def test_new_cluster_inherits_default_skill_vector(tmp_path, monkeypatch):
     group_names = [group["name"] for group in catalog["skill_catalog"]["groups"]]
     assert "IRIS skills" in group_names
     assert "Elastic / ELK skills" in group_names
+    assert "NetBox skills" in group_names
     elk = next(group for group in catalog["skill_catalog"]["groups"] if group["id"] == "SIEM")
     assert any(skill["id"] == "get_recent_alerts" for skill in elk["skills"])
     assert any(skill["id"] == "search_security_events" for skill in elk["skills"])
+    netbox = next(group for group in catalog["skill_catalog"]["groups"] if group["id"] == "NB")
+    assert any(skill["id"] == "netbox_lookup_ip" for skill in netbox["skills"])
     default_vector = catalog["default_skill_vector"]
     assert default_vector.startswith("MSV:1/")
+    assert "NB:" in default_vector
 
     disabled = client.put(
         "/api/elastic/default-skills",
