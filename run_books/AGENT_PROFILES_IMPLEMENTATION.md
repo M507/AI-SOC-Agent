@@ -28,7 +28,7 @@ Configured in `config/agent_profiles.json`:
 - `execute_as_agent` — loads the agent profile, selects a SOC1 runbook, returns runbook content for the model to follow
 - `list_runbooks` / `get_runbook` / `execute_runbook` — discover and load markdown under `run_books/soc1/`
 
-SOC1 SIEM query skills (also gated by the Elastic skill vector / UI): `search_security_events`, `search_kql_query`, `search_lucene_query`, `search_eql_query`, `search_dsl_query`, `search_esql_query`. Full catalog: `skills.md`.
+SOC1 SIEM query skills (also gated by the Elastic skill vector / UI): `search_security_events`, `search_kql_query`, `search_lucene_query`, `search_eql_query`, `search_dsl_query`, `search_esql_query`. Alert history / notes: `get_security_alert_by_id` (includes Kibana notes), `get_alert_notes` (batch). Full catalog: `skills.md`. Adding tools: `src/mcp/ADDING_A_SKILL.md`.
 
 After triage, if no case playbook under `soc1/cases` matched the alert type, file `create_runbook_recommendation` (informational Requests note) — never block investigation for it.
 

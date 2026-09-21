@@ -872,6 +872,7 @@ The following checklist shows which SIEM tools are currently implemented:
 - [x] `update_alert_verdict`
 - [x] `tag_alert`
 - [x] `add_alert_note`
+- [x] `get_alert_notes`
 
 **Event Management Tools:**
 - [x] `get_siem_event_by_id`
@@ -1335,6 +1336,8 @@ Get security alerts directly from the SIEM platform. Supports triage (open/uninv
 
 Get detailed information about a specific security alert by its ID.
 
+Also attaches Security Solution / Rule Tuner notes from Kibana (`notes`, `note_texts`, `notes_total_count`). Notes are **not** on alert `_source`; this tool fetches them automatically. For batch note fetch across similar past alerts, use `get_alert_notes`.
+
 **Note:** This tool operates on SIEM alerts (not cases). For case management operations, use `review_case` instead.
 
 **Parameters:**
@@ -1355,7 +1358,10 @@ Get detailed information about a specific security alert by its ID.
   - `updated_at` (string): ISO timestamp of last update
   - `detections` (array): List of detections that triggered the alert (if included)
   - `related_entities` (array): Related indicators and entities
-  - `comments` (array): Analyst comments and notes
+  - `comments` (array): SamiGPT AI comments stored on the alert document (`signal.ai.comments`)
+  - `notes` (array): Security Solution / Rule Tuner notes from Kibana Notes API
+  - `note_texts` (array): Convenience list of note body strings
+  - `notes_total_count` (integer): Count of Kibana notes
 
 **Usage Example:**
 ```json
@@ -1369,7 +1375,7 @@ Get detailed information about a specific security alert by its ID.
 ```
 
 **Use Cases:**
-- Get complete alert context
+- Get complete alert context including prior analyst notes
 - Review alert details for investigation
 - Check alert status and assignment
 - Review detection details
@@ -2337,6 +2343,30 @@ File an **informational runbook-gap note** when triage finishes and no case-spec
 
 ---
 
+### `save_case_runbook`
+
+Write a finished case-specific runbook markdown file under `run_books/<soc>/cases/<slug>.md`.
+
+Used by the Requests **Create runbook** flow (Open WebUI session) after drafting a playbook that matches `runbook_guidelines.md` and existing `soc1/cases` examples.
+
+**Parameters:**
+- `path` (string, required): Relative path without `.md`, e.g. `soc1/cases/impossible_travel_triage`
+- `content` (string, required): Full markdown starting with `# SOC1: ... Runbook`
+- `overwrite` (boolean, optional): Replace an existing file (default false)
+
+**Usage Example:**
+```json
+{
+  "name": "save_case_runbook",
+  "arguments": {
+    "path": "soc1/cases/impossible_travel_triage",
+    "content": "# SOC1: Impossible Travel Triage Runbook\n\n## Objective\n..."
+  }
+}
+```
+
+---
+
 ### `list_fine_tuning_recommendations`
 
 List all fine-tuning recommendation tasks from the fine-tuning board. This allows checking if an existing task already exists before creating a new one.
@@ -2961,6 +2991,48 @@ Add a note or comment to a security alert in the SIEM platform. Use this to docu
 - Case number (if a case was created)
 - For FP/BTP: Specific recommendations for detection rule improvements (bullet points on how to fine-tune the rule)
 - For TP/Suspicious: Key findings and escalation reason
+
+---
+
+### `get_alert_notes`
+
+Fetch Security Solution / Rule Tuner analyst notes for one or more alerts. Notes are **not** on alert `_source` — always call this when reviewing similar or past closed/ack alerts so prior analyst guidance is visible.
+
+Uses Kibana `GET /api/note?documentIds={alert_id}` with `Elastic-Api-Version: 2023-10-31`. `documentIds` is the alert Elasticsearch `_id` (same as `kibana.alert.uuid` / Rule Tuner `alert.id`).
+
+**Parameters:**
+- `alert_id` (string, optional): Single alert id to fetch notes for
+- `alert_ids` (array of string, optional): Batch of alert ids (preferred when reviewing similar past alerts)
+
+At least one of `alert_id` / `alert_ids` is required.
+
+**Returns:**
+- `success` (boolean): Whether the operation succeeded
+- `alert_ids` (array): Resolved alert ids queried
+- `total_count` (integer): Note count from Kibana (`totalCount`)
+- `notes` (array): Normalized notes with `note_id`, `note`, `event_id`, `timeline_id`, `created` / `created_iso`, `created_by`, `updated` / `updated_iso`, `updated_by`, `version`
+- `note_texts` (array): Convenience list of note body strings
+
+**Usage Example:**
+```json
+{
+  "name": "get_alert_notes",
+  "arguments": {
+    "alert_ids": [
+      "0a3dd0aa0508acf0b39b99e85c63a39a7af1cc476c98b35ee4e09fe39871f46c",
+      "another-similar-alert-id"
+    ]
+  }
+}
+```
+
+**Use Cases:**
+- Mandatory historical review of similar closed/ack alerts during SOC1 triage
+- Read what prior analysts wrote about the same rule + same key entities
+- Understand FP/BTP rationale before closing a new matching alert
+- Inspect notes already attached to the current alert
+
+**Note:** Prefer batching with `alert_ids` when reviewing 3–8 similar past alerts. Empty `notes` means no Security Solution notes were found (still record that in `${HISTORICAL_DECISIONS}`).
 
 ---
 

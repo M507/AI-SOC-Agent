@@ -181,14 +181,19 @@ class SessionManager:
     
     def create_session(
         self,
-        name: str,
+        name: Optional[str] = None,
         session_type: SessionType = SessionType.MANUAL,
         cluster_id: Optional[str] = None,
     ) -> Session:
-        """Create a new session."""
+        """Create a new session.
+
+        If name is missing or blank, the session id (a random UUID) is used as the name.
+        """
+        session_id = str(uuid4())
+        resolved_name = (name or "").strip() or session_id
         session = Session(
-            id=str(uuid4()),
-            name=name,
+            id=session_id,
+            name=resolved_name,
             session_type=session_type,
             status=SessionStatus.PENDING,
             created_at=datetime.now(),

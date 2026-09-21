@@ -1631,6 +1631,21 @@ class ElasticSIEMClient:
                     alert["events"] = []
             else:
                 alert["events"] = []
+
+            # Security Solution / Rule Tuner notes are NOT on alert _source.
+            # Always attach them when loading an alert so triage sees analyst guidance.
+            try:
+                notes_result = self.get_alert_notes(alert_id=alert_id)
+                alert["notes"] = notes_result.get("notes", [])
+                alert["note_texts"] = notes_result.get("note_texts", [])
+                alert["notes_total_count"] = notes_result.get("total_count", 0)
+            except Exception as e:
+                logger.warning(
+                    "Failed to fetch Kibana notes for alert %s: %s", alert_id, e
+                )
+                alert["notes"] = []
+                alert["note_texts"] = []
+                alert["notes_total_count"] = 0
             
             return alert
         except Exception as e:
@@ -2399,6 +2414,105 @@ class ElasticSIEMClient:
         except Exception as e:
             logger.exception(f"Error tagging alert {alert_id}: {e}")
             raise IntegrationError(f"Failed to tag alert: {e}") from e
+
+    @staticmethod
+    def _normalize_alert_note(raw: Dict[str, Any]) -> Dict[str, Any]:
+        """Normalize a Kibana Security Solution note into a stable skill shape."""
+
+        def _epoch_ms_to_iso(value: Any) -> Optional[str]:
+            if value is None or value == "":
+                return None
+            try:
+                ms = int(value)
+                return datetime.utcfromtimestamp(ms / 1000.0).isoformat() + "Z"
+            except (TypeError, ValueError, OSError, OverflowError):
+                return str(value)
+
+        created = raw.get("created")
+        updated = raw.get("updated")
+        return {
+            "note_id": raw.get("noteId") or raw.get("note_id") or raw.get("id"),
+            "note": raw.get("note") or "",
+            "event_id": raw.get("eventId") or raw.get("event_id") or "",
+            "timeline_id": raw.get("timelineId") if "timelineId" in raw else raw.get("timeline_id", ""),
+            "created": created,
+            "created_iso": _epoch_ms_to_iso(created),
+            "created_by": raw.get("createdBy") or raw.get("created_by") or "",
+            "updated": updated,
+            "updated_iso": _epoch_ms_to_iso(updated),
+            "updated_by": raw.get("updatedBy") or raw.get("updated_by") or "",
+            "version": raw.get("version"),
+        }
+
+    def get_alert_notes(
+        self,
+        alert_id: Optional[str] = None,
+        alert_ids: Optional[List[str]] = None,
+    ) -> Dict[str, Any]:
+        """
+        Fetch Security Solution / Rule Tuner alert notes from Kibana.
+
+        Notes live in the Kibana Notes API (``GET /api/note?documentIds=...``),
+        not on the alert ``_source``. ``documentIds`` is the alert Elasticsearch
+        ``_id`` (same as ``kibana.alert.uuid`` / Rule Tuner ``alert.id``).
+        """
+        ids: List[str] = []
+        if alert_ids:
+            for value in alert_ids:
+                text = str(value or "").strip()
+                if text and text not in ids:
+                    ids.append(text)
+        if alert_id:
+            text = str(alert_id).strip()
+            if text and text not in ids:
+                ids.append(text)
+        if not ids:
+            raise IntegrationError(
+                "get_alert_notes requires alert_id or alert_ids "
+                "(Elasticsearch _id / kibana.alert.uuid)"
+            )
+
+        kibana = self._cases_http()
+        try:
+            response = kibana.get(
+                "/api/note",
+                params={"documentIds": ids},
+                extra_headers={"Elastic-Api-Version": "2023-10-31"},
+            )
+        except IntegrationError:
+            raise
+        except Exception as e:
+            logger.exception("Error fetching alert notes for %s: %s", ids, e)
+            raise IntegrationError(f"Failed to fetch alert notes: {e}") from e
+
+        raw_notes = response.get("notes") if isinstance(response, dict) else None
+        if not isinstance(raw_notes, list):
+            raw_notes = []
+
+        notes = [
+            self._normalize_alert_note(item)
+            for item in raw_notes
+            if isinstance(item, dict)
+        ]
+        # Prefer document (alert-flyout) notes; timeline notes still returned.
+        notes.sort(
+            key=lambda n: (
+                0 if not (n.get("timeline_id") or "") else 1,
+                -(int(n["created"]) if str(n.get("created") or "").isdigit() else 0),
+            )
+        )
+
+        total_count = response.get("totalCount") if isinstance(response, dict) else None
+        if not isinstance(total_count, int):
+            total_count = len(notes)
+
+        return {
+            "success": True,
+            "alert_ids": ids,
+            "total_count": total_count,
+            "notes": notes,
+            "note_texts": [n.get("note", "") for n in notes if n.get("note")],
+        }
 
     def add_alert_note(
         self,

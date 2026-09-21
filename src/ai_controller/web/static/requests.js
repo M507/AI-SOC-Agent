@@ -312,6 +312,15 @@ class RequestsManager {
         return this.isEngNote(item);
     }
 
+    canCreateRunbook(item) {
+        return Boolean(
+            item
+            && item.action_type === 'runbook_gap'
+            && item.status === 'informational'
+            && !item.archived
+        );
+    }
+
     githubIssue(item) {
         if (item && item.github_issue && item.github_issue.number != null) {
             return item.github_issue;
@@ -558,16 +567,23 @@ class RequestsManager {
             const ignoreBtn = this.canIgnore(item)
                 ? '<button type="button" class="btn btn-secondary" data-request-action="ignore">Ignore</button>'
                 : '';
+            const createRunbookBtn = this.canCreateRunbook(item)
+                ? '<button type="button" class="btn btn-primary" data-request-action="create-runbook">Create runbook</button>'
+                : '';
+            const doneLabel = createRunbookBtn
+                ? 'Create runbook opens an Open WebUI session with the request + last alert, writes a new md under run_books/soc1/cases, then marks this Done. Ignore archives here and closes the GitHub issue when linked.'
+                : (this.canIgnore(item)
+                    ? 'Done keeps GitHub tracking open. Ignore archives here and closes the GitHub issue.'
+                    : 'No approval needed — review only, then mark Done.');
             return `
                 <div class="request-decision-bar is-info">
                     <div class="request-decision-copy">
                         <span class="request-decision-label">Review note</span>
-                        <span>${this.canIgnore(item)
-                            ? 'Done keeps GitHub tracking open. Ignore archives here and closes the GitHub issue.'
-                            : 'No approval needed — review only, then mark Done.'}</span>
+                        <span>${doneLabel}</span>
                     </div>
                     <div class="request-actions">
-                        <button type="button" class="btn btn-primary" data-request-action="done">Done</button>
+                        ${createRunbookBtn}
+                        <button type="button" class="btn ${createRunbookBtn ? 'btn-secondary' : 'btn-primary'}" data-request-action="done">Done</button>
                         ${ignoreBtn}
                     </div>
                     <textarea id="request-comment" class="command-input request-comment" rows="2"
@@ -688,9 +704,11 @@ class RequestsManager {
             ? '<div class="request-info-banner is-muted">Waiting on integration — approved earlier; connect the missing integration or leave archived when obsolete.</div>'
             : '';
         const banner = informational && item.status === 'informational'
-            ? `<div class="request-info-banner">${this.canIgnore(item)
+            ? `<div class="request-info-banner">${this.canCreateRunbook(item)
+                ? 'Runbook gap — <strong>Create runbook</strong> starts an Open WebUI session with this request and the last investigated alert to write a new file under <code>run_books/soc1/cases</code>, then marks Done.'
+                : (this.canIgnore(item)
                 ? 'Review note — <strong>Done</strong> archives here and leaves GitHub open. <strong>Ignore</strong> archives here and closes the GitHub issue.'
-                : 'Informational only — nothing is executed. Mark <strong>Done</strong> when you have reviewed it.'}</div>`
+                : 'Informational only — nothing is executed. Mark <strong>Done</strong> when you have reviewed it.')}</div>`
             : awaitingHtml;
         const settled = !pending && !(informational && item.status === 'informational');
         const techJson = {
@@ -946,6 +964,12 @@ class RequestsManager {
             return 'Approved and completed.';
         }
         if (status === 'acknowledged') {
+            const created = updated
+                && updated.execution_result
+                && updated.execution_result.create_runbook;
+            if (created && created.target_path) {
+                return `Create runbook started → ${created.target_path}.md. Marked Done.`;
+            }
             return 'Marked as done and archived.';
         }
         if (status === 'awaiting_integration') {
@@ -989,6 +1013,8 @@ class RequestsManager {
                 result = await this.controller.api.acknowledgeRequest(item.id, comment);
             } else if (action === 'ignore') {
                 result = await this.controller.api.ignoreRequest(item.id, comment);
+            } else if (action === 'create-runbook') {
+                result = await this.controller.api.createRunbookFromRequest(item.id, comment);
             } else if (action === 'yes' || action === 'no') {
                 result = await this.controller.api.answerRequest(item.id, action, comment);
             } else {
@@ -1017,6 +1043,26 @@ class RequestsManager {
         await this.load();
         this.showReceipt(item, updated, action);
         this.render();
+
+        if (action === 'create-runbook' && result.session && result.session.id) {
+            await this.openCreateRunbookSession(result.session.id);
+        }
+    }
+
+    async openCreateRunbookSession(sessionId) {
+        try {
+            if (this.controller.loadSessions) {
+                await this.controller.loadSessions();
+            }
+            if (this.controller.setActiveSection) {
+                this.controller.setActiveSection('sessions');
+            }
+            if (this.controller.sessionManager && this.controller.sessionManager.switchToSession) {
+                await this.controller.sessionManager.switchToSession(sessionId);
+            }
+        } catch (err) {
+            console.warn('[Requests] Could not switch to create-runbook session', err);
+        }
     }
 
     async handleBulk(action) {

@@ -269,6 +269,74 @@ def test_fine_tune_api_is_informational(tmp_path, monkeypatch):
     assert 'data-request-action="approve"' in text
     assert "queueTab" in text
     assert 'data-request-action="ignore"' in text
+    assert 'data-request-action="create-runbook"' in text
+    assert "Create runbook" in text
+    assert "canCreateRunbook" in text
+
+
+def test_create_runbook_starts_session_and_marks_done(tmp_path, monkeypatch):
+    monkeypatch.setenv("SAMI_RUNBOOKS_DIR", str(tmp_path / "run_books"))
+    (tmp_path / "run_books" / "soc1" / "cases").mkdir(parents=True)
+
+    client = _client(tmp_path)
+    created = client.post(
+        "/api/requests",
+        json={
+            "action_type": "runbook_gap",
+            "title": "Need case runbook: Impossible Travel",
+            "summary": "No case playbook matched",
+            "rationale": "Generic triage only",
+            "payload": {
+                "title": "Need case runbook: Impossible Travel",
+                "description": "Need GeoIP + VPN checks for impossible travel.",
+                "rule_name": "Impossible Travel",
+                "alert_type": "impossible travel",
+                "alert_id": "alert-travel-1",
+                "suggested_path": "soc1/cases/impossible_travel_triage",
+                "alert": {
+                    "id": "alert-travel-1",
+                    "title": "Impossible Travel",
+                    "severity": "medium",
+                },
+                "investigation_summary": "BTP after VPN confirmation",
+            },
+        },
+    )
+    assert created.status_code == 200, created.text
+    body = created.json()["request"]
+    assert body["status"] == "informational"
+    request_id = body["id"]
+
+    started = client.post(f"/api/requests/{request_id}/create-runbook", json={"comment": "author it"})
+    assert started.status_code == 200, started.text
+    payload = started.json()
+    assert payload["success"] is True
+    assert payload["target_path"] == "soc1/cases/impossible_travel_triage"
+    assert payload["session"]["id"]
+    assert payload["request"]["status"] == "acknowledged"
+    assert payload["request"]["execution_result"]["create_runbook"]["session_id"] == payload["session"]["id"]
+
+    wrong = client.post(
+        f"/api/requests/{request_id}/create-runbook",
+        json={},
+    )
+    assert wrong.status_code == 400
+
+    close_created = client.post(
+        "/api/requests",
+        json={
+            "action_type": "close_alert",
+            "title": "Close something",
+            "summary": "fp",
+            "payload": {"alert_id": "a1", "reason": "false_positive", "comment": "noise"},
+        },
+    )
+    assert close_created.status_code == 200
+    reject = client.post(
+        f"/api/requests/{close_created.json()['request']['id']}/create-runbook",
+        json={},
+    )
+    assert reject.status_code == 400
 
 
 def test_ignore_archives_informational_request(tmp_path, monkeypatch):

@@ -43,7 +43,7 @@ Tools for managing security incidents and cases:
 
 ### SIEM Tools
 
-Elastic/ELK tools are registered when SIEM is configured. The live catalog is driven by `SIEM_SKILLS` in `src/core/skill_vector.py` and documented in `skills.md` / `TOOLS.md`.
+Elastic/ELK tools are registered when SIEM is configured. The live catalog is driven by `SIEM_SKILLS` in `src/core/skill_vector.py` and documented in `skills.md` / `TOOLS.md`. See **[ADDING_A_SKILL.md](ADDING_A_SKILL.md)** for the end-to-end checklist when adding a new MCP skill.
 
 Core search / investigation (query languages):
 - `search_security_events` — general event search
@@ -53,7 +53,7 @@ Core search / investigation (query languages):
 - `search_dsl_query` — Elasticsearch Query DSL (JSON)
 - `search_esql_query` — ES|QL
 
-Also includes alerts (`get_security_alerts`, `get_recent_alerts`, `get_rule_detections`, …), enrichment, Elastic Defend isolation, and Home Lab rule suggestions. Enable/disable groups in the Elastic Settings UI skill vector.
+Also includes alerts (`get_security_alerts`, `get_recent_alerts`, `get_security_alert_by_id`, `get_alert_notes`, `get_rule_detections`, …), enrichment, Elastic Defend isolation, and Home Lab rule suggestions. Enable/disable groups in the Elastic Settings UI skill vector.
 
 ### EDR Tools (6 tools)
 Tools for endpoint investigation and response:

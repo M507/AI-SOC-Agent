@@ -37,7 +37,7 @@ This runbook explicitly **excludes**:
 ## Tools
 
 *   **Case Management Tools:** `review_case`, `add_case_comment`, `attach_observable_to_case`, `search_cases`, `add_case_task`
-*   **SIEM Tools:** `get_security_alert_by_id`, `lookup_entity`, `search_security_events`, `search_kql_query`, `search_lucene_query`, `search_eql_query`, `search_dsl_query`, `search_esql_query`, `search_user_activity`, `get_ip_address_report`, `pivot_on_indicator`, `get_ioc_matches`, `get_alerts_by_entity`, `get_alerts_by_time_window`, `get_rule_detections`, `get_security_alerts`
+*   **SIEM Tools:** `get_security_alert_by_id`, `get_alert_notes`, `lookup_entity`, `search_security_events`, `search_kql_query`, `search_lucene_query`, `search_eql_query`, `search_dsl_query`, `search_esql_query`, `search_user_activity`, `get_ip_address_report`, `pivot_on_indicator`, `get_ioc_matches`, `get_alerts_by_entity`, `get_alerts_by_time_window`, `get_rule_detections`, `get_security_alerts`
 *   **Engineering Tools:** `list_fine_tuning_recommendations`, `create_fine_tuning_recommendation`, `add_comment_to_fine_tuning_recommendation`, `create_visibility_recommendation`
 
 ## Workflow Steps
@@ -83,10 +83,11 @@ This runbook explicitly **excludes**:
     *   Look for basic patterns: logins from other unusual IPs, successful logins after failures, frequency of logins from `${SOURCE_IP}` vs. others (`LOGIN_ACTIVITY_SUMMARY`).
     *   **Alert Correlation:** Use `get_alerts_by_entity` with `entity_value=${USER_ID}` and `entity_type="user"` to find related alerts for this user. Use `get_alerts_by_entity` with `entity_value=${SOURCE_IP}` and `entity_type="ip"` to find related alerts for this IP. Use `get_alerts_by_time_window` to find alerts occurring around the same time as the suspicious login.
 
-7.  **Check Related Cases:**
+7.  **Check Related Cases / Past Alerts:**
     *   Use `search_cases` with `text` parameter containing `${USER_ID}`, `${SOURCE_IP}`, and `${HOSTNAME}` (if available).
     *   Use `get_rule_detections` / `get_security_alerts` with status closed/acknowledged for the same rule type.
-    *   Obtain `${RELATED_CASES}`.
+    *   For strong same-type / same-key matches, open with `get_security_alert_by_id` (includes that alert’s Kibana notes) and/or batch `get_alert_notes`.
+    *   Obtain `${RELATED_CASES}` / historical note takeaways.
 
 8.  **Attach Observables to Case:**
     *   Attach the source IP as an observable: Use `attach_observable_to_case` with `case_id=${CASE_ID}`, `observable_type="ip"`, `observable_value=${SOURCE_IP}`, and description.

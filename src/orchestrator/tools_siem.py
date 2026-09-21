@@ -724,7 +724,9 @@ def get_security_alert_by_id(
     
     Tool schema:
     - name: get_security_alert_by_id
-    - description: Get detailed information about a specific security alert by its ID
+    - description: Get detailed information about a specific security alert by its ID.
+      Also includes Security Solution / Rule Tuner notes from Kibana (notes are not on
+      alert _source). For batch note fetch across similar alerts, use get_alert_notes.
     - parameters:
       - alert_id (str, required): The ID of the alert
       - include_detections (bool, optional): Whether to include detection details (default: true)
@@ -1292,6 +1294,60 @@ def add_alert_note(
         }
     except Exception as e:
         raise IntegrationError(f"Failed to add note to alert {alert_id}: {str(e)}") from e
+
+
+def get_alert_notes(
+    alert_id: Optional[str] = None,
+    alert_ids: Optional[List[str]] = None,
+    client: SIEMClient = None,  # type: ignore
+) -> Dict[str, Any]:
+    """
+    Fetch Security Solution / Rule Tuner notes for one or more alerts.
+
+    Tool schema:
+    - name: get_alert_notes
+    - description: Fetch analyst notes attached to security alerts (Kibana Notes API).
+      Notes are NOT on alert _source — always call this when reviewing similar/past
+      alerts so prior analyst guidance is visible. documentIds = alert Elasticsearch _id
+      (kibana.alert.uuid / Rule Tuner alert.id).
+    - parameters:
+      - alert_id (str, optional): Single alert id to fetch notes for
+      - alert_ids (list[str], optional): Batch of alert ids (preferred for similar-alert review)
+
+    Args:
+        alert_id: Single alert Elasticsearch ``_id``.
+        alert_ids: Optional list of alert ids.
+        client: The SIEM client.
+
+    Returns:
+        Dictionary with notes, note_texts, total_count, and alert_ids.
+
+    Raises:
+        IntegrationError: If fetching notes fails.
+    """
+    if client is None:
+        raise IntegrationError("SIEM client not provided")
+
+    if not hasattr(client, "get_alert_notes"):
+        raise IntegrationError("SIEM client does not support get_alert_notes")
+
+    if not alert_id and not alert_ids:
+        raise IntegrationError("get_alert_notes requires alert_id or alert_ids")
+
+    try:
+        result = client.get_alert_notes(
+            alert_id=alert_id,
+            alert_ids=alert_ids,
+        )
+        return {
+            "success": True,
+            "alert_ids": result.get("alert_ids", []),
+            "total_count": result.get("total_count", 0),
+            "notes": result.get("notes", []),
+            "note_texts": result.get("note_texts", []),
+        }
+    except Exception as e:
+        raise IntegrationError(f"Failed to fetch alert notes: {str(e)}") from e
 
 
 def search_kql_query(

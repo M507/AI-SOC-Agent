@@ -19,6 +19,7 @@ Irreversible MCP tools **file a request** instead of executing:
 *   `close_alert`, `isolate_endpoint`, `release_endpoint_isolation`, `kill_process_on_endpoint`, `collect_forensic_artifacts`
 *   `create_fine_tuning_recommendation` and `create_visibility_recommendation` file **informational** notes (Home Lab rule lookup / coverage check). No approve button. No engineering board.
 *   `create_runbook_recommendation` files an **informational** note that a case-specific playbook is missing under `soc*/cases/`. Call it **only after** investigation finishes (final verdict). Never block triage for it. Server attaches existing case-runbook coverage evidence.
+*   Analysts can press **Create runbook** on that Requests note to open an Open WebUI session that authors a new `run_books/soc1/cases/*.md` via `save_case_runbook`.
 *   Before a visibility note: `search_lab_detection_rules` (1–3 keyword searches) then at most 1–2 `get_lab_detection_rule` calls. Only file a gap if the catalog does not already cover it.
 *   `update_alert_verdict` is **not** gated. It is the AI's working assessment and runs immediately. It does not close the alert.
 *   `create_approval_request` is for identity checks ("is this you?") and any custom follow-up (ACK vs escalate to an Elastic Security case).
@@ -31,6 +32,7 @@ Irreversible MCP tools **file a request** instead of executing:
 *   **If uncertain about legitimacy**: Write a full alert note and set an honest verdict (`uncertain` / `true_positive`). Do **not** create a case.
 *   Use `get_security_alert_by_id` as the FIRST step in every workflow.
 *   Use `get_rule_detections` / `get_security_alerts` to review past **closed** and **acknowledged** alerts of the same rule/type before deciding.
+*   **MUST** call `get_alert_notes` on matching past (and current) alerts — Security Solution / Rule Tuner notes are **not** on alert `_source`; reading past work means reading those notes.
 
 ## Required Structure
 
@@ -66,7 +68,7 @@ Runbooks are structured markdown documents that the MCP server parses for metada
 
 *   **Tools (`## Tools`):**
     *   Group tools by functional area (matching existing runbooks):
-        *   **SIEM Tools:** `get_security_alert_by_id`, `get_rule_detections`, `get_security_alerts` (incl. `status_filter=closed|acknowledged` and `rule_name`/`rule_id`), `search_security_events`, `search_kql_query`, `search_lucene_query`, `search_eql_query`, `search_dsl_query`, `search_esql_query`, `lookup_entity`, `get_ioc_matches`, `get_file_report`, `get_ip_address_report`, `pivot_on_indicator`, `get_entities_related_to_file`, `get_file_behavior_summary`, `get_threat_intel`.
+        *   **SIEM Tools:** `get_security_alert_by_id`, `get_rule_detections`, `get_security_alerts` (incl. `status_filter=closed|acknowledged` and `rule_name`/`rule_id`), `get_alert_notes` (MANDATORY for past similar alerts — Kibana notes / Rule Tuner), `search_security_events`, `search_kql_query`, `search_lucene_query`, `search_eql_query`, `search_dsl_query`, `search_esql_query`, `lookup_entity`, `get_ioc_matches`, `get_file_report`, `get_ip_address_report`, `pivot_on_indicator`, `get_entities_related_to_file`, `get_file_behavior_summary`, `get_threat_intel`.
         *   **NetBox Tools:** `netbox_lookup_ip`, `netbox_lookup_host`, `netbox_lookup_prefix`, `netbox_search`.
         *   **CTI Tools:** `lookup_hash_ti` (and others as applicable).
         *   **EDR Tools:** `get_endpoint_summary`, `isolate_endpoint`, `kill_process_on_endpoint`, `collect_forensic_artifacts` (where relevant).

@@ -219,7 +219,8 @@ ACTION_CATALOG: Tuple[ActionSpec, ...] = (
         gated_mcp_tool="create_runbook_recommendation",
         notes=(
             "File only AFTER the investigation finishes (final verdict set). "
-            "Server lists existing case runbooks and flags near-matches. No approve button."
+            "Server lists existing case runbooks and flags near-matches. No approve button. "
+            "Use Create runbook in Requests to author soc*/cases/*.md via Open WebUI."
         ),
         fields=_fields(
             FieldSpec("title", "Title", True),

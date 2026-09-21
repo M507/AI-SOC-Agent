@@ -233,14 +233,8 @@ class ModalManager {
         const nameInput = document.getElementById('session-name');
         if (!nameInput) return;
         
-        const name = nameInput.value.trim();
-        
-        if (!name) {
-            if (window.toast) {
-                window.toast.info('Enter a session name.', { key: 'session' });
-            }
-            return;
-        }
+        // Empty name is allowed; the server assigns a random UUID.
+        const name = nameInput.value.trim() || null;
 
         const alertSelect = document.getElementById('session-alert-select');
         const selectedAlertId = alertSelect && alertSelect.value ? alertSelect.value.trim() : '';

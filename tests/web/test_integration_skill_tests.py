@@ -14,6 +14,14 @@ def test_every_integration_skill_has_inventory_policy():
         assert all(item["mode"] in {"read", "create_cleanup", "skip"} for item in inventory)
 
 
+def test_get_alert_notes_appears_in_elastic_ui_skill_inventory():
+    inventory = probes.skill_inventory("elastic:example")
+    item = next(entry for entry in inventory if entry["id"] == "get_alert_notes")
+    assert item["label"] == "Get Alert Notes"
+    assert item["mode"] == "skip"
+    assert "alert" in item["skip_reason"].lower()
+
+
 def test_critical_skills_are_never_runnable():
     for integration_id, skill in (
         ("edr", "isolate_endpoint"),

@@ -2,14 +2,14 @@
 
 ## Objective
 
-Standardized SOC1 triage for SIEM alerts: start from the alert queue, **before assessing** read past closed/ack decisions for the same alert type and matching key values (IPs, hosts, users, …) including comments, use NetBox role context, **always set an alert verdict**, close clear FP/BTP without creating cases, and leave clear alert notes when not closing.
+Standardized SOC1 triage for SIEM alerts: start from the alert queue, **before assessing** read past closed/ack decisions for the same alert type and matching key values (IPs, hosts, users, …) including **`get_alert_notes` analyst notes**, use NetBox role context, **always set an alert verdict**, close clear FP/BTP without creating cases, and leave clear alert notes when not closing.
 
 ## Scope
 
 **Included**
 - Triage alerts from `get_recent_alerts`
 - Full alert/event extraction via `get_security_alert_by_id`
-- Same-type **and same-key** historical review (closed + acknowledged), including prior verdicts and comments
+- Same-type **and same-key** historical review (closed + acknowledged), including prior verdicts and **`get_alert_notes` note bodies**
 - NetBox identity/role verification
 - Lightweight SIEM/IOC enrichment (3–5 entities)
 - Alert verdicts (**MANDATORY** via `update_alert_verdict`), notes, and `close_alert` requests
@@ -36,13 +36,14 @@ Standardized SOC1 triage for SIEM alerts: start from the alert queue, **before a
 
 **SIEM – alert management**
 - `get_recent_alerts`, `get_security_alert_by_id`, `get_siem_event_by_id`
-- `update_alert_verdict`, `add_alert_note`, `close_alert`
+- `update_alert_verdict`, `add_alert_note`, `get_alert_notes`, `close_alert`
 
 **SIEM – past decisions (MANDATORY before assessment)**
 - `get_rule_detections` — same rule; `alert_state=closed|acknowledged`; `hours_back` ≥ 168
 - `get_security_alerts` — `rule_name`/`rule_id` + `status_filter=closed|acknowledged` (+ `hostname` when useful)
 - `get_alerts_by_entity` — same IPs / hosts / users / hashes / domains
-- `get_security_alert_by_id` — **open matching past alerts and read their verdicts + comments/notes**
+- `get_security_alert_by_id` — **open matching past alerts and read their verdicts**
+- `get_alert_notes` — **MUST** fetch Security Solution / Rule Tuner notes for matching past alerts (and current `${ALERT_ID}`); notes are **not** on alert `_source`
 
 **SIEM – investigation**
 - `search_security_events`
@@ -72,7 +73,7 @@ Standardized SOC1 triage for SIEM alerts: start from the alert queue, **before a
 4. `${KEY_ENTITIES}`
 5. `${RULE_ID}`, `${RULE_NAME}` — detection rule / alert type
 6. `${NETBOX_CONTEXT}`
-7. `${HISTORICAL_DECISIONS}` — past closed/ack alerts for same type + matching keys, with verdicts and comment takeaways (**required before assessment**)
+7. `${HISTORICAL_DECISIONS}` — past closed/ack alerts for same type + matching keys, with verdicts and **`get_alert_notes` takeaways** (**required before assessment**)
 8. `${HISTORICAL_SAME_TYPE}` — optional alias/summary of rule-level history
 9. `${IOC_MATCH_RESULTS}`
 10. `${INITIAL_SIEM_CONTEXT}` (optional enrichment summary)
@@ -107,7 +108,7 @@ Standardized SOC1 triage for SIEM alerts: start from the alert queue, **before a
 
 ### 3. Past decisions review (MANDATORY — before NetBox / IOC / close decisions)
 
-**Goal:** learn how L1/analysts already judged the **same alert type** with the **same main values**, including their comments.
+**Goal:** learn how L1/analysts already judged the **same alert type** with the **same main values**, including their Security Solution / Rule Tuner notes.
 
 1. **Same alert type — closed:**
    - `get_rule_detections` with `rule_id`/`rule_name`, `alert_state="closed"`, `hours_back=168` (or wider), `limit=50`
@@ -118,16 +119,18 @@ Standardized SOC1 triage for SIEM alerts: start from the alert queue, **before a
    - For each top key in `${KEY_ENTITIES}` (especially IPs and hosts), call `get_alerts_by_entity` with `hours_back` ≥ 168
    - Prefer/keep results that also share `${RULE_NAME}` / `${RULE_ID}` when identifiable
    - If hostname is central, also `get_security_alerts` with `hostname` + rule + closed/ack filters
-4. **Read past verdicts and comments:**
+4. **Read past verdicts and notes (MANDATORY):**
    - Select the strongest matches (same rule **and** overlapping IPs/hosts/users/hashes/etc.)
-   - For each (up to a small set, e.g. 3–8), call `get_security_alert_by_id`
-   - Extract prior `verdict`, status (closed/ack), and **all comments/notes**
+   - For each (up to a small set, e.g. 3–8), call `get_security_alert_by_id` — response includes that alert’s Kibana `notes` / `note_texts`
+   - Prefer also `get_alert_notes` with `alert_ids` = those past alert ids (batch) when reviewing several at once
+   - Notes are **not** on alert `_source` — they come from Kibana `GET /api/note?documentIds=...`
+   - Extract prior `verdict`, status (closed/ack), and **all note body text**
 5. Summarize into `${HISTORICAL_DECISIONS}`:
    - Matching keys (which IPs/hosts/… overlapped)
    - Prior verdicts (FP/BTP/TP/uncertain) and closed vs ack counts
-   - Short excerpts / takeaways from comments (why it was closed or acked)
+   - Short excerpts / takeaways from notes (why it was closed or acked — what the analyst wrote)
    - Lean: supports FP/BTP close | warns against close | conflicting
-6. **Do not proceed to NetBox/IOC/closure until `${HISTORICAL_DECISIONS}` is populated** (or explicitly recorded as “no history found”).
+6. **Do not proceed to NetBox/IOC/closure until `${HISTORICAL_DECISIONS}` is populated** (or explicitly recorded as “no history found”), including an explicit notes check via `get_alert_notes`.
 
 ### 4. Lock alert (MANDATORY verdict #1)
 
@@ -149,18 +152,18 @@ Standardized SOC1 triage for SIEM alerts: start from the alert queue, **before a
 #### 5.3 Decision
 
 **Close as FP/BTP (go to Step 6)** if:
-- `${HISTORICAL_DECISIONS}` shows same rule + same key values repeatedly closed/acked as FP/BTP with consistent comments **and/or** NetBox role explains the behavior, **and**
+- `${HISTORICAL_DECISIONS}` shows same rule + same key values repeatedly closed/acked as FP/BTP with consistent notes **and/or** NetBox role explains the behavior, **and**
 - No IOC hits, **and**
 - No unexplained suspicious patterns
 
 **Do not close (go to Step 7)** if:
-- History is missing/conflicting/TP/uncertain, **or** comments describe real risk, **or**
+- History is missing/conflicting/TP/uncertain, **or** notes describe real risk, **or**
 - NetBox missing/contradicts, **or**
 - IOC hits / suspicious patterns remain
 
 ### 6. FP/BTP closure request (no case) — MANDATORY final verdict
 
-1. `add_alert_note` citing `${HISTORICAL_DECISIONS}` (prior verdicts + comment takeaways) + NetBox + IOC results.
+1. `add_alert_note` citing `${HISTORICAL_DECISIONS}` (prior verdicts + note takeaways) + NetBox + IOC results.
 2. **MANDATORY:** `update_alert_verdict` → `false_positive` or `benign_true_positive` (set `${FINAL_VERDICT}`).
 3. `close_alert` (queued for Requests). Do not claim the alert is already closed.
 4. Optionally update/create a fine-tuning recommendation for noisy rules.
@@ -174,7 +177,7 @@ Standardized SOC1 triage for SIEM alerts: start from the alert queue, **before a
 3. Choose **final** working verdict: `uncertain` or `true_positive` only (do **not** leave `in-progress` when ending).
 4. `add_alert_note` MUST include:
    - Rule name/id, key entities
-   - `${HISTORICAL_DECISIONS}` (prior verdicts + comments summary)
+   - `${HISTORICAL_DECISIONS}` (prior verdicts + `get_alert_notes` summary)
    - NetBox match/mismatch
    - IOC/enrichment highlights
    - Why it was not closed and what a human should check next
@@ -200,7 +203,7 @@ Standardized SOC1 triage for SIEM alerts: start from the alert queue, **before a
 ## Completion Criteria
 
 - Workflow started from `${ALERT_ID}` with `get_security_alert_by_id` first.
-- `${HISTORICAL_DECISIONS}` was built **before** close/TP decisions: closed + ack same-type search, key-value overlap, and `get_security_alert_by_id` on matches to read verdicts/comments (or explicit “no history”).
+- `${HISTORICAL_DECISIONS}` was built **before** close/TP decisions: closed + ack same-type search, key-value overlap, `get_security_alert_by_id` on matches, and **`get_alert_notes` on those ids** (or explicit “no history” / empty notes).
 - `update_alert_verdict` was called for lock (`in-progress`) and **final** (`false_positive` | `benign_true_positive` | `true_positive` | `uncertain`).
 - `${FINAL_VERDICT}` is set and is **not** `in-progress`.
 - `${NETBOX_CONTEXT}` evaluated for primary hosts/IPs when present.
@@ -211,14 +214,15 @@ Standardized SOC1 triage for SIEM alerts: start from the alert queue, **before a
 ## Escalation Criteria
 
 Escalate via **alert note + final verdict** (not a new case) when:
-- Past decisions/comments do not support FP/BTP or conflict
+- Past decisions/notes do not support FP/BTP or conflict
 - Behavior contradicts NetBox role
 - IOC matches or clear TP indicators exist
 - Uncertainty remains after history + NetBox + light enrichment
 
 ## Notes
 
-- **Past decisions come first** — same alert type, same relevant keys, read comments, then decide.
+- **Past decisions come first** — same alert type, same relevant keys, **MUST** `get_alert_notes`, then decide.
+- Alert notes are **not** on `_source`; always fetch via `get_alert_notes`.
 - NetBox is the only infra knowledge base (role/purpose).
 - **Verdicts are always required** — finishing without `update_alert_verdict` to a final value is a runbook failure.
 - SOC1 never creates cases in this runbook.

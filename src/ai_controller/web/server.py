@@ -1036,7 +1036,12 @@ async def create_session(request: Request):
         raise HTTPException(status_code=500, detail="Session manager not initialized")
     
     data = await request.json()
-    name = data.get("name", "New Session")
+    # Name is optional; blank/missing names get a random UUID in create_session.
+    name = data.get("name")
+    if isinstance(name, str):
+        name = name.strip() or None
+    else:
+        name = None
     session_type = SessionType(data.get("session_type", "manual"))
     cluster_id = data.get("cluster_id") or None
 
@@ -1164,114 +1169,101 @@ async def stop_session(session_id: str):
     return JSONResponse(content={"success": True, "status": "stopped"})
 
 
-@app.post("/api/sessions/{session_id}/execute")
-async def execute_command(session_id: str, command_request: CommandRequest):
-    """Execute a command in a session."""
+async def kickoff_session_command(session_id: str, command_text: str) -> Dict[str, Any]:
+    """Parse + start a session command in the background. Returns entry metadata."""
     if not executor or not session_manager:
         raise HTTPException(status_code=500, detail="Server not initialized")
-    
+
     session = session_manager.get_session(session_id)
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
-    
+
     # Capture before the nested task: assigning to `session` in except
     # blocks below would otherwise make it a local and break cluster_id lookup.
     cluster_id = session.cluster_id
+    command = executor.parse_command(command_text)
+    entry = session_manager.add_entry(session_id, command_text)
 
-    # Parse command
-    command = executor.parse_command(command_request.command)
-    
-    # Add entry to session
-    entry = session_manager.add_entry(session_id, command_request.command)
-    
-    # Broadcast that execution started
     await broadcast_to_session(session_id, {
         "type": "execution_started",
         "entry_id": entry.id,
-        "command": command_request.command
+        "command": command_text,
     })
-    
-    # Execute command asynchronously
+
     async def execute_and_update():
         try:
             session_manager.update_session_status(session_id, SessionStatus.RUNNING)
-            
+
             result = await executor.execute_command(command, cluster_id=cluster_id)
-            
-            # Update entry
+
             session_manager.update_entry(
                 session_id,
                 entry.id,
                 result=result.to_dict() if result else None,
-                status=SessionStatus.COMPLETED if result and result.success else SessionStatus.FAILED
+                status=SessionStatus.COMPLETED if result and result.success else SessionStatus.FAILED,
             )
-            
-            # Update session status
+
             final_status = SessionStatus.COMPLETED if result and result.success else SessionStatus.FAILED
             session_manager.update_session_status(session_id, final_status)
-            
-            # Broadcast result
+
             await broadcast_to_session(session_id, {
                 "type": "execution_completed",
                 "entry_id": entry.id,
-                "result": result.to_dict() if result else None
+                "result": result.to_dict() if result else None,
             })
         except asyncio.CancelledError:
-            # Task was cancelled (user clicked Stop / closed tab)
             logger.info(f"Execution task for session {session_id} was cancelled")
-            
-            # Only update session if it still exists (might be deleted during cancellation)
             try:
                 current = session_manager.get_session(session_id)
                 if current:
                     session_manager.update_entry(
                         session_id,
                         entry.id,
-                        status=SessionStatus.STOPPED
+                        status=SessionStatus.STOPPED,
                     )
                     session_manager.update_session_status(session_id, SessionStatus.STOPPED)
-                    
                     await broadcast_to_session(session_id, {
                         "type": "execution_failed",
                         "entry_id": entry.id,
-                        "error": "Execution stopped by user"
+                        "error": "Execution stopped by user",
                     })
             except Exception as e:
                 logger.warning(f"Session {session_id} may have been deleted during cancellation: {e}")
         except Exception as e:
             logger.exception(f"Error executing command in session {session_id}")
-            
-            # Only update session if it still exists (might be deleted)
             try:
                 current = session_manager.get_session(session_id)
                 if current:
                     session_manager.update_entry(
                         session_id,
                         entry.id,
-                        status=SessionStatus.FAILED
+                        status=SessionStatus.FAILED,
                     )
                     session_manager.update_session_status(session_id, SessionStatus.FAILED)
-                    
                     await broadcast_to_session(session_id, {
                         "type": "execution_failed",
                         "entry_id": entry.id,
-                        "error": str(e)
+                        "error": str(e),
                     })
             except Exception as update_error:
                 logger.warning(f"Session {session_id} may have been deleted during error handling: {update_error}")
         finally:
-            # Clear running task reference
             if session_id in running_tasks:
                 running_tasks.pop(session_id, None)
-    
-    # Run in background and track task for potential cancellation
+
     task = asyncio.create_task(execute_and_update())
     running_tasks[session_id] = task
-    
+    return {"entry_id": entry.id, "session_id": session_id}
+
+
+@app.post("/api/sessions/{session_id}/execute")
+async def execute_command(session_id: str, command_request: CommandRequest):
+    """Execute a command in a session."""
+    started = await kickoff_session_command(session_id, command_request.command)
     return JSONResponse(content={
         "success": True,
-        "entry_id": entry.id,
-        "message": "Command execution started"
+        "entry_id": started["entry_id"],
+        "message": "Command execution started",
     })
 
 

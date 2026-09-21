@@ -61,3 +61,65 @@ def test_mcp_registers_create_runbook_recommendation():
     schema = server.tools["create_runbook_recommendation"]["inputSchema"]
     assert "title" in schema["properties"]
     assert "description" in schema["properties"]
+
+
+def test_save_case_runbook_writes_under_cases(tmp_path, monkeypatch):
+    from src.ai_controller.approval_queue.create_runbook import (
+        normalize_case_runbook_path,
+        save_case_runbook,
+    )
+
+    monkeypatch.setenv("SAMI_RUNBOOKS_DIR", str(tmp_path))
+    assert normalize_case_runbook_path(
+        None, rule_name="Impossible Travel!", soc_tier="soc1"
+    ) == "soc1/cases/impossible_travel_triage"
+
+    content = "# SOC1: Impossible Travel Triage Runbook\n\n## Objective\nTriage travel alerts.\n"
+    result = save_case_runbook("soc1/cases/impossible_travel_triage", content)
+    assert result["success"] is True
+    written = tmp_path / "soc1" / "cases" / "impossible_travel_triage.md"
+    assert written.is_file()
+    assert "Impossible Travel" in written.read_text(encoding="utf-8")
+
+    blocked = save_case_runbook("../etc/passwd", content)
+    assert blocked["success"] is False
+
+    duplicate = save_case_runbook("soc1/cases/impossible_travel_triage", content)
+    assert duplicate["success"] is False
+
+
+def test_build_create_runbook_prompt_includes_alert_and_path():
+    from src.ai_controller.approval_queue.create_runbook import build_create_runbook_prompt
+    from src.ai_controller.approval_queue.models import ApprovalRequest, RequestStatus
+
+    request = ApprovalRequest(
+        id="req-1",
+        action_type="runbook_gap",
+        title="Need case runbook: Impossible Travel",
+        summary="Missing playbook",
+        rationale="Used only generic triage",
+        status=RequestStatus.INFORMATIONAL,
+        payload={
+            "title": "Need case runbook: Impossible Travel",
+            "description": "Author a travel-specific playbook with GeoIP checks.",
+            "rule_name": "Impossible Travel",
+            "alert_type": "impossible travel",
+            "alert_id": "alert-99",
+            "suggested_path": "soc1/cases/impossible_travel_triage",
+            "alert": {"id": "alert-99", "title": "Impossible Travel", "severity": "high"},
+            "investigation_summary": "Closed as BTP after VPN check.",
+        },
+    )
+    built = build_create_runbook_prompt(request)
+    assert built["target_path"] == "soc1/cases/impossible_travel_triage"
+    assert "save_case_runbook" in built["prompt"]
+    assert "alert-99" in built["prompt"]
+    assert "Impossible Travel" in built["prompt"]
+    assert "get_alert_notes" in built["prompt"]
+
+
+def test_mcp_registers_save_case_runbook():
+    server = SamiGPTMCPServer()
+    assert "save_case_runbook" in server.tools
+    assert SKILL_TO_SOLUTIONS["save_case_runbook"] == ("RB",)
+    assert human_skill_label("save_case_runbook") == "Save a case runbook file"

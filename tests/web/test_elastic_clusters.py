@@ -77,6 +77,22 @@ def test_create_session_stores_cluster_id(tmp_path, monkeypatch):
     assert payload["cluster"]["base_url"] == "https://elastic.example:9200"
 
 
+def test_create_session_without_name_uses_uuid(tmp_path, monkeypatch):
+    client, _config_path = _authed_client(tmp_path, monkeypatch)
+
+    session = client.post("/api/sessions", json={"name": ""})
+    assert session.status_code == 200, session.text
+    payload = session.json()["session"]
+    assert payload["id"]
+    assert payload["name"] == payload["id"]
+
+    session_omitted = client.post("/api/sessions", json={})
+    assert session_omitted.status_code == 200, session_omitted.text
+    omitted = session_omitted.json()["session"]
+    assert omitted["name"] == omitted["id"]
+    assert omitted["id"] != payload["id"]
+
+
 def test_new_cluster_inherits_default_skill_vector(tmp_path, monkeypatch):
     client, config_path = _authed_client(tmp_path, monkeypatch)
     listed = client.get("/api/elastic/clusters")

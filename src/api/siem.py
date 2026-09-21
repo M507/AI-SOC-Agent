@@ -327,4 +327,25 @@ class SIEMClient(Protocol):
         """
         ...
 
+    def get_alert_notes(
+        self,
+        alert_id: Optional[str] = None,
+        alert_ids: Optional[List[str]] = None,
+    ) -> Dict[str, Any]:
+        """
+        Fetch analyst notes attached to one or more security alerts.
+
+        On Elastic Security these come from the Kibana Notes API
+        (``GET /api/note?documentIds=...``), not from alert ``_source``.
+
+        Args:
+            alert_id: Single alert Elasticsearch ``_id`` / ``kibana.alert.uuid``.
+            alert_ids: Optional batch of alert ids (similar-alert review).
+
+        Returns:
+            Dictionary with ``notes``, ``note_texts``, ``total_count``, and
+            the resolved ``alert_ids``.
+        """
+        ...
+
 

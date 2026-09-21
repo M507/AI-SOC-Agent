@@ -114,6 +114,7 @@ class ElasticHttpClient:
         endpoint: str,
         json_data: Optional[Dict[str, Any]] = None,
         params: Optional[Dict[str, Any]] = None,
+        extra_headers: Optional[Dict[str, str]] = None,
     ) -> Dict[str, Any]:
         """
         Make an HTTP request to Elasticsearch API.
@@ -123,6 +124,7 @@ class ElasticHttpClient:
             endpoint: API endpoint path
             json_data: JSON payload (for POST, PUT, PATCH)
             params: Query parameters (for GET, etc.)
+            extra_headers: Optional headers merged onto the defaults
         
         Returns:
             Response JSON as dictionary
@@ -132,6 +134,8 @@ class ElasticHttpClient:
         """
         url = self._build_url(endpoint)
         headers = self._headers()
+        if extra_headers:
+            headers.update(extra_headers)
 
         try:
             logger.debug(f"Elastic {method} {url}")
@@ -178,15 +182,47 @@ class ElasticHttpClient:
         except requests.exceptions.RequestException as e:
             raise IntegrationError(f"Elastic API request failed: {e}") from e
 
-    def get(self, endpoint: str, params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    def get(
+        self,
+        endpoint: str,
+        params: Optional[Dict[str, Any]] = None,
+        extra_headers: Optional[Dict[str, str]] = None,
+    ) -> Dict[str, Any]:
         """GET request."""
-        return self.request("GET", endpoint, params=params)
+        return self.request(
+            "GET", endpoint, params=params, extra_headers=extra_headers
+        )
 
-    def post(self, endpoint: str, json_data: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    def post(
+        self,
+        endpoint: str,
+        json_data: Optional[Dict[str, Any]] = None,
+        extra_headers: Optional[Dict[str, str]] = None,
+    ) -> Dict[str, Any]:
         """POST request."""
-        return self.request("POST", endpoint, json_data=json_data)
+        return self.request(
+            "POST", endpoint, json_data=json_data, extra_headers=extra_headers
+        )
 
-    def delete(self, endpoint: str, json_data: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    def patch(
+        self,
+        endpoint: str,
+        json_data: Optional[Dict[str, Any]] = None,
+        extra_headers: Optional[Dict[str, str]] = None,
+    ) -> Dict[str, Any]:
+        """PATCH request."""
+        return self.request(
+            "PATCH", endpoint, json_data=json_data, extra_headers=extra_headers
+        )
+
+    def delete(
+        self,
+        endpoint: str,
+        json_data: Optional[Dict[str, Any]] = None,
+        extra_headers: Optional[Dict[str, str]] = None,
+    ) -> Dict[str, Any]:
         """DELETE request."""
-        return self.request("DELETE", endpoint, json_data=json_data)
+        return self.request(
+            "DELETE", endpoint, json_data=json_data, extra_headers=extra_headers
+        )
 

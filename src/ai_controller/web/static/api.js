@@ -708,6 +708,10 @@ class APIClient {
         return this._requestDecision(`/api/requests/${encodeURIComponent(requestId)}/acknowledge`, { comment });
     }
 
+    async createRunbookFromRequest(requestId, comment = '') {
+        return this._requestDecision(`/api/requests/${encodeURIComponent(requestId)}/create-runbook`, { comment });
+    }
+
     async ignoreRequest(requestId, comment = '') {
         return this._requestDecision(`/api/requests/${encodeURIComponent(requestId)}/ignore`, { comment });
     }

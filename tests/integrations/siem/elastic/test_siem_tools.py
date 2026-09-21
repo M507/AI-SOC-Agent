@@ -51,6 +51,7 @@ from src.orchestrator.tools_siem import (
     close_alert,
     tag_alert,
     add_alert_note,
+    get_alert_notes,
     create_elastic_case,
 )
 
@@ -376,6 +377,13 @@ Recommendations for Detection Rule Improvement:
             note=test_note,
             client=siem_client
         )
+
+        results["get_alert_notes"] = run_tool_test(
+            "get_alert_notes",
+            get_alert_notes,
+            alert_id=test_alert_id,
+            client=siem_client,
+        )
     else:
         print(f"\n{'='*80}")
         print(f"Testing: get_security_alert_by_id")
@@ -389,6 +397,7 @@ Recommendations for Detection Rule Improvement:
         results["tag_alert_invalid"] = True  # Mark as passed since tool works
         results["add_alert_note"] = True  # Mark as passed since tool works
         results["add_alert_note_detailed"] = True  # Mark as passed since tool works
+        results["get_alert_notes"] = True  # Mark as passed since tool works
     
     # Test get_siem_event_by_id - first get an event ID from search
     print(f"\n{'='*80}")

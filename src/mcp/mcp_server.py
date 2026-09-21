@@ -1824,7 +1824,12 @@ class SamiGPTMCPServer:
 
         self.tools["get_security_alert_by_id"] = {
             "name": "get_security_alert_by_id",
-            "description": "Get detailed information about a specific security alert by its ID.",
+            "description": (
+                "Get detailed information about a specific security alert by its ID. "
+                "Also includes Security Solution / Rule Tuner analyst notes from Kibana "
+                "(notes / note_texts) — notes are not on alert _source. "
+                "For batch note fetch across similar past alerts, use get_alert_notes."
+            ),
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -2066,6 +2071,36 @@ class SamiGPTMCPServer:
                     },
                 },
                 "required": ["alert_id", "note"],
+            },
+        }
+
+        self.tools["get_alert_notes"] = {
+            "name": "get_alert_notes",
+            "description": (
+                "Fetch Security Solution / Rule Tuner analyst notes for one or more alerts. "
+                "Notes are NOT on alert _source — always call this when reviewing similar or "
+                "past closed/ack alerts so prior analyst guidance is visible. "
+                "documentIds = alert Elasticsearch _id (kibana.alert.uuid / Rule Tuner alert.id). "
+                "Prefer alert_ids batch when reviewing multiple similar alerts."
+            ),
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "alert_id": {
+                        "type": "string",
+                        "description": (
+                            "Single alert Elasticsearch _id / kibana.alert.uuid to fetch notes for"
+                        ),
+                    },
+                    "alert_ids": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": (
+                            "Batch of alert ids (preferred when reviewing similar past alerts)"
+                        ),
+                    },
+                },
+                "required": [],
             },
         }
 
@@ -2577,7 +2612,7 @@ class SamiGPTMCPServer:
         Runbooks provide structured investigation procedures organized by SOC tier.
         See run_books/ directory for available runbooks.
         """
-        self._mcp_logger.info("Registering 4 runbook tools")
+        self._mcp_logger.info("Registering 5 runbook tools")
         self.tools["list_runbooks"] = {
             "name": "list_runbooks",
             "description": "List available investigation runbooks, optionally filtered by SOC tier or category.",
@@ -2710,6 +2745,35 @@ class SamiGPTMCPServer:
                     },
                 },
                 "required": ["title", "description"],
+            },
+        }
+
+        self.tools["save_case_runbook"] = {
+            "name": "save_case_runbook",
+            "description": (
+                "Write a finished case-specific runbook markdown file under "
+                "run_books/<soc>/cases/<slug>.md (e.g. soc1/cases/impossible_travel_triage). "
+                "Use after drafting a playbook that follows runbook_guidelines and existing "
+                "soc1/cases examples. Path must be relative without .md. "
+                "Called from the Requests 'Create runbook' flow / Open WebUI authoring session."
+            ),
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "Relative path e.g. soc1/cases/impossible_travel_triage",
+                    },
+                    "content": {
+                        "type": "string",
+                        "description": "Full markdown body starting with # SOC1: ... Runbook",
+                    },
+                    "overwrite": {
+                        "type": "boolean",
+                        "description": "Replace an existing file (default false)",
+                    },
+                },
+                "required": ["path", "content"],
             },
         }
 
@@ -4013,6 +4077,14 @@ To be populated during investigation.
             )
             self._mcp_logger.debug(f"Tool {tool_name} completed successfully")
             return result
+        elif tool_name == "get_alert_notes" and self.siem_client:
+            result = tools_siem.get_alert_notes(
+                alert_id=args.get("alert_id"),
+                alert_ids=args.get("alert_ids"),
+                client=self.siem_client,
+            )
+            self._mcp_logger.debug(f"Tool {tool_name} completed successfully")
+            return result
         elif tool_name == "lookup_entity" and self.siem_client:
             result = tools_siem.lookup_entity(
                 entity_value=args["entity_value"],
@@ -4394,6 +4466,21 @@ To be populated during investigation.
             )
             self._mcp_logger.info(
                 f"Tool {tool_name} executed: runbook '{args['runbook_name']}' provided for execution"
+            )
+            return result
+        elif tool_name == "save_case_runbook":
+            from ..ai_controller.approval_queue.create_runbook import save_case_runbook
+
+            result = save_case_runbook(
+                path=args["path"],
+                content=args["content"],
+                overwrite=bool(args.get("overwrite", False)),
+            )
+            self._mcp_logger.info(
+                "Tool %s executed: path=%s success=%s",
+                tool_name,
+                args.get("path"),
+                result.get("success"),
             )
             return result
 

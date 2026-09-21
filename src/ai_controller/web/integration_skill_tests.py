@@ -58,6 +58,7 @@ NEEDS_REAL_FIXTURE = {
     "get_endpoint_summary": "Requires a real endpoint ID.",
     "get_detection_details": "Requires a real detection ID.",
     "create_elastic_case": "Creates a persistent Elastic Security case; covered by unit tests instead of the UI probe.",
+    "get_alert_notes": "Requires a real alert ID with Kibana notes; covered by unit tests.",
     "create_fine_tuning_recommendation": "Files an informational Requests note; covered by unit tests.",
     "create_visibility_recommendation": "Files an informational Requests note; covered by unit tests.",
     "create_runbook_recommendation": "Files an informational Requests note; covered by unit tests.",

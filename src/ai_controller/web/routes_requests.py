@@ -160,6 +160,70 @@ async def ignore_request(request_id: str, body: DecisionPayload = DecisionPayloa
     return {"success": True, "request": _payload(request)}
 
 
+@router.post("/{request_id}/create-runbook")
+async def create_runbook_from_request(request_id: str, body: DecisionPayload = DecisionPayload()):
+    """Start an Open WebUI / LLM session that authors a soc*/cases runbook, then mark Done."""
+    from ..session_manager import SessionType
+    from ..approval_queue.create_runbook import build_create_runbook_prompt
+    from . import server as web_server
+
+    queue = get_queue()
+    request = queue.get(request_id)
+    if request is None:
+        raise HTTPException(status_code=404, detail="Request not found")
+    if request.action_type != "runbook_gap":
+        raise HTTPException(status_code=400, detail="Create runbook is only available for runbook-gap notes")
+    if request.status.value != "informational":
+        raise HTTPException(status_code=400, detail="Create runbook is only available while the note is still open")
+
+    if not web_server.session_manager or not web_server.executor:
+        raise HTTPException(status_code=500, detail="Session manager not initialized")
+
+    built = build_create_runbook_prompt(request)
+    session = web_server.session_manager.create_session(
+        built["session_name"],
+        SessionType.MANUAL,
+        cluster_id=request.cluster_id,
+    )
+    started = await web_server.kickoff_session_command(session.id, built["prompt"])
+
+    comment_bits = [
+        body.comment.strip() if body.comment else "",
+        f"Create runbook started in session {session.id} → {built['target_path']}.md",
+    ]
+    comment = " — ".join(part for part in comment_bits if part)
+    try:
+        updated = queue.acknowledge(request_id, comment=comment)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    updated.execution_result = {
+        **(updated.execution_result or {}),
+        "create_runbook": {
+            "session_id": session.id,
+            "entry_id": started.get("entry_id"),
+            "target_path": built["target_path"],
+            "example_runbook": built.get("example_runbook"),
+            "alert_id": built.get("alert_id"),
+        },
+    }
+    queue.store.put(updated)
+
+    logger.info(
+        "Create runbook for request %s → session %s path %s",
+        request_id,
+        session.id,
+        built["target_path"],
+    )
+    return {
+        "success": True,
+        "request": _payload(updated),
+        "session": web_server._session_payload(session),
+        "target_path": built["target_path"],
+        "entry_id": started.get("entry_id"),
+    }
+
+
 @router.post("/{request_id}/approve")
 async def approve_request(request_id: str, body: DecisionPayload = DecisionPayload()):
     queue = get_queue()

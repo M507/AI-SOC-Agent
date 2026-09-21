@@ -9,7 +9,8 @@
         "basic_enrichment",
         "false_positive_identification",
         "netbox_infra_lookup",
-        "same_type_alert_history"
+        "same_type_alert_history",
+        "alert_notes_review"
       ],
       "runbooks": [
         "soc1/triage/initial_alert_triage",
@@ -28,6 +29,7 @@
         "get_rule_detections",
         "update_alert_verdict",
         "add_alert_note",
+        "get_alert_notes",
         "close_alert",
         "lookup_entity",
         "get_ioc_matches",
@@ -55,6 +57,7 @@
         "create_runbook_recommendation",
         "list_runbooks",
         "get_runbook",
+        "save_case_runbook",
         "list_fine_tuning_recommendations",
         "list_visibility_recommendations",
         "add_comment_to_fine_tuning_recommendation",

@@ -83,6 +83,7 @@ _LABEL_OVERRIDES = {
     "create_fine_tuning_recommendation": "File a fine-tune suggestion",
     "create_visibility_recommendation": "File a visibility-gap note",
     "create_runbook_recommendation": "File a runbook-gap note",
+    "save_case_runbook": "Save a case runbook file",
     "search_lab_detection_rules": "Search Home Lab detection rules",
     "get_lab_detection_rule": "Get a Home Lab detection rule",
     "create_elastic_case": "Create Elastic Security case",
@@ -162,6 +163,7 @@ SIEM_SKILLS: Tuple[str, ...] = (
     "update_alert_verdict",
     "tag_alert",
     "add_alert_note",
+    "get_alert_notes",
     "create_elastic_case",
     "isolate_endpoint",
     "release_endpoint_isolation",
@@ -257,6 +259,7 @@ SKILL_GROUPS: Tuple[Dict[str, object], ...] = (
             "get_runbook",
             "execute_runbook",
             "create_runbook_recommendation",
+            "save_case_runbook",
         ),
     },
     {

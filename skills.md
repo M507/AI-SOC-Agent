@@ -6,6 +6,8 @@ MCP tools exposed by SamiGPT, grouped by solution in the MCP Skill Vector (MSV).
 
 Enable/disable groups with `SOLUTION:Y|N` (e.g. `NB:Y`). Override one tool with `SK:tool_name=N` or `SK:tool_name=Y`.
 
+**Adding a skill?** Follow [`src/mcp/ADDING_A_SKILL.md`](src/mcp/ADDING_A_SKILL.md).
+
 ---
 
 ## IRIS skills (`IRIS`)
@@ -70,7 +72,7 @@ Case management tools when this cluster may talk to TheHive. IRIS uses the same 
 
 Search, alerts, detections, Elastic Defend isolation, and Home Lab rule suggestions against the Elastic cluster bound to this tab.
 
-`get_security_alerts` / `get_rule_detections` support filtering by rule name/id and workflow status (`open`, `acknowledged`/`akn`, `closed`), including historical ack/closed review.
+`get_security_alerts` / `get_rule_detections` support filtering by rule name/id and workflow status (`open`, `acknowledged`/`akn`, `closed`), including historical ack/closed review. `get_security_alert_by_id` also attaches Security Solution / Rule Tuner notes for that alert. Use `get_alert_notes` to batch-read notes across similar past alerts (notes are not on alert `_source`).
 
 Query languages: `search_kql_query` (KQL), `search_lucene_query` (Lucene), `search_eql_query` (EQL), `search_dsl_query` (Query DSL JSON), `search_esql_query` (ES|QL).
 
@@ -104,6 +106,7 @@ Query languages: `search_kql_query` (KQL), `search_lucene_query` (Lucene), `sear
 | `update_alert_verdict` | Update Alert Verdict |
 | `tag_alert` | Tag Alert |
 | `add_alert_note` | Add Alert Note |
+| `get_alert_notes` | Get Alert Notes |
 | `create_elastic_case` | Create Elastic Security case |
 | `isolate_endpoint` | Isolate endpoint (Elastic Defend) |
 | `release_endpoint_isolation` | Release endpoint isolation |
@@ -198,8 +201,11 @@ Saved investigation runbooks and post-triage requests for missing case playbooks
 | `get_runbook` | Get Runbook |
 | `execute_runbook` | Execute Runbook |
 | `create_runbook_recommendation` | File a runbook-gap note |
+| `save_case_runbook` | Save a case runbook file |
 
 `create_runbook_recommendation` is **informational** (Requests view). File it only **after** the investigation finishes if no `soc*/cases` playbook matched the alert type.
+
+`save_case_runbook` writes a finished markdown playbook under `run_books/<soc>/cases/`. Analysts start this from the Requests **Create runbook** button (Open WebUI session with the gap note + last alert).
 
 ## Agent profile skills (`AG`)
 
@@ -235,7 +241,7 @@ Not gated by a solution metric in the skill vector.
 
 ---
 
-**Unique MSV skills:** 85  
-**Listed above (IRIS+TH share case tools):** 108 rows  
-**Including core:** 86
+**Unique MSV skills:** 87  
+**Listed above (IRIS+TH share case tools):** 109 rows  
+**Including core:** 87
 

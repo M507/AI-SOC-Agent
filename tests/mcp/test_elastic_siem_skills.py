@@ -66,6 +66,39 @@ class FakeSIEM:
             }
         ]
 
+    def get_alert_notes(self, alert_id=None, alert_ids=None):
+        ids = list(alert_ids or [])
+        if alert_id and alert_id not in ids:
+            ids.append(alert_id)
+        return {
+            "success": True,
+            "alert_ids": ids,
+            "total_count": 0,
+            "notes": [],
+            "note_texts": [],
+        }
+
+    def get_security_alert_by_id(self, alert_id, include_detections=True):
+        alert = {
+            "id": alert_id,
+            "title": "Suspicious login",
+            "severity": "high",
+            "status": "open",
+            "verdict": "",
+            "description": "test",
+            "created_at": "2026-08-17T00:00:00Z",
+            "updated_at": "2026-08-17T00:00:00Z",
+            "related_entities": [],
+            "comments": [],
+            "events": [],
+            "notes": [],
+            "note_texts": [],
+            "notes_total_count": 0,
+        }
+        if include_detections:
+            alert["detections"] = []
+        return alert
+
     def create_security_case(self, **kwargs):
         return {
             "case_id": "elastic-case-1",
@@ -102,6 +135,13 @@ def test_catalog_lists_elk_and_iris_skill_groups():
     assert SKILL_TO_SOLUTIONS["create_elastic_case"] == ("SIEM",)
     assert SKILL_TO_SOLUTIONS["isolate_endpoint"] == ("SIEM", "EDR")
     assert SKILL_TO_SOLUTIONS["get_recent_alerts"] == ("SIEM",)
+    assert SKILL_TO_SOLUTIONS["get_alert_notes"] == ("SIEM",)
+    assert "get_alert_notes" in SIEM_SKILLS
+    assert any(skill["id"] == "get_alert_notes" for skill in elk["skills"])
+    assert any(
+        skill["id"] == "get_alert_notes" and skill["label"] == "Get Alert Notes"
+        for skill in elk["skills"]
+    )
 
 
 def test_catalog_elk_skills_match_registered_mcp_siem_tools():

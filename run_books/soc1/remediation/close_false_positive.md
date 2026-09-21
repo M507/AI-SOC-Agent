@@ -28,7 +28,7 @@ Close an alert that SOC1 has confirmed as a false positive or benign true positi
 
 ## Tools
 
-* **SIEM:** `get_security_alert_by_id`, `update_alert_verdict`, `add_alert_note`, `close_alert`
+* **SIEM:** `get_security_alert_by_id`, `get_alert_notes`, `update_alert_verdict`, `add_alert_note`, `close_alert`
 * **Engineering:** `list_fine_tuning_recommendations`, `create_fine_tuning_recommendation`, `add_comment_to_fine_tuning_recommendation`
 
 ## Workflow Steps
