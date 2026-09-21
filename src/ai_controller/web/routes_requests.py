@@ -48,8 +48,12 @@ def _payload(request: ApprovalRequest) -> Dict[str, Any]:
     data = request.to_dict()
     data["cluster"] = cluster_summary(request.cluster_id)
     from ..approval_queue.models import is_archived
+    from ..approval_queue.catalog import get_action_spec, github_issue_link
 
+    spec = get_action_spec(request.action_type)
     data["archived"] = is_archived(request)
+    data["category"] = spec.category if spec else None
+    data["github_issue"] = github_issue_link(request.payload)
     return data
 
 
@@ -60,15 +64,21 @@ async def request_catalog():
 
 
 @router.get("")
-async def list_requests(status: Optional[str] = None, cluster_id: Optional[str] = None):
-    queue = get_queue()
+async def list_requests(
+    status: Optional[str] = None,
+    cluster_id: Optional[str] = None,
+    queue: Optional[str] = None,
+):
+    queue_svc = get_queue()
     try:
-        items = queue.list(status=status, cluster_id=cluster_id)
+        items = queue_svc.list(status=status, cluster_id=cluster_id, queue=queue)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return {
         "success": True,
-        "counts": queue.counts(),
+        "counts": queue_svc.counts(),
+        "tab_counts": queue_svc.tab_counts(queue),
+        "queue": queue or "all",
         "requests": [_payload(item) for item in items],
     }
 
@@ -134,6 +144,19 @@ async def acknowledge_request(request_id: str, body: DecisionPayload = DecisionP
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     logger.info("Acknowledged informational request %s", request_id)
+    return {"success": True, "request": _payload(request)}
+
+
+@router.post("/{request_id}/ignore")
+async def ignore_request(request_id: str, body: DecisionPayload = DecisionPayload()):
+    queue = get_queue()
+    try:
+        request = queue.ignore(request_id, comment=body.comment)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Request not found")
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    logger.info("Ignored informational request %s", request_id)
     return {"success": True, "request": _payload(request)}
 
 

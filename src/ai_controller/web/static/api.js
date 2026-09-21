@@ -666,15 +666,23 @@ class APIClient {
         }
     }
 
-    async listRequests(status = null) {
+    async listRequests(status = null, queue = 'all') {
         try {
-            const query = status ? `?status=${encodeURIComponent(status)}` : '';
+            const params = new URLSearchParams();
+            if (status) {
+                params.set('status', status);
+            }
+            if (queue && queue !== 'all') {
+                params.set('queue', queue);
+            }
+            const query = params.toString() ? `?${params.toString()}` : '';
             return await this.request(`/api/requests${query}`);
         } catch (error) {
             return {
                 success: false,
                 requests: [],
-                counts: { pending: 0, open: 0, archived: 0, all: 0 },
+                counts: { pending: 0, open: 0, archived: 0, all: 0, actionable: 0 },
+                tab_counts: { open: 0, archived: 0, all: 0 },
                 error: error.message,
             };
         }
@@ -698,6 +706,10 @@ class APIClient {
 
     async acknowledgeRequest(requestId, comment = '') {
         return this._requestDecision(`/api/requests/${encodeURIComponent(requestId)}/acknowledge`, { comment });
+    }
+
+    async ignoreRequest(requestId, comment = '') {
+        return this._requestDecision(`/api/requests/${encodeURIComponent(requestId)}/ignore`, { comment });
     }
 
     async answerRequest(requestId, answer, comment = '') {

@@ -148,6 +148,10 @@ class GitHubHttpClient:
         """PUT request."""
         return self.request("PUT", endpoint, json_data=json_data, params=params)
 
+    def patch(self, endpoint: str, json_data: Optional[Dict[str, Any]] = None, params: Optional[Dict[str, Any]] = None) -> Any:
+        """PATCH request."""
+        return self.request("PATCH", endpoint, json_data=json_data, params=params)
+
     def delete(self, endpoint: str, params: Optional[Dict[str, Any]] = None) -> Any:
         """DELETE request."""
         return self.request("DELETE", endpoint, params=params)

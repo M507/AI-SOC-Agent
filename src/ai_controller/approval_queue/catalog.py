@@ -206,6 +206,36 @@ ACTION_CATALOG: Tuple[ActionSpec, ...] = (
         ),
     ),
     ActionSpec(
+        action_type="runbook_gap",
+        label="Runbook gap",
+        description=(
+            "Informational request to author a case-specific runbook/playbook after triage "
+            "found no matching soc*/cases playbook. Does not block investigation."
+        ),
+        category="runbooks",
+        risk="low",
+        execution="informational",
+        integration="none",
+        gated_mcp_tool="create_runbook_recommendation",
+        notes=(
+            "File only AFTER the investigation finishes (final verdict set). "
+            "Server lists existing case runbooks and flags near-matches. No approve button."
+        ),
+        fields=_fields(
+            FieldSpec("title", "Title", True),
+            FieldSpec("description", "Playbook draft details", True, "Enough detail and examples for an author"),
+            FieldSpec("alert_type", "Alert type", False),
+            FieldSpec("rule_name", "Rule name", False),
+            FieldSpec("rule_id", "Rule ID", False),
+            FieldSpec("alert_id", "Related alert", False),
+            FieldSpec("suggested_path", "Suggested path", False, "e.g. soc1/cases/impossible_travel_triage"),
+            FieldSpec("soc_tier", "SOC tier", False, "Default soc1"),
+            FieldSpec("investigation_summary", "Investigation summary", False),
+            FieldSpec("example_entities", "Example entities", False, "IPs, hosts, users seen"),
+            FieldSpec("why_needed", "Why needed", False),
+        ),
+    ),
+    ActionSpec(
         action_type="create_case",
         label="Open case",
         description="Open a case in IRIS / TheHive for continued investigation.",
@@ -334,3 +364,47 @@ def spec_for_mcp_tool(tool_name: str) -> Optional[ActionSpec]:
 
 def gated_mcp_tools() -> Tuple[str, ...]:
     return tuple(_GATED_MCP.keys())
+
+
+SOC_CATEGORIES = frozenset({"siem", "identity", "edr", "case", "iam", "email", "network"})
+DETECTION_CATEGORIES = frozenset({"detections", "runbooks"})
+QUEUE_NAMES = ("all", "soc", "engineering", "detection")
+
+
+def github_issue_link(payload: Optional[Dict[str, object]]) -> Optional[Dict[str, object]]:
+    """Return {number, url, state, repository} when a request is mirrored to GitHub."""
+    if not isinstance(payload, dict):
+        return None
+    raw = payload.get("engineering") or payload.get("github_issue")
+    if not isinstance(raw, dict):
+        return None
+    issue = raw.get("issue") if isinstance(raw.get("issue"), dict) else raw
+    if not isinstance(issue, dict):
+        return None
+    number = issue.get("number") or raw.get("number")
+    if number in (None, ""):
+        return None
+    url = issue.get("url") or issue.get("html_url") or raw.get("url")
+    return {
+        "number": number,
+        "url": url,
+        "state": issue.get("state") or raw.get("state"),
+        "repository": raw.get("repository"),
+        "provider": raw.get("provider") or "github",
+    }
+
+
+def matches_queue(action_type: str, payload: Optional[Dict[str, object]], queue: Optional[str]) -> bool:
+    """True when a request belongs on the given Requests top tab."""
+    key = (queue or "all").strip().lower()
+    if key in {"all", "", "pending"}:
+        return True
+    spec = get_action_spec(action_type)
+    category = spec.category if spec else ""
+    if key in {"soc"}:
+        return category in SOC_CATEGORIES
+    if key in {"detection", "detections", "detection_engineering"}:
+        return category in DETECTION_CATEGORIES
+    if key in {"engineering", "eng"}:
+        return github_issue_link(payload) is not None
+    return True

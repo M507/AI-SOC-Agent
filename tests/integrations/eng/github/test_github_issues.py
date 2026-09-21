@@ -10,7 +10,9 @@ from src.orchestrator import tools_eng
 class FakeHttp:
     def __init__(self):
         self.posts = []
+        self.patches = []
         self.labels = {"enhancement"}
+        self.issue_state = "open"
 
     def get(self, endpoint, params=None):
         if endpoint.endswith("/labels/fine-tuning"):
@@ -51,6 +53,17 @@ class FakeHttp:
             "html_url": "https://github.com/M507/HomeLab-DaC/issues/7",
             "state": "open",
             "body": json_data.get("body"),
+        }
+
+    def patch(self, endpoint, json_data=None, params=None):
+        self.patches.append({"endpoint": endpoint, "json": json_data})
+        if json_data and json_data.get("state"):
+            self.issue_state = json_data["state"]
+        return {
+            "number": 7,
+            "title": "Tune rule",
+            "html_url": "https://github.com/M507/HomeLab-DaC/issues/7",
+            "state": self.issue_state,
         }
 
 
@@ -96,3 +109,13 @@ def test_from_config_uses_repository():
     )
     client = GitHubClient.from_config(config)
     assert client.repository == "M507/HomeLab-DaC"
+
+
+def test_close_issue_comments_then_patches_state():
+    http = FakeHttp()
+    client = GitHubClient(http_client=http, repository="M507/HomeLab-DaC")  # type: ignore[arg-type]
+    closed = client.close_issue(7, comment="Manager decided to ignore this professionally.")
+    assert closed["state"] == "closed"
+    assert any(item["endpoint"].endswith("/issues/7/comments") for item in http.posts)
+    assert http.patches
+    assert http.patches[-1]["json"] == {"state": "closed"}

@@ -60,6 +60,7 @@ NEEDS_REAL_FIXTURE = {
     "create_elastic_case": "Creates a persistent Elastic Security case; covered by unit tests instead of the UI probe.",
     "create_fine_tuning_recommendation": "Files an informational Requests note; covered by unit tests.",
     "create_visibility_recommendation": "Files an informational Requests note; covered by unit tests.",
+    "create_runbook_recommendation": "Files an informational Requests note; covered by unit tests.",
     "add_case_evidence": "Uploads a file that may outlive the case; skipped because cleanup cannot be guaranteed.",
     "assign_case": "Requires a valid platform user; a dummy assignee is not safe.",
 }

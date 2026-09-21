@@ -30,6 +30,8 @@ Configured in `config/agent_profiles.json`:
 
 SOC1 SIEM query skills (also gated by the Elastic skill vector / UI): `search_security_events`, `search_kql_query`, `search_lucene_query`, `search_eql_query`, `search_dsl_query`, `search_esql_query`. Full catalog: `skills.md`.
 
+After triage, if no case playbook under `soc1/cases` matched the alert type, file `create_runbook_recommendation` (informational Requests note) — never block investigation for it.
+
 ## Routing
 
 ```json

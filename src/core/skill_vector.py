@@ -82,6 +82,7 @@ _LABEL_OVERRIDES = {
     "get_all_uncertain_alerts_for_host": "Uncertain alerts for a host",
     "create_fine_tuning_recommendation": "File a fine-tune suggestion",
     "create_visibility_recommendation": "File a visibility-gap note",
+    "create_runbook_recommendation": "File a runbook-gap note",
     "search_lab_detection_rules": "Search Home Lab detection rules",
     "get_lab_detection_rule": "Get a Home Lab detection rule",
     "create_elastic_case": "Create Elastic Security case",
@@ -250,8 +251,13 @@ SKILL_GROUPS: Tuple[Dict[str, object], ...] = (
         "id": "RB",
         "name": "Runbook skills",
         "solutions": ("RB",),
-        "help": "Saved investigation runbooks.",
-        "skills": ("list_runbooks", "get_runbook", "execute_runbook"),
+        "help": "Saved investigation runbooks and post-triage requests for missing case playbooks.",
+        "skills": (
+            "list_runbooks",
+            "get_runbook",
+            "execute_runbook",
+            "create_runbook_recommendation",
+        ),
     },
     {
         "id": "AG",

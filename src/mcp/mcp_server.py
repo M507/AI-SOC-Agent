@@ -2577,7 +2577,7 @@ class SamiGPTMCPServer:
         Runbooks provide structured investigation procedures organized by SOC tier.
         See run_books/ directory for available runbooks.
         """
-        self._mcp_logger.info("Registering 3 runbook tools")
+        self._mcp_logger.info("Registering 4 runbook tools")
         self.tools["list_runbooks"] = {
             "name": "list_runbooks",
             "description": "List available investigation runbooks, optionally filtered by SOC tier or category.",
@@ -2591,7 +2591,7 @@ class SamiGPTMCPServer:
                     },
                     "category": {
                         "type": "string",
-                        "enum": ["triage", "investigation", "response", "forensics", "correlation", "enrichment", "remediation"],
+                        "enum": ["triage", "investigation", "response", "forensics", "correlation", "enrichment", "remediation", "cases"],
                         "description": "Filter by category"
                     }
                 }
@@ -2620,7 +2620,7 @@ class SamiGPTMCPServer:
                 "for you to follow step-by-step. Use the appropriate MCP tools for each step. "
                 "Irreversible tools (close_alert, isolate, kill, forensics) file a "
                 "Requests-view approval and do not run until an analyst approves them. "
-                "Fine-tune and visibility notes are informational only."
+                "Fine-tune, visibility, and runbook-gap notes are informational only."
             ),
             "inputSchema": {
                 "type": "object",
@@ -2645,6 +2645,72 @@ class SamiGPTMCPServer:
                 },
                 "required": ["runbook_name"]
             }
+        }
+
+        self.tools["create_runbook_recommendation"] = {
+            "name": "create_runbook_recommendation",
+            "description": (
+                "AFTER investigation is complete (final alert verdict set), if no case-specific "
+                "playbook under soc*/cases matched this alert type, file an informational Requests "
+                "note asking SOC engineering to author one. Include enough detail and examples "
+                "(rule name, entities, what steps helped, suggested path). "
+                "Never delay or block triage for this — file it last. "
+                "First call list_runbooks with category=cases when unsure."
+                + _INFORMATIONAL_FOR_ANALYST
+            ),
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "title": {
+                        "type": "string",
+                        "description": "Short title, e.g. 'Need case runbook: Impossible Travel'",
+                    },
+                    "description": {
+                        "type": "string",
+                        "description": (
+                            "Author brief: objective, when to use, key decision points, "
+                            "example alert/rule, entities, and sample investigation steps that worked"
+                        ),
+                    },
+                    "alert_type": {
+                        "type": "string",
+                        "description": "Alert / detection type name",
+                    },
+                    "rule_name": {
+                        "type": "string",
+                        "description": "Detection rule name",
+                    },
+                    "rule_id": {
+                        "type": "string",
+                        "description": "Detection rule ID",
+                    },
+                    "alert_id": {
+                        "type": "string",
+                        "description": "Related alert id that motivated this request",
+                    },
+                    "suggested_path": {
+                        "type": "string",
+                        "description": "Suggested path e.g. soc1/cases/impossible_travel_triage",
+                    },
+                    "soc_tier": {
+                        "type": "string",
+                        "description": "Target tier (default soc1)",
+                    },
+                    "investigation_summary": {
+                        "type": "string",
+                        "description": "What the agent did and concluded on this alert",
+                    },
+                    "example_entities": {
+                        "type": "string",
+                        "description": "Example IPs/hosts/users/hashes from the investigation",
+                    },
+                    "why_needed": {
+                        "type": "string",
+                        "description": "Why the generic triage runbook was not enough",
+                    },
+                },
+                "required": ["title", "description"],
+            },
         }
 
     def _register_agent_profile_tools(self) -> None:
@@ -2966,9 +3032,11 @@ To be populated during investigation.
             f"Irreversible actions (close_alert, isolate_endpoint, kill_process_on_endpoint, "
             f"collect_forensic_artifacts) are queued for analyst "
             f"approval in the SamiGPT Requests view — report them as pending, not completed. "
-            f"create_fine_tuning_recommendation and create_visibility_recommendation file "
-            f"informational notes only (no approve button). For visibility, search Home Lab "
-            f"rules first and only file if coverage is still missing. "
+            f"create_fine_tuning_recommendation, create_visibility_recommendation, and "
+            f"create_runbook_recommendation file informational notes only (no approve button). "
+            f"For visibility, search Home Lab rules first and only file if coverage is still missing. "
+            f"For runbook gaps, file create_runbook_recommendation only AFTER the final verdict "
+            f"if no soc*/cases playbook matched — never block triage for it. "
             f"Document your progress and findings in case comments as specified in the runbook. "
             f"Attach all observables (IOCs) to the case using attach_observable_to_case. "
             f"Follow the case standard format for all documentation."

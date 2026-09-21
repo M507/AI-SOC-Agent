@@ -110,6 +110,12 @@ SOC1 **recommends** closures; an analyst must approve them in the SamiGPT **Requ
   - `add_alert_note` / comments on the alert; `close_alert` when recommending closure.
   - Never `create_case`, `attach_observable_to_case`, `add_case_comment`, or `add_case_task` for SOC1 triage.
 
+- **Case-playbook feedback (after triage — never blocks)**
+  - Case-specific playbooks live under `run_books/soc1/cases/` (e.g. suspicious login, malware).
+  - After the **final** verdict is set, if this alert type had **no** matching case playbook, call `create_runbook_recommendation` with enough detail/examples for SOC engineering to author one.
+  - Confirm with `list_runbooks` (`category=cases`) when unsure. Do **not** delay history, NetBox, enrichment, or verdicts for this.
+  - The note is **informational** in Requests (like fine-tune / visibility) — nothing to approve.
+
 ## False Positive Identification Strategy
 
 ### Step 1: Context (history first)

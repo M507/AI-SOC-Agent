@@ -148,6 +148,18 @@ class VisibilityHandler:
         }
 
 
+class RunbookGapHandler:
+    def execute(self, request: ApprovalRequest, clients: ClientBundle) -> Dict[str, Any]:
+        return {
+            "success": True,
+            "informational": True,
+            "message": (
+                "Runbook-gap notes are informational only. They track missing case playbooks "
+                "for SOC engineering; nothing was executed."
+            ),
+        }
+
+
 class CreateCaseHandler:
     def execute(self, request: ApprovalRequest, clients: ClientBundle) -> Dict[str, Any]:
         _require(request, "title", "description")
@@ -289,6 +301,7 @@ HANDLERS: Dict[str, ActionHandler] = {
     "collect_forensics": CollectForensicsHandler(),
     "fine_tune": FineTuneHandler(),
     "visibility": VisibilityHandler(),
+    "runbook_gap": RunbookGapHandler(),
     "create_case": CreateCaseHandler(),
     "close_case": CloseCaseHandler(),
     "escalate": EscalateHandler(),

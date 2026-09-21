@@ -39,11 +39,13 @@ class GitHubClient:
         repository: str,
         fine_tuning_label: str = "fine-tuning",
         visibility_label: str = "visibility",
+        runbook_label: str = "runbook",
     ) -> None:
         self._http = http_client
         self.repository = _parse_repository(repository)
         self.fine_tuning_label = fine_tuning_label or "fine-tuning"
         self.visibility_label = visibility_label or "visibility"
+        self.runbook_label = runbook_label or "runbook"
         self._owner, self._repo = self.repository.split("/", 1)
 
     @classmethod
@@ -74,6 +76,7 @@ class GitHubClient:
             repository=repository,
             fine_tuning_label=getattr(github_config, "fine_tuning_label", None) or "fine-tuning",
             visibility_label=getattr(github_config, "visibility_label", None) or "visibility",
+            runbook_label=getattr(github_config, "runbook_label", None) or "runbook",
         )
 
     def ping(self) -> bool:
@@ -106,6 +109,18 @@ class GitHubClient:
             title=title,
             body=description,
             labels=[self.visibility_label, "enhancement"],
+        )
+
+    def create_runbook_recommendation(
+        self,
+        title: str,
+        description: str,
+        **_: Any,
+    ) -> Dict[str, Any]:
+        return self._create_issue(
+            title=title,
+            body=description,
+            labels=[self.runbook_label, "enhancement"],
         )
 
     def list_fine_tuning_recommendations(
@@ -217,6 +232,19 @@ class GitHubClient:
         issue = self._http.get(f"/repos/{self.repository}/issues/{number}")
         if not isinstance(issue, dict) or not issue.get("number"):
             raise IntegrationError(f"GitHub issue #{number} not found")
+        return issue
+
+    def close_issue(self, issue_number: str, comment: Optional[str] = None) -> Dict[str, Any]:
+        """Comment (optional) and close an issue."""
+        number = str(issue_number).lstrip("#")
+        if comment and str(comment).strip():
+            self._add_comment(number, str(comment).strip())
+        issue = self._http.patch(
+            f"/repos/{self.repository}/issues/{number}",
+            json_data={"state": "closed"},
+        )
+        if not isinstance(issue, dict) or not issue.get("number"):
+            raise IntegrationError(f"GitHub close issue #{number} returned unexpected payload")
         return issue
 
     def list_issue_comments(self, issue_number: str) -> List[Dict[str, Any]]:

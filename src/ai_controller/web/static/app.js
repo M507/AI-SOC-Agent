@@ -310,6 +310,21 @@ class AIController {
                 this.setActiveSection('mcp');
             });
         }
+        const requestsTabs = document.getElementById('requests-tabs');
+        if (requestsTabs) {
+            requestsTabs.addEventListener('click', (event) => {
+                const tab = event.target.closest('[data-request-queue]');
+                if (!tab) {
+                    return;
+                }
+                if (this.activeSection !== 'requests') {
+                    this.setActiveSection('requests');
+                }
+                if (this.requestsManager) {
+                    this.requestsManager.setQueueTab(tab.dataset.requestQueue);
+                }
+            });
+        }
         
         // Debug toggle
         const debugToggle = document.getElementById('debug-toggle');
@@ -580,7 +595,7 @@ class AIController {
             document.querySelectorAll('button.tab[data-session-id]').forEach((tab) => {
                 tab.classList.remove('active');
             });
-            const requestsTab = document.getElementById('requests-tab');
+            const requestsTab = document.querySelector('#requests-tabs .tab.active') || document.getElementById('requests-tab');
             if (requestsTab) {
                 requestsTab.classList.add('active');
             }

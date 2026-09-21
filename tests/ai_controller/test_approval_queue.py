@@ -373,3 +373,160 @@ def test_gated_mcp_tool_descriptions_tell_the_model_they_queue():
     runbook = server.tools["execute_runbook"]["description"]
     assert "Requests-view" in runbook
     assert "informational only" in runbook
+
+
+class _FakeGitHub:
+    repository = "org/HomeLab-DaC"
+
+    def __init__(self, issues=None):
+        self.issues = issues or {}
+        self.comments = []
+        self.closed = []
+
+    def get_issue(self, number):
+        return dict(self.issues[str(number)])
+
+    def close_issue(self, number, comment=None):
+        if comment:
+            self.comments.append((str(number), comment))
+        issue = self.issues[str(number)]
+        issue["state"] = "closed"
+        self.closed.append(str(number))
+        return dict(issue)
+
+
+def _engineering_payload(number=42, state="open"):
+    return {
+        "provider": "github",
+        "repository": "org/HomeLab-DaC",
+        "issue": {
+            "number": number,
+            "url": f"https://github.com/org/HomeLab-DaC/issues/{number}",
+            "state": state,
+        },
+    }
+
+
+def test_queue_tabs_filter_soc_and_detection(tmp_path, monkeypatch):
+    queue = ApprovalQueue(str(tmp_path))
+    monkeypatch.setattr(
+        "src.ai_controller.approval_queue.service.resolve_clients",
+        lambda cluster_id=None: ClientBundle(),
+    )
+    close = queue.create(
+        "close_alert",
+        "Close noisy DNS",
+        "scanner",
+        payload={"alert_id": "alert-9", "reason": "false_positive"},
+    )
+    note = queue.create(
+        "fine_tune",
+        "Tune encoded PS",
+        "admin script",
+        payload={"title": "Tune encoded PS", "description": "Exclude signed admin tool"},
+    )
+    queue.attach_engineering(note.id, _engineering_payload())
+
+    soc = queue.list(status="open", queue="soc", sync_github=False)
+    detection = queue.list(status="open", queue="detection", sync_github=False)
+    engineering = queue.list(status="open", queue="engineering", sync_github=False)
+    assert {item.id for item in soc} == {close.id}
+    assert {item.id for item in detection} == {note.id}
+    assert {item.id for item in engineering} == {note.id}
+    counts = queue.counts()
+    assert counts["actionable"] == 1
+    assert counts["detection_open"] == 1
+    assert counts["engineering_open"] == 1
+    tabs = queue.tab_counts("soc")
+    assert tabs["open"] == 1
+
+
+def test_github_closed_sync_archives_open_note(tmp_path, monkeypatch):
+    queue = ApprovalQueue(str(tmp_path))
+    github = _FakeGitHub(
+        {
+            "42": {
+                "number": 42,
+                "state": "closed",
+                "html_url": "https://github.com/org/HomeLab-DaC/issues/42",
+            }
+        }
+    )
+    monkeypatch.setattr(ApprovalQueue, "_github_client_for", lambda self, request: github)
+    note = queue.create(
+        "visibility",
+        "Missing DNS telemetry",
+        "no coverage",
+        payload={"title": "Missing DNS telemetry", "description": "Need DNS logs"},
+    )
+    queue.attach_engineering(note.id, _engineering_payload())
+    archived = queue.list(status="open", queue="detection")
+    assert archived == []
+    stored = queue.get(note.id)
+    assert stored.status is RequestStatus.ACKNOWLEDGED
+    assert stored.archived is True
+    assert stored.decision.comment == "Closed on GitHub #42"
+
+
+def test_ignore_closes_github_issue_and_archives(tmp_path, monkeypatch):
+    queue = ApprovalQueue(str(tmp_path))
+    github = _FakeGitHub(
+        {
+            "42": {
+                "number": 42,
+                "state": "open",
+                "html_url": "https://github.com/org/HomeLab-DaC/issues/42",
+            }
+        }
+    )
+    monkeypatch.setattr(ApprovalQueue, "_github_client_for", lambda self, request: github)
+    note = queue.create(
+        "fine_tune",
+        "Tune encoded PS",
+        "admin script",
+        payload={"title": "Tune encoded PS", "description": "Exclude signed admin tool"},
+    )
+    queue.attach_engineering(note.id, _engineering_payload())
+    ignored = queue.ignore(note.id, comment="noise for this lab")
+    assert ignored.status is RequestStatus.ACKNOWLEDGED
+    assert ignored.archived is True
+    assert ignored.decision.action == "ignore"
+    assert github.closed == ["42"]
+    assert github.comments
+    assert "Manager decided to ignore this professionally." in github.comments[0][1]
+    assert "noise for this lab" in github.comments[0][1]
+    assert ignored.payload["engineering"]["issue"]["state"] == "closed"
+    assert queue.list(status="open", queue="engineering", sync_github=False) == []
+    archived = queue.list(status="archived", queue="engineering", sync_github=False)
+    assert {item.id for item in archived} == {note.id}
+
+
+def test_ignore_archives_when_github_close_fails(tmp_path, monkeypatch):
+    queue = ApprovalQueue(str(tmp_path))
+
+    class _BrokenGitHub(_FakeGitHub):
+        def close_issue(self, number, comment=None):
+            raise RuntimeError("GitHub 502")
+
+    github = _BrokenGitHub(
+        {
+            "42": {
+                "number": 42,
+                "state": "open",
+                "html_url": "https://github.com/org/HomeLab-DaC/issues/42",
+            }
+        }
+    )
+    monkeypatch.setattr(ApprovalQueue, "_github_client_for", lambda self, request: github)
+    note = queue.create(
+        "fine_tune",
+        "Tune encoded PS",
+        "admin script",
+        payload={"title": "Tune encoded PS", "description": "Exclude signed admin tool"},
+    )
+    queue.attach_engineering(note.id, _engineering_payload())
+    ignored = queue.ignore(note.id)
+    assert ignored.status is RequestStatus.ACKNOWLEDGED
+    assert ignored.archived is True
+    assert ignored.execution_result["github"]["success"] is False
+    assert "GitHub 502" in (ignored.error or "")

@@ -188,7 +188,7 @@ Labels: `fine-tuning`, `visibility`
 
 ## Runbook skills (`RB`)
 
-Saved investigation runbooks.
+Saved investigation runbooks and post-triage requests for missing case playbooks.
 
 **Solution metric:** `RB`
 
@@ -197,6 +197,9 @@ Saved investigation runbooks.
 | `list_runbooks` | List Runbooks |
 | `get_runbook` | Get Runbook |
 | `execute_runbook` | Execute Runbook |
+| `create_runbook_recommendation` | File a runbook-gap note |
+
+`create_runbook_recommendation` is **informational** (Requests view). File it only **after** the investigation finishes if no `soc*/cases` playbook matched the alert type.
 
 ## Agent profile skills (`AG`)
 
@@ -232,7 +235,7 @@ Not gated by a solution metric in the skill vector.
 
 ---
 
-**Unique MSV skills:** 84  
-**Listed above (IRIS+TH share case tools):** 107 rows  
-**Including core:** 85
+**Unique MSV skills:** 85  
+**Listed above (IRIS+TH share case tools):** 108 rows  
+**Including core:** 86
 

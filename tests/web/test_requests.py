@@ -24,14 +24,28 @@ def test_requests_view_is_in_the_shell():
     assert 'data-request-select-all' in html
     assert 'data-request-filter="archived"' in html
     assert 'data-request-filter="open"' in html
+    assert 'data-request-queue="all"' in html
+    assert 'data-request-queue="soc"' in html
+    assert 'data-request-queue="engineering"' in html
+    assert 'data-request-queue="detection"' in html
+    assert "Approval queue (ALL)" in html
+    assert "Detection engineering" in html
     assert "requests.js" in html
     assert "requests.css" in html
     assert "setActiveSection('requests')" in app_js
     assert "RequestsManager" in app_js
+    assert "setQueueTab" in app_js
     assert "request-decision-bar" in requests_js
     assert "bulk-approve" in requests_js
+    assert "bulk-ignore" in requests_js
     assert "handleBulk" in requests_js
     assert "archived" in requests_js
+    assert "Waiting on integration" in requests_js
+    assert 'data-request-action="ignore"' in requests_js
+    assert 'data-request-action="approve"' in requests_js
+    assert "Needs approval" in requests_js
+    assert "request-bulk-comment" in requests_js
+    assert "Technical details" in requests_js
 
 
 def _client(tmp_path):
@@ -240,8 +254,47 @@ def test_fine_tune_api_is_informational(tmp_path, monkeypatch):
     assert approve.status_code == 400
     listed = client.get("/api/requests?status=pending")
     assert any(item["id"] == request_id for item in listed.json()["requests"])
+    soc = client.get("/api/requests?status=open&queue=soc")
+    assert soc.status_code == 200
+    assert all(item["id"] != request_id for item in soc.json()["requests"])
+    detection = client.get("/api/requests?status=open&queue=detection")
+    assert detection.status_code == 200
+    assert any(item["id"] == request_id for item in detection.json()["requests"])
+    assert "actionable" in listed.json()["counts"]
+    assert "tab_counts" in detection.json()
     js = Path(__file__).resolve().parents[2] / "src" / "ai_controller" / "web" / "static" / "requests.js"
     text = js.read_text(encoding="utf-8")
     assert "isInformational" in text
     assert "Informational only" in text
-    assert "data-request-action=\"approve\"" in text
+    assert 'data-request-action="approve"' in text
+    assert "queueTab" in text
+    assert 'data-request-action="ignore"' in text
+
+
+def test_ignore_archives_informational_request(tmp_path, monkeypatch):
+    from src.ai_controller.approval_queue.lab_rules import clear_index_cache
+
+    monkeypatch.setenv("SAMI_LAB_RULES_DIR", str(tmp_path / "empty-rules"))
+    clear_index_cache()
+    client = _client(tmp_path)
+    created = client.post(
+        "/api/requests",
+        json={
+            "action_type": "visibility",
+            "title": "Missing DNS telemetry",
+            "summary": "No DNS logs",
+            "payload": {"title": "Missing DNS telemetry", "description": "Need DNS logs"},
+        },
+    )
+    assert created.status_code == 200, created.text
+    request_id = created.json()["request"]["id"]
+    ignored = client.post(f"/api/requests/{request_id}/ignore", json={"comment": "out of scope"})
+    assert ignored.status_code == 200, ignored.text
+    body = ignored.json()["request"]
+    assert body["status"] == "acknowledged"
+    assert body["archived"] is True
+    assert body["decision"]["action"] == "ignore"
+    open_list = client.get("/api/requests?status=open&queue=detection")
+    assert all(item["id"] != request_id for item in open_list.json()["requests"])
+    archived = client.get("/api/requests?status=archived&queue=detection")
+    assert any(item["id"] == request_id for item in archived.json()["requests"])

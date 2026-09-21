@@ -54,10 +54,12 @@ Standardized SOC1 triage for SIEM alerts: start from the alert queue, **before a
 **NetBox**
 - `netbox_lookup_ip`, `netbox_lookup_host`, `netbox_lookup_prefix`, `netbox_search`
 
-**CTI / Engineering**
+**CTI / Engineering / Runbooks**
 - `lookup_hash_ti`
 - `list_fine_tuning_recommendations`, `create_fine_tuning_recommendation`, related comment tools
 - visibility recommendation tools as needed
+- `list_runbooks`, `get_runbook`
+- `create_runbook_recommendation` — **after** final verdict only, if no `soc1/cases` playbook matched
 
 **Forbidden in this runbook**
 - `create_case`, `search_cases`, `list_cases`, `review_case`, `add_case_comment`, `attach_observable_to_case`, `update_case_status`, `add_case_task`, and other case-write tools
@@ -162,7 +164,8 @@ Standardized SOC1 triage for SIEM alerts: start from the alert queue, **before a
 2. **MANDATORY:** `update_alert_verdict` → `false_positive` or `benign_true_positive` (set `${FINAL_VERDICT}`).
 3. `close_alert` (queued for Requests). Do not claim the alert is already closed.
 4. Optionally update/create a fine-tuning recommendation for noisy rules.
-5. Set `${ASSESSMENT}` and `${ACTION_TAKEN}`; **end**.
+5. **Post-investigation (non-blocking):** if no case playbook under `soc1/cases` covered this alert type, go to Step 8.
+6. Set `${ASSESSMENT}` and `${ACTION_TAKEN}`; **end** (or Step 8 first if a runbook gap applies).
 
 ### 7. Enrichment when not closing (still no case) — MANDATORY final verdict
 
@@ -176,7 +179,23 @@ Standardized SOC1 triage for SIEM alerts: start from the alert queue, **before a
    - IOC/enrichment highlights
    - Why it was not closed and what a human should check next
 5. **MANDATORY:** `update_alert_verdict` with that final assessment (set `${FINAL_VERDICT}`).
-6. **Do not create a case.** Set `${ACTION_TAKEN}` = "Alert documented with final verdict; no case created." and **end**.
+6. **Do not create a case.** Set `${ACTION_TAKEN}` = "Alert documented with final verdict; no case created."
+7. **Post-investigation (non-blocking):** if no case playbook under `soc1/cases` covered this alert type, go to Step 8; otherwise **end**.
+
+### 8. Case-runbook gap request (AFTER investigation — never blocks triage)
+
+**When:** Final verdict is already set, and during this run you did **not** find/use a matching case-specific playbook (`list_runbooks` with `category=cases` / `get_runbook` for this alert type). Generic `initial_alert_triage` alone does not count as a case playbook.
+
+**Do not** pause enrichment, history review, or verdicts for this. File it last.
+
+1. Optionally `list_runbooks` with `soc_tier="soc1"`, `category="cases"` to confirm no match.
+2. Call `create_runbook_recommendation` with:
+   - `title` — e.g. `Need case runbook: ${RULE_NAME}`
+   - `description` — author brief: objective, when to use, decision points, example steps that worked on this alert, pitfalls
+   - `rule_name` / `rule_id` / `alert_type` / `alert_id`
+   - `suggested_path` — e.g. `soc1/cases/<slug>_triage`
+   - `investigation_summary`, `example_entities`, `why_needed`
+3. Tell the analyst it is an **informational** item in Requests (nothing to approve). Continue / end.
 
 ## Completion Criteria
 
@@ -187,6 +206,7 @@ Standardized SOC1 triage for SIEM alerts: start from the alert queue, **before a
 - `${NETBOX_CONTEXT}` evaluated for primary hosts/IPs when present.
 - Either a close request was filed **or** a clear non-close alert note was written.
 - **No case was created.**
+- If no `soc1/cases/*` playbook matched the alert type, a `create_runbook_recommendation` was filed **after** the final verdict (or explicitly noted as not needed because a case playbook was used).
 
 ## Escalation Criteria
 

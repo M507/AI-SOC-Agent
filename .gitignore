@@ -93,3 +93,4 @@ bin/local-cursor-agent
 simulation/
 execution_flow/*.dot
 stats/
+.tmp/*

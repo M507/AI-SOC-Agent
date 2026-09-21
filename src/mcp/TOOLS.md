@@ -19,7 +19,7 @@ These tools **file a request** and do not run until an analyst approves them in 
 
 `isolate_endpoint` / `release_endpoint_isolation` run against **Elastic Defend on the bound cluster** (Kibana Endpoint Security) after approval. They do not need a separate EDR integration.
 
-`create_fine_tuning_recommendation` and `create_visibility_recommendation` file **informational** notes only. They pull / search Home Lab rules under `/root/Home-Lab-Rules/rules/elastic_1/rules/`. There is no approve button and no engineering-board action.
+`create_fine_tuning_recommendation`, `create_visibility_recommendation`, and `create_runbook_recommendation` file **informational** notes only. Fine-tune / visibility pull Home Lab rules under `/root/Home-Lab-Rules/rules/elastic_1/rules/`. Runbook-gap notes request a missing `soc*/cases` playbook **after** investigation. There is no approve button.
 
 Search first with `search_lab_detection_rules` (compact hits). Load at most one or two rules with `get_lab_detection_rule`. Do not dump the catalog into context.
 
@@ -2301,6 +2301,39 @@ File an **informational visibility-gap note**. Search Home Lab rules first (`sea
 - Record a suspected telemetry or detection gap after searching the Home Lab catalog
 - Show the analyst whether an existing rule already covers the behavior
 - Keep the note informational until a board API exists
+
+---
+
+### `create_runbook_recommendation`
+
+File an **informational runbook-gap note** when triage finishes and no case-specific playbook under `soc*/cases/` matched the alert type.
+
+**Timing (critical):** Call this **only after** the investigation is done (final `update_alert_verdict`). Never delay history review, enrichment, or verdicts for this step.
+
+**Informational only** — no approve button. Server lists existing case playbooks and stores `coverage_check` / near-matches.
+
+**Parameters:**
+- `title` (string, required): Short title (e.g. Need case runbook: Impossible Travel)
+- `description` (string, required): Author brief with enough detail and examples to write the playbook
+- `alert_type` / `rule_name` / `rule_id` / `alert_id` (optional)
+- `suggested_path` (string, optional): e.g. `soc1/cases/impossible_travel_triage`
+- `soc_tier` (string, optional): default `soc1`
+- `investigation_summary` / `example_entities` / `why_needed` (optional)
+
+**Usage Example:**
+```json
+{
+  "name": "create_runbook_recommendation",
+  "arguments": {
+    "title": "Need case runbook: Impossible Travel",
+    "description": "Objective: triage Impossible Travel alerts... Example: user alice, IPs 1.2.3.4 vs 5.6.7.8. Steps that helped: ...",
+    "rule_name": "Impossible Travel",
+    "alert_id": "abc123",
+    "suggested_path": "soc1/cases/impossible_travel_triage",
+    "why_needed": "Generic initial_alert_triage lacked login-travel specific checks"
+  }
+}
+```
 
 ---
 

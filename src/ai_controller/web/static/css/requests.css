@@ -334,8 +334,68 @@
     color: #c8c8c8;
 }
 
-.request-card.is-archived .request-card-title {
+.request-card.is-archived .request-card-title,
+.request-card.is-muted .request-card-title {
     color: #c8c8c8;
+}
+
+.request-card.is-muted {
+    opacity: 0.78;
+}
+
+.requests-muted-section {
+    border-top: 1px solid #3e3e42;
+    background: #1f1f21;
+}
+
+.requests-muted-copy {
+    padding: 10px 14px 6px;
+    font-size: 11px;
+    line-height: 1.45;
+    color: #858585;
+}
+
+.github-issue-chip {
+    display: inline-block;
+    padding: 2px 6px;
+    border-radius: 4px;
+    background: #243044;
+    color: #9cdcfe;
+    font-size: 10px;
+    font-weight: 700;
+    text-decoration: none;
+}
+
+a.github-issue-chip:hover {
+    text-decoration: underline;
+}
+
+.status-badge.ignored {
+    background: #4a3a1f;
+    color: #f0e0b8;
+}
+
+.request-decision-bar.is-receipt {
+    background: #1e2a22;
+    border-bottom-color: #2f5a3a;
+}
+
+.request-info-banner.is-muted {
+    background: #2a2a22;
+    border-color: #5a5a32;
+    color: #d4d0b8;
+}
+
+.request-tech-details {
+    margin-top: 20px;
+    color: #858585;
+    font-size: 13px;
+}
+
+.request-tech-details summary {
+    cursor: pointer;
+    color: #9cdcfe;
+    margin-bottom: 8px;
 }
 
 .status-badge.denied {

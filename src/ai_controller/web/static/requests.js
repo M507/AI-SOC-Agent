@@ -1,5 +1,18 @@
 // Analyst approval-queue (Requests view)
 
+const REQUEST_STATUS_LABELS = {
+    pending: 'Needs approval',
+    informational: 'Review note',
+    acknowledged: 'Done',
+    denied: 'Denied',
+    executed: 'Done',
+    failed: 'Failed',
+    awaiting_integration: 'Waiting on integration',
+};
+
+const DETECTION_CATEGORIES = new Set(['detections', 'runbooks']);
+const ENG_ACTION_TYPES = new Set(['fine_tune', 'visibility', 'runbook_gap']);
+
 class RequestsManager {
     constructor(controller) {
         this.controller = controller;
@@ -8,9 +21,15 @@ class RequestsManager {
         this.selectedId = null;
         this.selectedIds = new Set();
         this.filter = 'open';
-        this.counts = { pending: 0, open: 0, archived: 0, all: 0 };
+        this.queueTab = 'all';
+        this.counts = { pending: 0, open: 0, archived: 0, all: 0, actionable: 0 };
+        this.tabCounts = { open: 0, archived: 0, all: 0 };
+        this.receipt = null;
         this._bound = false;
         this._busy = false;
+        this._savedDetailComment = '';
+        this._savedBulkComment = '';
+        this._skipDetailRebuild = false;
     }
 
     bind() {
@@ -27,6 +46,7 @@ class RequestsManager {
             if (filterBtn) {
                 this.filter = filterBtn.dataset.requestFilter;
                 this.selectedIds.clear();
+                this.receipt = null;
                 this.load();
                 return;
             }
@@ -41,6 +61,18 @@ class RequestsManager {
                 this.render();
                 return;
             }
+            const nextBtn = event.target.closest('[data-request-next]');
+            if (nextBtn) {
+                this.openNext(nextBtn.dataset.requestNext || null);
+                return;
+            }
+            const childLink = event.target.closest('[data-request-open]');
+            if (childLink) {
+                this.selectedId = childLink.dataset.requestOpen;
+                this.receipt = null;
+                this.render();
+                return;
+            }
             const checkbox = event.target.closest('[data-request-check]');
             if (checkbox) {
                 event.stopPropagation();
@@ -49,6 +81,7 @@ class RequestsManager {
             const card = event.target.closest('.request-card');
             if (card) {
                 this.selectedId = card.dataset.requestId;
+                this.receipt = null;
                 this.renderDetail();
                 this.highlightCards();
             }
@@ -67,12 +100,14 @@ class RequestsManager {
                 return;
             }
             const action = actionBtn.dataset.requestAction;
-            if (action === 'bulk-approve' || action === 'bulk-deny' || action === 'bulk-done') {
+            if (action === 'bulk-approve' || action === 'bulk-deny' || action === 'bulk-done' || action === 'bulk-ignore') {
                 const bulkAction = action === 'bulk-approve'
                     ? 'approve'
                     : action === 'bulk-deny'
                         ? 'deny'
-                        : 'acknowledge';
+                        : action === 'bulk-ignore'
+                            ? 'ignore'
+                            : 'acknowledge';
                 await this.handleBulk(bulkAction);
                 return;
             }
@@ -80,11 +115,60 @@ class RequestsManager {
         });
     }
 
+    setQueueTab(queue) {
+        const next = (queue || 'all').toLowerCase();
+        if (this.queueTab === next) {
+            this.syncQueueTabs();
+            return;
+        }
+        this.queueTab = next;
+        this.selectedIds.clear();
+        this.receipt = null;
+        this.syncQueueTabs();
+        this.load();
+    }
+
+    syncQueueTabs() {
+        document.querySelectorAll('#requests-tabs [data-request-queue]').forEach((tab) => {
+            tab.classList.toggle('active', tab.dataset.requestQueue === this.queueTab);
+        });
+    }
+
+    captureDrafts() {
+        const detail = document.getElementById('request-comment');
+        const bulk = document.getElementById('request-bulk-comment');
+        const active = document.activeElement;
+        this._savedDetailComment = detail ? detail.value : '';
+        this._savedBulkComment = bulk ? bulk.value : '';
+        this._skipDetailRebuild = Boolean(
+            this.selectedId
+            && (
+                (active && (active.id === 'request-comment' || active.id === 'request-bulk-comment'))
+                || this._savedDetailComment
+            )
+        );
+    }
+
+    restoreDrafts() {
+        const bulk = document.getElementById('request-bulk-comment');
+        if (bulk && this._savedBulkComment) {
+            bulk.value = this._savedBulkComment;
+        }
+        if (this._skipDetailRebuild) {
+            return;
+        }
+        const detail = document.getElementById('request-comment');
+        if (detail && this._savedDetailComment) {
+            detail.value = this._savedDetailComment;
+        }
+    }
+
     async load() {
         this.bind();
+        this.captureDrafts();
         const status = this.filter === 'all' ? 'all' : this.filter;
         const [list, catalog] = await Promise.all([
-            this.controller.api.listRequests(status),
+            this.controller.api.listRequests(status, this.queueTab),
             this.catalog.length ? Promise.resolve({ actions: this.catalog }) : this.controller.api.getRequestCatalog(),
         ]);
         if (catalog && catalog.actions) {
@@ -93,19 +177,22 @@ class RequestsManager {
         if (list && list.success) {
             this.requests = list.requests || [];
             this.counts = list.counts || this.counts;
+            this.tabCounts = list.tab_counts || this.tabCounts;
         }
         const visible = new Set(this.requests.map((item) => item.id));
         this.selectedIds = new Set([...this.selectedIds].filter((id) => visible.has(id)));
         this.updateNavBadge();
+        this.syncQueueTabs();
         if (this.controller.activeSection === 'requests') {
             this.render();
         }
     }
 
     async refreshCounts() {
-        const data = await this.controller.api.listRequests('open');
+        const data = await this.controller.api.listRequests('open', this.queueTab);
         if (data && data.success) {
             this.counts = data.counts || this.counts;
+            this.tabCounts = data.tab_counts || this.tabCounts;
             this.updateNavBadge();
         }
     }
@@ -115,7 +202,7 @@ class RequestsManager {
         if (!badge) {
             return;
         }
-        const pending = Number(this.counts.open || this.counts.pending || 0);
+        const pending = Number(this.counts.actionable || 0);
         badge.textContent = String(pending);
         badge.hidden = pending <= 0;
         badge.classList.toggle('has-pending', pending > 0);
@@ -126,22 +213,47 @@ class RequestsManager {
         if (!label) {
             return;
         }
-        const open = Number(this.counts.open || this.counts.pending || 0);
-        const archived = Number(this.counts.archived || 0);
+        const open = Number(this.tabCounts.open || 0);
+        const archived = Number(this.tabCounts.archived || 0);
         const selected = this.selectedIds.size;
+        const tabName = this.queueLabel();
         if (this.filter === 'archived') {
-            label.textContent = selected ? `${selected} selected · ${archived} archived` : `${archived} archived`;
+            label.textContent = selected
+                ? `${selected} selected · ${archived} archived · ${tabName}`
+                : `${archived} archived · ${tabName}`;
         } else if (this.filter === 'all') {
             label.textContent = selected
-                ? `${selected} selected · ${open} open · ${archived} archived`
-                : `${open} open · ${archived} archived`;
+                ? `${selected} selected · ${open} open · ${archived} archived · ${tabName}`
+                : `${open} open · ${archived} archived · ${tabName}`;
         } else {
-            label.textContent = selected ? `${selected} selected · ${open} open` : `${open} open`;
+            label.textContent = selected
+                ? `${selected} selected · ${open} open · ${tabName}`
+                : `${open} open · ${tabName}`;
         }
         const selectBtn = document.querySelector('#requests-content [data-request-select-all]');
         if (selectBtn) {
             selectBtn.hidden = this.filter === 'archived';
         }
+        document.querySelectorAll('[data-request-filter]').forEach((btn) => {
+            const key = btn.dataset.requestFilter;
+            const count = Number((this.tabCounts && this.tabCounts[key]) || 0);
+            const name = key === 'open' ? 'Open' : key === 'archived' ? 'Archived' : 'All';
+            btn.textContent = `${name} (${count})`;
+            btn.classList.toggle('active', key === this.filter);
+        });
+    }
+
+    queueLabel() {
+        if (this.queueTab === 'soc') {
+            return 'SOC';
+        }
+        if (this.queueTab === 'engineering') {
+            return 'Engineering';
+        }
+        if (this.queueTab === 'detection') {
+            return 'Detection engineering';
+        }
+        return 'All';
     }
 
     specFor(actionType) {
@@ -149,6 +261,9 @@ class RequestsManager {
     }
 
     selected() {
+        if (this.receipt && this.receipt.item && this.receipt.item.id === this.selectedId) {
+            return this.receipt.item;
+        }
         return this.requests.find((item) => item.id === this.selectedId) || this.requests[0] || null;
     }
 
@@ -159,6 +274,20 @@ class RequestsManager {
     isActionable(item) {
         const spec = this.specFor(item.action_type);
         return item.status === 'pending' && !this.isInformational(item, spec);
+    }
+
+    isEngNote(item) {
+        if (!item) {
+            return false;
+        }
+        if (this.githubIssue(item)) {
+            return true;
+        }
+        if (ENG_ACTION_TYPES.has(item.action_type)) {
+            return true;
+        }
+        const spec = this.specFor(item.action_type);
+        return Boolean(spec && DETECTION_CATEGORIES.has(spec.category));
     }
 
     canBulkApprove(item) {
@@ -173,6 +302,51 @@ class RequestsManager {
         return item.status === 'informational';
     }
 
+    canIgnore(item) {
+        if (!this.canMarkDone(item)) {
+            return false;
+        }
+        if (this.queueTab === 'engineering' || this.queueTab === 'detection') {
+            return true;
+        }
+        return this.isEngNote(item);
+    }
+
+    githubIssue(item) {
+        if (item && item.github_issue && item.github_issue.number != null) {
+            return item.github_issue;
+        }
+        const payload = (item && item.payload) || {};
+        const raw = payload.engineering || payload.github_issue;
+        if (!raw || typeof raw !== 'object') {
+            return null;
+        }
+        const issue = raw.issue && typeof raw.issue === 'object' ? raw.issue : raw;
+        if (issue.number == null && raw.number == null) {
+            return null;
+        }
+        return {
+            number: issue.number || raw.number,
+            url: issue.url || issue.html_url || raw.url,
+            state: issue.state || raw.state,
+            repository: raw.repository,
+        };
+    }
+
+    statusLabel(item) {
+        if (item && item.decision && item.decision.action === 'ignore') {
+            return 'Ignored';
+        }
+        return REQUEST_STATUS_LABELS[item && item.status] || (item && item.status) || '';
+    }
+
+    statusClass(item) {
+        if (item && item.decision && item.decision.action === 'ignore') {
+            return 'ignored';
+        }
+        return item && item.status ? item.status : '';
+    }
+
     toggleChecked(id, checked) {
         if (checked) {
             this.selectedIds.add(id);
@@ -182,6 +356,7 @@ class RequestsManager {
         this.renderListChrome();
         this.highlightCards();
         this.updateHeaderMeta();
+        this.restoreDrafts();
     }
 
     toggleSelectAll(actionableOnly) {
@@ -206,30 +381,75 @@ class RequestsManager {
         if (!list) {
             return;
         }
-        document.querySelectorAll('[data-request-filter]').forEach((btn) => {
-            btn.classList.toggle('active', btn.dataset.requestFilter === this.filter);
-        });
         this.renderListChrome();
         this.updateHeaderMeta();
         if (!this.requests.length) {
-            const emptyCopy = this.filter === 'archived'
-                ? 'No archived requests yet. Approved, denied, failed, and Done informational notes appear here.'
-                : this.filter === 'all'
-                    ? 'No requests yet. The agent files actions here when it wants your approval, or informational fine-tune / visibility notes.'
-                    : 'No open requests. Archived approvals and reviewed notes are hidden — switch to Archived to see them.';
-            list.innerHTML = `<div class="requests-empty">${emptyCopy}</div>`;
+            list.innerHTML = `<div class="requests-empty">${this.emptyCopy()}</div>`;
             this.selectedId = null;
-            this.renderDetail();
+            if (!this._skipDetailRebuild) {
+                this.renderDetail();
+            }
+            this.restoreDrafts();
             return;
         }
-        if (this.selectedId && !this.requests.some((item) => item.id === this.selectedId)) {
+        const receiptHoldsSelection = Boolean(
+            this.receipt && this.receipt.item && this.receipt.item.id === this.selectedId
+        );
+        if (this.selectedId && !this.requests.some((item) => item.id === this.selectedId) && !receiptHoldsSelection) {
             this.selectedId = this.requests[0].id;
+            this._skipDetailRebuild = false;
         }
         if (!this.selectedId) {
             this.selectedId = this.requests[0].id;
         }
-        list.innerHTML = this.requests.map((item) => this.cardHtml(item)).join('');
-        this.renderDetail();
+        const awaiting = this.filter === 'open'
+            ? this.requests.filter((item) => item.status === 'awaiting_integration')
+            : [];
+        const rest = this.filter === 'open'
+            ? this.requests.filter((item) => item.status !== 'awaiting_integration')
+            : this.requests;
+        let html = rest.map((item) => this.cardHtml(item)).join('');
+        if (awaiting.length && (this.queueTab === 'soc' || this.queueTab === 'all')) {
+            html += `
+                <div class="requests-muted-section">
+                    <div class="requests-muted-copy">
+                        Waiting on integration — approved earlier; connect the missing integration or leave archived when obsolete.
+                    </div>
+                    ${awaiting.map((item) => this.cardHtml(item)).join('')}
+                </div>
+            `;
+        } else if (awaiting.length) {
+            html += awaiting.map((item) => this.cardHtml(item)).join('');
+        }
+        list.innerHTML = html;
+        if (!this._skipDetailRebuild) {
+            this.renderDetail();
+        } else {
+            this.highlightCards();
+        }
+        this.restoreDrafts();
+    }
+
+    emptyCopy() {
+        const tab = this.queueTab;
+        if (this.filter === 'archived') {
+            return 'No archived requests in this tab yet.';
+        }
+        if (tab === 'soc') {
+            return this.filter === 'all'
+                ? 'No SOC requests yet. Close, isolate, identity, and case work appear here.'
+                : 'No open SOC approvals. Detection notes live under Detection engineering.';
+        }
+        if (tab === 'engineering') {
+            return 'No GitHub-tracked engineering tickets in this view.';
+        }
+        if (tab === 'detection') {
+            return 'No detection engineering notes in this view.';
+        }
+        if (this.filter === 'all') {
+            return 'No requests yet. The agent files actions here when it wants your approval, or informational fine-tune / visibility notes.';
+        }
+        return 'No open requests. Archived approvals and reviewed notes are hidden — switch to Archived to see them.';
     }
 
     renderListChrome() {
@@ -243,6 +463,7 @@ class RequestsManager {
         const approveCount = selected.filter((item) => this.canBulkApprove(item)).length;
         const denyCount = selected.filter((item) => this.isActionable(item)).length;
         const doneCount = selected.filter((item) => this.canMarkDone(item)).length;
+        const ignoreCount = selected.filter((item) => this.canIgnore(item)).length;
         const hasSelection = selected.length > 0;
         bar.hidden = !hasSelection;
         if (!hasSelection) {
@@ -266,8 +487,14 @@ class RequestsManager {
                     ${doneCount ? '' : 'disabled'} title="Mark informational notes as reviewed">
                     Done ${doneCount || ''}
                 </button>
+                <button type="button" class="btn btn-secondary btn-sm" data-request-action="bulk-ignore"
+                    ${ignoreCount ? '' : 'disabled'} title="Ignore selected review notes and close linked GitHub issues">
+                    Ignore ${ignoreCount || ''}
+                </button>
                 <button type="button" class="btn btn-secondary btn-sm" data-request-clear-selection>Clear</button>
             </div>
+            <textarea id="request-bulk-comment" class="command-input request-comment" rows="2"
+                placeholder="Optional comment for this bulk action"></textarea>
         `;
     }
 
@@ -283,6 +510,18 @@ class RequestsManager {
         });
     }
 
+    githubChipHtml(item, asLink) {
+        const issue = this.githubIssue(item);
+        if (!issue) {
+            return '';
+        }
+        const label = `#${issue.number}${issue.state ? ` ${issue.state}` : ''}`;
+        if (asLink && issue.url) {
+            return `<a class="github-issue-chip" href="${escapeHtml(String(issue.url))}" target="_blank" rel="noopener noreferrer">${escapeHtml(label)}</a>`;
+        }
+        return `<span class="github-issue-chip">${escapeHtml(label)}</span>`;
+    }
+
     cardHtml(item) {
         const spec = this.specFor(item.action_type);
         const active = item.id === this.selectedId ? ' active' : '';
@@ -290,8 +529,9 @@ class RequestsManager {
         const cluster = (item.cluster && item.cluster.name) || item.cluster_id || '';
         const title = item.title || (spec && spec.label) || item.action_type;
         const archived = Boolean(item.archived) || ['acknowledged', 'denied', 'executed', 'failed'].includes(item.status);
+        const awaiting = item.status === 'awaiting_integration';
         return `
-            <article class="request-card${active}${checked ? ' is-checked' : ''}${archived ? ' is-archived' : ''}" data-request-id="${escapeHtml(item.id)}">
+            <article class="request-card${active}${checked ? ' is-checked' : ''}${archived ? ' is-archived' : ''}${awaiting ? ' is-muted' : ''}" data-request-id="${escapeHtml(item.id)}">
                 <label class="request-card-check" title="Select for bulk actions">
                     <input type="checkbox" data-request-check="${escapeHtml(item.id)}"
                         ${checked ? 'checked' : ''} aria-label="Select request">
@@ -300,9 +540,9 @@ class RequestsManager {
                     <div class="request-card-title">${escapeHtml(title)}</div>
                     <div class="request-card-meta">
                         <span class="action-badge">${escapeHtml((spec && spec.label) || item.action_type)}</span>
-                        <span class="risk-badge risk-${escapeHtml(item.risk || 'medium')}">${escapeHtml(item.risk || 'medium')}</span>
-                        <span class="status-badge ${escapeHtml(item.status)}">${escapeHtml(item.status)}</span>
-                        ${archived ? '<span class="status-badge archived">archived</span>' : ''}
+                        <span class="status-badge ${escapeHtml(this.statusClass(item))}">${escapeHtml(this.statusLabel(item))}</span>
+                        ${this.githubChipHtml(item)}
+                        ${archived ? '<span class="status-badge archived">Archived</span>' : ''}
                         ${cluster ? `<span>${escapeHtml(cluster)}</span>` : ''}
                     </div>
                 </button>
@@ -311,15 +551,24 @@ class RequestsManager {
     }
 
     decisionBarHtml(item, spec, pending, informational) {
+        if (this.receipt && this.receipt.id === item.id) {
+            return this.receiptHtml();
+        }
         if (informational && item.status === 'informational') {
+            const ignoreBtn = this.canIgnore(item)
+                ? '<button type="button" class="btn btn-secondary" data-request-action="ignore">Ignore</button>'
+                : '';
             return `
                 <div class="request-decision-bar is-info">
                     <div class="request-decision-copy">
-                        <span class="request-decision-label">Informational</span>
-                        <span>No approval needed — review only, then mark Done.</span>
+                        <span class="request-decision-label">Review note</span>
+                        <span>${this.canIgnore(item)
+                            ? 'Done keeps GitHub tracking open. Ignore archives here and closes the GitHub issue.'
+                            : 'No approval needed — review only, then mark Done.'}</span>
                     </div>
                     <div class="request-actions">
                         <button type="button" class="btn btn-primary" data-request-action="done">Done</button>
+                        ${ignoreBtn}
                     </div>
                     <textarea id="request-comment" class="command-input request-comment" rows="2"
                         placeholder="Optional note (kept on the audit trail)"></textarea>
@@ -327,14 +576,7 @@ class RequestsManager {
             `;
         }
         if (!pending) {
-            return `
-                <div class="request-decision-bar is-settled">
-                    <div class="request-decision-copy">
-                        <span class="request-decision-label">Status</span>
-                        <span class="status-badge ${escapeHtml(item.status)}">${escapeHtml(item.status)}</span>
-                    </div>
-                </div>
-            `;
+            return this.settledBarHtml(item);
         }
         const comment = `
             <textarea id="request-comment" class="command-input request-comment" rows="2"
@@ -349,18 +591,64 @@ class RequestsManager {
             `;
         } else {
             buttons = `
-                <button type="button" class="btn btn-primary" data-request-action="approve">Approve and run</button>
+                <button type="button" class="btn btn-primary" data-request-action="approve">Approve</button>
                 <button type="button" class="btn btn-danger" data-request-action="deny">Deny</button>
             `;
         }
         return `
             <div class="request-decision-bar">
                 <div class="request-decision-copy">
-                    <span class="request-decision-label">Decision</span>
+                    <span class="request-decision-label">Needs approval</span>
                     <span>Review the details below, then approve or deny.</span>
                 </div>
                 <div class="request-actions">${buttons}</div>
                 ${comment}
+            </div>
+        `;
+    }
+
+    settledBarHtml(item) {
+        const decision = item.decision || {};
+        const action = decision.action === 'ignore'
+            ? 'Ignored'
+            : decision.action === 'acknowledge'
+                ? 'Reviewed'
+                : decision.action === 'approve'
+                    ? 'Approved'
+                    : decision.action === 'deny'
+                        ? 'Denied'
+                        : this.statusLabel(item);
+        const actor = decision.actor ? ` by ${decision.actor}` : '';
+        const comment = decision.comment ? ` — ${decision.comment}` : '';
+        return `
+            <div class="request-decision-bar is-settled">
+                <div class="request-decision-copy">
+                    <span class="request-decision-label">Decision</span>
+                    <span class="status-badge ${escapeHtml(this.statusClass(item))}">${escapeHtml(this.statusLabel(item))}</span>
+                    <span>${escapeHtml(`${action}${actor}${comment}`)}</span>
+                </div>
+            </div>
+        `;
+    }
+
+    receiptHtml() {
+        const receipt = this.receipt || {};
+        const next = receipt.nextId
+            ? `<button type="button" class="btn btn-primary" data-request-next="${escapeHtml(receipt.nextId)}">Next</button>`
+            : '<button type="button" class="btn btn-secondary" data-request-next="">Next open</button>';
+        const child = receipt.childId
+            ? `<button type="button" class="btn btn-secondary" data-request-open="${escapeHtml(receipt.childId)}">Open follow-up</button>`
+            : '';
+        return `
+            <div class="request-decision-bar is-receipt">
+                <div class="request-decision-copy">
+                    <span class="request-decision-label">Done</span>
+                    <span>${escapeHtml(receipt.message || 'Request updated.')}</span>
+                </div>
+                <div class="request-actions">
+                    ${next}
+                    ${child}
+                </div>
             </div>
         `;
     }
@@ -393,22 +681,42 @@ class RequestsManager {
             ? `<div class="request-section-label">Question</div><div class="request-question">${escapeHtml(item.question)}</div>`
             : '';
         const cluster = (item.cluster && item.cluster.name) || item.cluster_id || 'default cluster';
-        const resultHtml = item.execution_result
-            ? `<div class="request-section-label">Result</div><pre class="request-result">${escapeHtml(JSON.stringify(item.execution_result, null, 2))}</pre>`
-            : '';
         const errorHtml = item.error
             ? `<p class="settings-status is-error">${escapeHtml(item.error)}</p>`
             : '';
-        const banner = informational && item.status === 'informational'
-            ? '<div class="request-info-banner">Informational only — nothing is executed. Mark <strong>Done</strong> when you have reviewed it.</div>'
+        const awaitingHtml = item.status === 'awaiting_integration'
+            ? '<div class="request-info-banner is-muted">Waiting on integration — approved earlier; connect the missing integration or leave archived when obsolete.</div>'
             : '';
+        const banner = informational && item.status === 'informational'
+            ? `<div class="request-info-banner">${this.canIgnore(item)
+                ? 'Review note — <strong>Done</strong> archives here and leaves GitHub open. <strong>Ignore</strong> archives here and closes the GitHub issue.'
+                : 'Informational only — nothing is executed. Mark <strong>Done</strong> when you have reviewed it.'}</div>`
+            : awaitingHtml;
+        const settled = !pending && !(informational && item.status === 'informational');
+        const techJson = {
+            id: item.id,
+            action_type: item.action_type,
+            status: item.status,
+            decision: item.decision,
+            execution_result: item.execution_result,
+            payload,
+            github_issue: item.github_issue,
+            child_request_ids: item.child_request_ids,
+            error: item.error,
+        };
+        const resultHtml = settled
+            ? `<details class="request-tech-details"><summary>Technical details</summary>
+               <pre class="request-result">${escapeHtml(JSON.stringify(techJson, null, 2))}</pre></details>`
+            : (item.execution_result
+                ? `<div class="request-section-label">Result</div><pre class="request-result">${escapeHtml(JSON.stringify(item.execution_result, null, 2))}</pre>`
+                : '');
         root.innerHTML = `
             ${this.decisionBarHtml(item, spec, pending, informational)}
             <div class="request-detail-body">
                 <div class="request-card-meta">
                     <span class="action-badge">${escapeHtml((spec && spec.label) || item.action_type)}</span>
-                    <span class="risk-badge risk-${escapeHtml(item.risk || 'medium')}">${escapeHtml(item.risk || 'medium')}</span>
-                    <span class="status-badge ${escapeHtml(item.status)}">${escapeHtml(item.status)}</span>
+                    <span class="status-badge ${escapeHtml(this.statusClass(item))}">${escapeHtml(this.statusLabel(item))}</span>
+                    ${this.githubChipHtml(item, true)}
                     <span>${escapeHtml(cluster)}</span>
                 </div>
                 <h3 class="request-detail-title">${escapeHtml(item.title)}</h3>
@@ -432,6 +740,7 @@ class RequestsManager {
         }
         const skip = new Set([
             'alert', 'rule', 'coverage_check', 'rule_found', 'suggestion', 'description',
+            'engineering', 'github_issue',
         ]);
         const payloadRows = Object.keys(payload).length
             ? Object.entries(payload)
@@ -461,7 +770,7 @@ class RequestsManager {
             alert.created_at ? `at ${alert.created_at}` : '',
         ].filter(Boolean);
         const entityHtml = entities.length
-            ? `<div class="request-rule-meta">${entities.map((item) => `<span class="action-badge">${escapeHtml(String(item))}</span>`).join('')}</div>`
+            ? `<div class="request-rule-meta">${entities.map((entry) => `<span class="action-badge">${escapeHtml(String(entry))}</span>`).join('')}</div>`
             : '';
         const eventHtml = events.length
             ? `<div class="request-section-label">Triggering events</div>
@@ -491,7 +800,7 @@ class RequestsManager {
                 <div class="request-rule-name">${escapeHtml(alert.title || alert.id || 'Alert')}</div>
                 <div class="request-rule-meta">
                     ${alert.id ? `<span>id ${escapeHtml(String(alert.id))}</span>` : ''}
-                    ${meta.map((item) => `<span>${escapeHtml(item)}</span>`).join('')}
+                    ${meta.map((entry) => `<span>${escapeHtml(entry)}</span>`).join('')}
                 </div>
                 ${alert.description ? `<p class="request-detail-rationale">${escapeHtml(String(alert.description))}</p>` : ''}
                 ${entityHtml}
@@ -505,7 +814,10 @@ class RequestsManager {
         const suggestion = payload.suggestion || payload.description || '';
         const rule = payload.rule;
         const coverage = payload.coverage_check;
-        const skip = new Set(['suggestion', 'rule', 'coverage_check', 'rule_found', 'description', 'alert']);
+        const skip = new Set([
+            'suggestion', 'rule', 'coverage_check', 'rule_found', 'description', 'alert',
+            'engineering', 'github_issue',
+        ]);
         const extras = Object.entries(payload).filter(([key, value]) => !skip.has(key) && value != null && value !== '');
         const extraRows = extras.length
             ? extras.map(([key, value]) => `<dt>${escapeHtml(key)}</dt><dd>${escapeHtml(this.formatValue(value))}</dd>`).join('')
@@ -589,9 +901,75 @@ class RequestsManager {
         return String(value);
     }
 
-    comment() {
-        const el = document.getElementById('request-comment');
+    comment(fromBulk) {
+        const id = fromBulk ? 'request-bulk-comment' : 'request-comment';
+        const el = document.getElementById(id);
         return el ? el.value.trim() : '';
+    }
+
+    nextOpenId(currentId) {
+        const open = this.requests.filter((item) => (
+            item.id !== currentId
+            && !item.archived
+            && ['pending', 'informational', 'awaiting_integration'].includes(item.status)
+        ));
+        return open.length ? open[0].id : null;
+    }
+
+    openNext(nextId) {
+        this.receipt = null;
+        if (nextId && this.requests.some((item) => item.id === nextId)) {
+            this.selectedId = nextId;
+            this.render();
+            return;
+        }
+        const fallback = this.nextOpenId(this.selectedId);
+        if (fallback) {
+            this.selectedId = fallback;
+        }
+        this.render();
+    }
+
+    receiptMessage(action, updated) {
+        if (action === 'ignore') {
+            const github = updated && updated.execution_result && updated.execution_result.github;
+            if (github && github.attempted && github.success === false) {
+                return 'Ignored here. GitHub issue was not closed — the board may be out of sync.';
+            }
+            if (github && github.success) {
+                return 'Ignored. Linked GitHub issue was closed.';
+            }
+            return 'Ignored and archived.';
+        }
+        const status = updated && updated.status;
+        if (status === 'executed') {
+            return 'Approved and completed.';
+        }
+        if (status === 'acknowledged') {
+            return 'Marked as done and archived.';
+        }
+        if (status === 'awaiting_integration') {
+            return 'Approved. Waiting on a connected API to finish this action.';
+        }
+        if (status === 'denied') {
+            return 'Request denied.';
+        }
+        if (status === 'failed') {
+            return (updated && updated.error) || 'Request failed during execution.';
+        }
+        return 'Request updated.';
+    }
+
+    showReceipt(item, updated, action) {
+        const childIds = (updated && updated.child_request_ids) || [];
+        this.receipt = {
+            id: item.id,
+            item: updated || item,
+            message: this.receiptMessage(action, updated),
+            nextId: this.nextOpenId(item.id),
+            childId: childIds.length ? childIds[childIds.length - 1] : null,
+        };
+        this.selectedId = item.id;
     }
 
     async handleAction(action) {
@@ -609,6 +987,8 @@ class RequestsManager {
                 result = await this.controller.api.denyRequest(item.id, comment);
             } else if (action === 'done') {
                 result = await this.controller.api.acknowledgeRequest(item.id, comment);
+            } else if (action === 'ignore') {
+                result = await this.controller.api.ignoreRequest(item.id, comment);
             } else if (action === 'yes' || action === 'no') {
                 result = await this.controller.api.answerRequest(item.id, action, comment);
             } else {
@@ -624,25 +1004,18 @@ class RequestsManager {
             return;
         }
         const updated = result.request;
+        const github = updated && updated.execution_result && updated.execution_result.github;
         if (window.toast) {
-            const status = updated && updated.status;
-            if (status === 'executed') {
-                window.toast.success('Request completed.', { key: 'requests' });
-            } else if (status === 'acknowledged') {
-                window.toast.success('Marked as done.', { key: 'requests' });
-            } else if (status === 'awaiting_integration') {
-                window.toast.info('Approved. Waiting on a connected API to finish this action.', { key: 'requests' });
-            } else if (status === 'denied') {
-                window.toast.info('Request denied.', { key: 'requests' });
-            } else if (status === 'failed') {
-                window.toast.error(updated.error || 'Request failed during execution.', { key: 'requests' });
+            if (action === 'ignore' && github && github.attempted && github.success === false) {
+                window.toast.error(github.error || 'Ignored locally, but GitHub close failed.', { key: 'requests' });
             } else {
-                window.toast.success('Request updated.', { key: 'requests' });
+                window.toast.success(this.receiptMessage(action, updated), { key: 'requests' });
             }
         }
         this.selectedIds.delete(item.id);
+        this._skipDetailRebuild = false;
         await this.load();
-        this.selectedId = updated && updated.id ? updated.id : item.id;
+        this.showReceipt(item, updated, action);
         this.render();
     }
 
@@ -658,6 +1031,9 @@ class RequestsManager {
         } else if (action === 'deny') {
             ids = selected.filter((item) => this.isActionable(item)).map((item) => item.id);
             label = 'deny';
+        } else if (action === 'ignore') {
+            ids = selected.filter((item) => this.canIgnore(item)).map((item) => item.id);
+            label = 'ignore';
         } else {
             ids = selected.filter((item) => this.canMarkDone(item)).map((item) => item.id);
             label = 'mark done';
@@ -668,15 +1044,19 @@ class RequestsManager {
                     ? 'No selected items can be bulk-approved (identity questions need a yes/no).'
                     : action === 'deny'
                         ? 'No selected pending items to deny.'
-                        : 'No selected informational notes to mark Done.';
+                        : action === 'ignore'
+                            ? 'No selected review notes to ignore.'
+                            : 'No selected informational notes to mark Done.';
                 window.toast.info(emptyMsg, { key: 'requests' });
             }
             return;
         }
         const ok = window.confirm(
-            action === 'acknowledge' || action === 'done'
-                ? `Mark ${ids.length} informational note${ids.length === 1 ? '' : 's'} as Done?`
-                : `${label.charAt(0).toUpperCase() + label.slice(1)} ${ids.length} request${ids.length === 1 ? '' : 's'}?`,
+            action === 'ignore'
+                ? `Ignore ${ids.length} review note${ids.length === 1 ? '' : 's'}? Linked GitHub issues will be closed.`
+                : action === 'acknowledge' || action === 'done'
+                    ? `Mark ${ids.length} informational note${ids.length === 1 ? '' : 's'} as Done?`
+                    : `${label.charAt(0).toUpperCase() + label.slice(1)} ${ids.length} request${ids.length === 1 ? '' : 's'}?`,
         );
         if (!ok) {
             return;
@@ -684,7 +1064,7 @@ class RequestsManager {
         this._busy = true;
         let result;
         try {
-            result = await this.controller.api.bulkRequests(action, ids, this.comment());
+            result = await this.controller.api.bulkRequests(action, ids, this.comment(true));
         } finally {
             this._busy = false;
         }
@@ -698,7 +1078,7 @@ class RequestsManager {
         const skipped = Number(result.skipped || 0);
         const failed = Number(result.failed || 0);
         if (window.toast) {
-            const verb = action === 'acknowledge' ? 'marked done' : `${label}d`;
+            const verb = action === 'acknowledge' ? 'marked done' : action === 'ignore' ? 'ignored' : `${label}d`;
             const parts = [`${succeeded} ${verb}`];
             if (skipped) {
                 parts.push(`${skipped} skipped`);
@@ -713,6 +1093,7 @@ class RequestsManager {
             }
         }
         this.selectedIds.clear();
+        this._skipDetailRebuild = false;
         await this.load();
     }
 }

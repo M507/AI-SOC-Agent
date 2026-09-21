@@ -43,12 +43,25 @@ def _mirror_recommendation_to_github(request, action_type: str) -> Optional[Dict
         query = rule.get("query")
         if query:
             body_parts.append(f"```\n{str(query)[:2000]}\n```")
+    coverage = payload.get("coverage_check")
+    if isinstance(coverage, dict) and coverage.get("note"):
+        body_parts.append(f"**Coverage:** {coverage.get('status')} — {coverage.get('note')}")
+    if payload.get("suggested_path"):
+        body_parts.append(f"**Suggested path:** `{payload.get('suggested_path')}`")
     body_parts.append(f"_Filed from SamiGPT request `{request.id}`_")
     body = "\n\n".join(body_parts) if body_parts else title
 
     try:
         if action_type == "fine_tune":
             issue = eng.create_fine_tuning_recommendation(title=title, description=body)
+        elif action_type == "runbook_gap":
+            if hasattr(eng, "create_runbook_recommendation"):
+                issue = eng.create_runbook_recommendation(title=title, description=body)
+            else:
+                issue = eng.create_visibility_recommendation(
+                    title=f"[Runbook] {title}",
+                    description=body,
+                )
         else:
             issue = eng.create_visibility_recommendation(title=title, description=body)
     except Exception as exc:
@@ -93,8 +106,13 @@ def enqueue_gated_tool(
         spec.action_type,
     )
     engineering = None
-    if informational and request.action_type in {"fine_tune", "visibility"}:
+    if informational and request.action_type in {"fine_tune", "visibility", "runbook_gap"}:
         engineering = _mirror_recommendation_to_github(request, request.action_type)
+        if engineering and engineering.get("success"):
+            try:
+                request = get_queue().attach_engineering(request.id, engineering)
+            except Exception as exc:
+                logger.warning("Could not persist GitHub mirror on request %s: %s", request.id, exc)
 
     if informational:
         message = (
@@ -123,7 +141,15 @@ def enqueue_gated_tool(
         "message": message,
         "payload": {
             key: request.payload.get(key)
-            for key in ("rule_found", "rule", "coverage_check", "suggestion")
+            for key in (
+                "rule_found",
+                "rule",
+                "coverage_check",
+                "suggestion",
+                "existing_case_runbooks",
+                "near_matches",
+                "suggested_path",
+            )
             if key in request.payload
         },
     }
@@ -158,6 +184,14 @@ def create_request_from_tool_args(args: Dict[str, Any], cluster_id: Optional[str
 
     spec = get_action_spec(request.action_type)
     informational = bool(spec and spec.execution == "informational")
+    engineering = None
+    if informational and request.action_type in {"fine_tune", "visibility", "runbook_gap"}:
+        engineering = _mirror_recommendation_to_github(request, request.action_type)
+        if engineering and engineering.get("success"):
+            try:
+                request = get_queue().attach_engineering(request.id, engineering)
+            except Exception as exc:
+                logger.warning("Could not persist GitHub mirror on request %s: %s", request.id, exc)
     if informational:
         message = (
             f"Filed {request.title} as informational in the SamiGPT Requests view "
@@ -168,7 +202,7 @@ def create_request_from_tool_args(args: Dict[str, Any], cluster_id: Optional[str
             f"Filed {request.title} for analyst approval in the SamiGPT Requests view "
             f"(id {request.id})."
         )
-    return {
+    result = {
         "success": True,
         "queued": True,
         "informational": informational,
@@ -177,3 +211,6 @@ def create_request_from_tool_args(args: Dict[str, Any], cluster_id: Optional[str
         "status": request.status.value,
         "message": message,
     }
+    if engineering:
+        result["engineering"] = engineering
+    return result

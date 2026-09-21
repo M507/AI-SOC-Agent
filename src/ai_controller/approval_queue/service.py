@@ -7,7 +7,7 @@ from typing import Any, Dict, List, Optional
 
 from ...core.logging import get_logger
 from .actions import get_handler
-from .catalog import get_action_spec, list_action_specs
+from .catalog import get_action_spec, list_action_specs, github_issue_link, matches_queue, SOC_CATEGORIES, DETECTION_CATEGORIES
 from .clients import resolve_clients
 from .models import ApprovalRequest, Decision, FollowUpPlan, RequestStatus, is_archived
 from .store import RequestStore
@@ -16,6 +16,7 @@ logger = get_logger("sami.approval_queue")
 
 _CRITICAL_FOLLOW_UPS = {"isolate_endpoint", "kill_process", "disable_user", "reset_credentials"}
 _OPEN_STATUSES = {RequestStatus.PENDING, RequestStatus.INFORMATIONAL, RequestStatus.AWAITING_INTEGRATION}
+_IGNORE_GITHUB_COMMENT = "Manager decided to ignore this professionally."
 
 _queue: Optional["ApprovalQueue"] = None
 
@@ -44,9 +45,22 @@ class ApprovalQueue:
         self,
         status: Optional[str] = None,
         cluster_id: Optional[str] = None,
+        queue: Optional[str] = None,
+        sync_github: bool = True,
     ) -> List[ApprovalRequest]:
-        items = self.store.list(cluster_id=cluster_id)
+        queue_key = (queue or "all").strip().lower()
         filter_key = (status or "all").strip().lower()
+        if sync_github and filter_key in {"open", "pending", "all", "informational"} and queue_key in {
+            "all",
+            "engineering",
+            "eng",
+            "detection",
+            "detections",
+            "detection_engineering",
+        }:
+            self.sync_github_closed(cluster_id=cluster_id)
+        items = self.store.list(cluster_id=cluster_id)
+        items = [item for item in items if matches_queue(item.action_type, item.payload, queue_key)]
         if filter_key in {"pending", "open"}:
             items = [
                 item
@@ -83,22 +97,51 @@ class ApprovalQueue:
 
     def counts(self) -> Dict[str, int]:
         items = self.store.list()
-        open_count = sum(
-            1
-            for item in items
-            if not is_archived(item) and item.status in _OPEN_STATUSES
-        )
+        open_items = [item for item in items if not is_archived(item) and item.status in _OPEN_STATUSES]
         archived_count = sum(1 for item in items if is_archived(item))
-        informational = sum(
-            1
-            for item in items
-            if item.status == RequestStatus.INFORMATIONAL and not is_archived(item)
-        )
+        informational = sum(1 for item in open_items if item.status == RequestStatus.INFORMATIONAL)
+        awaiting = sum(1 for item in open_items if item.status == RequestStatus.AWAITING_INTEGRATION)
+        actionable = 0
+        detection_open = 0
+        engineering_open = 0
+        soc_open = 0
+        for item in open_items:
+            spec = get_action_spec(item.action_type)
+            category = spec.category if spec else ""
+            if item.status == RequestStatus.PENDING and category in SOC_CATEGORIES:
+                actionable += 1
+            if category in SOC_CATEGORIES:
+                soc_open += 1
+            if category in DETECTION_CATEGORIES:
+                detection_open += 1
+            if github_issue_link(item.payload):
+                engineering_open += 1
         return {
-            "pending": open_count,
-            "open": open_count,
+            "pending": len(open_items),
+            "open": len(open_items),
             "archived": archived_count,
             "informational": informational,
+            "awaiting": awaiting,
+            "actionable": actionable,
+            "soc_open": soc_open,
+            "detection_open": detection_open,
+            "engineering_open": engineering_open,
+            "all": len(items),
+        }
+
+    def tab_counts(self, queue: Optional[str] = None) -> Dict[str, int]:
+        """Open / archived / all counts for the active Requests top tab."""
+        items = [
+            item
+            for item in self.store.list()
+            if matches_queue(item.action_type, item.payload, queue)
+        ]
+        open_items = [
+            item for item in items if not is_archived(item) and item.status in _OPEN_STATUSES
+        ]
+        return {
+            "open": len(open_items),
+            "archived": sum(1 for item in items if is_archived(item)),
             "all": len(items),
         }
 
@@ -178,11 +221,15 @@ class ApprovalQueue:
             or args.get("description")
             or ""
         )
+        # Keep title/description in payload — many ActionSpecs require them, and
+        # informational enrichers (fine_tune / visibility / runbook_gap) read them.
         payload = {
             key: value
             for key, value in args.items()
-            if key not in {"summary", "rationale", "session_id", "cluster_id", "title"}
+            if key not in {"summary", "rationale", "session_id", "cluster_id"}
         }
+        if "title" not in payload and title:
+            payload["title"] = title
         return self.create(
             action_type=spec.action_type,
             title=str(title),
@@ -204,6 +251,121 @@ class ApprovalQueue:
             return request
         enriched = enrich_request(request)
         return self.store.put(enriched)
+
+    def attach_engineering(self, request_id: str, engineering: Dict[str, Any]) -> ApprovalRequest:
+        """Persist a GitHub (or other ENG) mirror onto the request payload."""
+        request = self._require(request_id)
+        payload = dict(request.payload or {})
+        payload["engineering"] = engineering
+        request.payload = payload
+        request.updated_at = datetime.now()
+        return self.store.put(request)
+
+    def sync_github_closed(self, cluster_id: Optional[str] = None) -> int:
+        """Archive open mirrored notes whose GitHub issue is already closed."""
+        closed = 0
+        for item in list(self.store.list(cluster_id=cluster_id)):
+            if item.status != RequestStatus.INFORMATIONAL or is_archived(item):
+                continue
+            link = github_issue_link(item.payload)
+            if not link:
+                continue
+            try:
+                issue = self._github_get_issue(item, str(link["number"]))
+            except Exception as exc:
+                logger.warning("GitHub sync skipped for request %s: %s", item.id, exc)
+                continue
+            state = str((issue or {}).get("state") or "").lower()
+            if state != "closed":
+                continue
+            number = link.get("number")
+            try:
+                self.acknowledge(
+                    item.id,
+                    comment=f"Closed on GitHub #{number}",
+                    actor="github",
+                )
+                closed += 1
+            except Exception as exc:
+                logger.warning("Could not archive request %s after GitHub close: %s", item.id, exc)
+        return closed
+
+    def ignore(
+        self,
+        request_id: str,
+        comment: Optional[str] = None,
+        actor: str = "analyst",
+    ) -> ApprovalRequest:
+        """Archive an informational note and close the linked GitHub issue."""
+        request = self._require(request_id)
+        if request.status != RequestStatus.INFORMATIONAL:
+            raise ValueError("Only informational requests can be ignored")
+        extra = (comment or "").strip()
+        github_body = _IGNORE_GITHUB_COMMENT
+        if extra:
+            github_body = f"{github_body}\n\n{extra}"
+        github_result: Dict[str, Any] = {"attempted": False}
+        link = github_issue_link(request.payload)
+        if link:
+            github_result["attempted"] = True
+            try:
+                issue = self._github_close_issue(request, str(link["number"]), github_body)
+                github_result["success"] = True
+                github_result["issue"] = {
+                    "number": (issue or {}).get("number") or link.get("number"),
+                    "state": (issue or {}).get("state") or "closed",
+                    "url": (issue or {}).get("html_url") or link.get("url"),
+                }
+            except Exception as exc:
+                logger.warning("Ignore archived %s locally but GitHub close failed: %s", request_id, exc)
+                github_result["success"] = False
+                github_result["error"] = str(exc)
+        if github_result.get("success") and link:
+            payload = dict(request.payload or {})
+            engineering = dict(payload.get("engineering") or {})
+            issue = dict(engineering.get("issue") or {})
+            issue["number"] = github_result.get("issue", {}).get("number") or link.get("number")
+            issue["url"] = github_result.get("issue", {}).get("url") or link.get("url")
+            issue["state"] = "closed"
+            engineering["issue"] = issue
+            engineering["provider"] = engineering.get("provider") or link.get("provider") or "github"
+            engineering["repository"] = engineering.get("repository") or link.get("repository")
+            payload["engineering"] = engineering
+            request.payload = payload
+        request.status = RequestStatus.ACKNOWLEDGED
+        request.decision = Decision(action="ignore", actor=actor, comment=comment or _IGNORE_GITHUB_COMMENT)
+        request.execution_result = {
+            "success": True,
+            "informational": True,
+            "archived": True,
+            "ignored": True,
+            "message": "Ignored. Linked GitHub issue was closed." if github_result.get("success") else (
+                "Ignored locally. GitHub issue was not closed." if github_result.get("attempted") else "Ignored. No GitHub issue was linked."
+            ),
+            "github": github_result,
+        }
+        if github_result.get("error"):
+            request.error = f"GitHub close failed: {github_result['error']}"
+        else:
+            request.error = None
+        self._mark_archived(request)
+        return self.store.put(request)
+
+    @staticmethod
+    def _github_client_for(request: ApprovalRequest):
+        from ...integrations.eng.github.github_client import GitHubClient
+
+        bundle = resolve_clients(request.cluster_id)
+        eng = bundle.eng
+        if not isinstance(eng, GitHubClient):
+            raise RuntimeError("No GitHub engineering client is configured")
+        return eng
+
+    def _github_get_issue(self, request: ApprovalRequest, number: str) -> Dict[str, Any]:
+        return self._github_client_for(request).get_issue(number)
+
+    def _github_close_issue(self, request: ApprovalRequest, number: str, comment: str) -> Dict[str, Any]:
+        return self._github_client_for(request).close_issue(number, comment=comment)
 
     def deny(self, request_id: str, comment: Optional[str] = None, actor: str = "analyst") -> ApprovalRequest:
         request = self._require(request_id)
@@ -261,8 +423,8 @@ class ApprovalQueue:
         normalized = str(action or "").strip().lower()
         if normalized in {"done", "ack"}:
             normalized = "acknowledge"
-        if normalized not in {"approve", "deny", "acknowledge"}:
-            raise ValueError("Bulk action must be approve, deny, or acknowledge")
+        if normalized not in {"approve", "deny", "acknowledge", "ignore"}:
+            raise ValueError("Bulk action must be approve, deny, acknowledge, or ignore")
         results: List[Dict[str, Any]] = []
         succeeded = 0
         skipped = 0
@@ -287,6 +449,19 @@ class ApprovalQueue:
                             "success": False,
                             "skipped": True,
                             "error": "Only informational requests can be marked Done",
+                            "status": request.status.value,
+                        }
+                    )
+                    continue
+            elif normalized == "ignore":
+                if request.status != RequestStatus.INFORMATIONAL:
+                    skipped += 1
+                    results.append(
+                        {
+                            "id": request_id,
+                            "success": False,
+                            "skipped": True,
+                            "error": "Only informational requests can be ignored",
                             "status": request.status.value,
                         }
                     )
@@ -320,6 +495,8 @@ class ApprovalQueue:
                     updated = self.approve(request_id, comment=comment, actor=actor)
                 elif normalized == "deny":
                     updated = self.deny(request_id, comment=comment, actor=actor)
+                elif normalized == "ignore":
+                    updated = self.ignore(request_id, comment=comment, actor=actor)
                 else:
                     updated = self.acknowledge(request_id, comment=comment, actor=actor)
                 succeeded += 1
@@ -483,11 +660,14 @@ class ApprovalQueue:
     @staticmethod
     def _enrich_informational(action_type: str, payload: Dict[str, Any]) -> Dict[str, Any]:
         from .lab_rules import enrich_fine_tune, enrich_visibility
+        from .runbook_gaps import enrich_runbook_gap
 
         if action_type == "fine_tune":
             return enrich_fine_tune(payload)
         if action_type == "visibility":
             return enrich_visibility(payload)
+        if action_type == "runbook_gap":
+            return enrich_runbook_gap(payload)
         return payload
 
     @staticmethod
