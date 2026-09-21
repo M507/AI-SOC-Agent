@@ -252,9 +252,15 @@ async def recent_alerts(
     limit: int = 10,
     hours_back: int = 24,
 ):
-    """Return recent alerts for the New Session picker (UUID + short label)."""
+    """Return recent alerts for the New Session picker (UUID + short label).
+
+    Prefers alerts above low severity (medium/high/critical). If none exist in
+    the window, falls back to low-severity alerts.
+    """
     limit = max(1, min(int(limit or 10), 25))
     hours_back = max(1, min(int(hours_back or 24), 168))
+    # Fetch a wider pool so recent lows don't hide higher-severity alerts.
+    pool_size = min(max(limit * 5, 50), 100)
 
     client = client_for_id(cluster_id)
     if client is None:
@@ -267,7 +273,7 @@ async def recent_alerts(
     try:
         alerts = client.get_security_alerts(
             hours_back=hours_back,
-            max_alerts=limit,
+            max_alerts=pool_size,
             include_investigated=True,
         )
     except Exception as exc:
@@ -282,7 +288,8 @@ async def recent_alerts(
             "error": str(exc),
         }
 
-    items = []
+    above_low: list[dict] = []
+    low_or_unknown: list[dict] = []
     for alert in alerts or []:
         if not isinstance(alert, dict):
             continue
@@ -295,19 +302,23 @@ async def recent_alerts(
         )
         severity = str(alert.get("severity") or "").strip().lower() or "unknown"
         created_at = str(alert.get("created_at") or "").strip()
-        items.append(
-            {
-                "id": alert_id,
-                "title": title,
-                "severity": severity,
-                "status": str(alert.get("status") or "").strip() or "open",
-                "created_at": created_at,
-            }
-        )
+        item = {
+            "id": alert_id,
+            "title": title,
+            "severity": severity,
+            "status": str(alert.get("status") or "").strip() or "open",
+            "created_at": created_at,
+        }
+        if severity in {"medium", "high", "critical"}:
+            above_low.append(item)
+        else:
+            low_or_unknown.append(item)
+
+    selected = above_low if above_low else low_or_unknown
 
     return {
         "success": True,
-        "alerts": items[:limit],
+        "alerts": selected[:limit],
         "cluster_id": cluster_id,
         "hours_back": hours_back,
     }

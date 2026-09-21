@@ -215,7 +215,7 @@ def test_recent_alerts_returns_picker_payload(tmp_path, monkeypatch):
 
     class FakeClient:
         def get_security_alerts(self, **kwargs):
-            assert kwargs["max_alerts"] == 10
+            assert kwargs["max_alerts"] == 50
             assert kwargs["hours_back"] == 24
             assert kwargs["include_investigated"] is True
             return [
@@ -246,6 +246,87 @@ def test_recent_alerts_returns_picker_payload(tmp_path, monkeypatch):
     assert body["alerts"][0]["id"] == "abc-123-uuid"
     assert body["alerts"][0]["title"] == "Suspicious login"
     assert body["alerts"][0]["severity"] == "high"
+
+
+def test_recent_alerts_prefers_above_low_and_falls_back(tmp_path, monkeypatch):
+    client, _config_path = _authed_client(tmp_path, monkeypatch)
+    created = client.post(
+        "/api/elastic/clusters",
+        json={
+            "name": "Lab",
+            "base_url": "https://elastic.example:9200",
+            "api_key": "encoded-test-api-key",
+            "verify_ssl": False,
+        },
+    )
+    assert created.status_code == 200, created.text
+    cluster_id = created.json()["clusters"][0]["id"]
+
+    mixed = [
+        {
+            "id": "low-1",
+            "title": "Noise",
+            "severity": "low",
+            "status": "open",
+            "created_at": "2026-09-21T02:00:00.000Z",
+        },
+        {
+            "id": "med-1",
+            "title": "Medium finding",
+            "severity": "medium",
+            "status": "open",
+            "created_at": "2026-09-21T01:00:00.000Z",
+        },
+        {
+            "id": "crit-1",
+            "title": "Critical finding",
+            "severity": "critical",
+            "status": "open",
+            "created_at": "2026-09-21T00:00:00.000Z",
+        },
+    ]
+    only_low = [
+        {
+            "id": "low-a",
+            "title": "Only low A",
+            "severity": "low",
+            "status": "open",
+            "created_at": "2026-09-21T03:00:00.000Z",
+        },
+        {
+            "id": "low-b",
+            "title": "Only low B",
+            "severity": "low",
+            "status": "open",
+            "created_at": "2026-09-21T02:00:00.000Z",
+        },
+    ]
+
+    class FakeClient:
+        def __init__(self):
+            self.calls = 0
+
+        def get_security_alerts(self, **kwargs):
+            self.calls += 1
+            assert kwargs["max_alerts"] == 50
+            return mixed if self.calls == 1 else only_low
+
+    fake = FakeClient()
+    monkeypatch.setattr(
+        "src.ai_controller.web.routes_elastic.client_for_id",
+        lambda _cluster_id=None: fake,
+    )
+
+    preferred = client.get(f"/api/elastic/recent-alerts?cluster_id={cluster_id}&limit=10")
+    assert preferred.status_code == 200, preferred.text
+    preferred_body = preferred.json()
+    assert [a["id"] for a in preferred_body["alerts"]] == ["med-1", "crit-1"]
+    assert all(a["severity"] != "low" for a in preferred_body["alerts"])
+
+    fallback = client.get(f"/api/elastic/recent-alerts?cluster_id={cluster_id}&limit=10")
+    assert fallback.status_code == 200, fallback.text
+    fallback_body = fallback.json()
+    assert [a["id"] for a in fallback_body["alerts"]] == ["low-a", "low-b"]
 
 
 def test_recent_alerts_without_cluster_is_empty(tmp_path, monkeypatch):
