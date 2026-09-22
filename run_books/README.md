@@ -21,7 +21,8 @@ run_books/
 │   │   └── ioc_enrichment.md
 │   ├── cases/               # Case-specific triage runbooks
 │   │   ├── suspicious_login_triage.md
-│   │   └── malware_initial_triage.md
+│   │   ├── malware_initial_triage.md
+│   │   └── widget_abuse_triage.md
 │   ├── remediation/         # Remediation workflows
 │   │   └── close_false_positive.md
 │   └── guidelines.md
@@ -37,6 +38,7 @@ run_books/
   - `enrichment/ioc_enrichment.md` - IOC enrichment
   - `cases/suspicious_login_triage.md` - Suspicious login triage
   - `cases/malware_initial_triage.md` - Malware triage
+  - `cases/widget_abuse_triage.md` - Widget Abuse triage
   - `remediation/close_false_positive.md` - False positive closure
 
 ## Agent Execution Model

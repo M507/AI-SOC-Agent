@@ -135,6 +135,7 @@ def build_create_runbook_prompt(request: ApprovalRequest) -> Dict[str, Any]:
         example_paths = [
             "soc1/cases/suspicious_login_triage",
             "soc1/cases/malware_initial_triage",
+            "soc1/cases/widget_abuse_triage",
         ]
     primary_example = example_paths[0]
 

@@ -530,3 +530,83 @@ def test_ignore_archives_when_github_close_fails(tmp_path, monkeypatch):
     assert ignored.archived is True
     assert ignored.execution_result["github"]["success"] is False
     assert "GitHub 502" in (ignored.error or "")
+
+
+def test_approve_close_alert_uses_kibana_detection_engine(tmp_path, monkeypatch):
+    """Requests-tab approve must close via Kibana signals/status, not verdict-only."""
+    from types import SimpleNamespace
+
+    from src.integrations.siem.elastic.elastic_client import ElasticSIEMClient
+
+    calls = []
+
+    def fake_request(**kwargs):
+        url = kwargs["url"]
+        body = kwargs.get("json")
+        calls.append({"url": url, "json": body, "method": kwargs["method"]})
+        if url.endswith("/api/detection_engine/signals/status"):
+            return SimpleNamespace(
+                status_code=200,
+                text="",
+                reason="OK",
+                json=lambda: {"updated": 1, "total": 1, "failures": []},
+            )
+        raise AssertionError(f"unexpected {kwargs['method']} {url}")
+
+    monkeypatch.setattr("requests.request", fake_request)
+    siem = ElasticSIEMClient.from_settings(
+        base_url="https://es.example:9200",
+        kibana_url="https://kibana.example:5601",
+        api_key="test-key",
+        verify_ssl=False,
+    )
+    monkeypatch.setattr(
+        siem,
+        "get_security_alert_by_id",
+        lambda alert_id, include_detections=True: {
+            "id": alert_id,
+            "title": "Suspicious DNS Query",
+            "status": "open",
+            "severity": "medium",
+            "related_entities": ["host:workstation-1"],
+            "events": [],
+            "comments": [],
+        },
+    )
+    monkeypatch.setattr(
+        siem,
+        "update_alert_verdict",
+        lambda alert_id, verdict, comment=None: {
+            "success": True,
+            "alert_id": alert_id,
+            "verdict": verdict,
+            "comment": comment,
+            "alert": {"id": alert_id, "status": "closed", "verdict": verdict},
+        },
+    )
+    monkeypatch.setattr(
+        "src.ai_controller.approval_queue.service.resolve_clients",
+        lambda cluster_id=None: ClientBundle(cluster_id=cluster_id or "lab", siem=siem),
+    )
+    monkeypatch.setattr(
+        "src.ai_controller.approval_queue.enrichment.resolve_clients",
+        lambda cluster_id=None: ClientBundle(cluster_id=cluster_id or "lab", siem=siem),
+    )
+
+    queue = ApprovalQueue(str(tmp_path))
+    created = queue.create(
+        "close_alert",
+        "Close scanner noise",
+        "Matches known scanner.",
+        payload={"alert_id": "alert-9", "reason": "false_positive", "comment": "scanner"},
+        cluster_id="lab",
+    )
+    done = queue.approve(created.id)
+    assert done.status is RequestStatus.EXECUTED
+    assert done.execution_result["success"] is True
+    assert done.execution_result["status"] == "closed"
+    status_calls = [c for c in calls if str(c["url"]).endswith("/api/detection_engine/signals/status")]
+    assert len(status_calls) == 1
+    assert status_calls[0]["json"]["signal_ids"] == ["alert-9"]
+    assert status_calls[0]["json"]["status"] == "closed"
+    assert status_calls[0]["json"]["reason"] == "false_positive"

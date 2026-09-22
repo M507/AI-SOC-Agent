@@ -1988,6 +1988,30 @@ class ElasticSIEMClient:
                     return str(candidate)
         return None
 
+    @staticmethod
+    def _normalize_close_verdict(reason: Optional[str]) -> str:
+        verdict = str(reason or "false_positive").strip()
+        lowered = verdict.lower().replace("-", "_")
+        if lowered in {"fp", "false_positive"}:
+            return "false_positive"
+        if lowered in {"btp", "benign_true_positive", "benign_positive"}:
+            return "benign_true_positive"
+        if lowered in {"tp", "true_positive"}:
+            return "true_positive"
+        if lowered in {"in_progress", "inprogress", "investigating"}:
+            return "in-progress"
+        return verdict or "false_positive"
+
+    @staticmethod
+    def _kibana_close_reason(verdict: str) -> str:
+        """Map internal verdicts onto Kibana Detection Engine close reasons."""
+        mapping = {
+            "false_positive": "false_positive",
+            "benign_true_positive": "benign_positive",
+            "true_positive": "true_positive",
+        }
+        return mapping.get(verdict, "other")
+
     def close_alert(
         self,
         alert_id: str,
@@ -1995,142 +2019,80 @@ class ElasticSIEMClient:
         comment: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
-        Set verdict for an alert in Elasticsearch (FP, TP, etc.).
-        
-        Updates signal.ai.verdict with the reason instead of closing the alert.
-        The reason should be one of: "false_positive", "benign_true_positive", "true_positive", etc.
+        Close a detection alert in Elastic Security and record the AI verdict.
+
+        Uses Kibana ``POST /api/detection_engine/signals/status`` so
+        ``kibana.alert.workflow_status`` becomes ``closed`` in the Alerts UI.
+        Also writes ``signal.ai.verdict`` / comment via ``update_alert_verdict``.
         """
+        alert_id = str(alert_id or "").strip()
+        if not alert_id:
+            raise IntegrationError("alert_id is required")
+
+        verdict = self._normalize_close_verdict(reason)
+        kibana_reason = self._kibana_close_reason(verdict)
+        kibana = self._cases_http()
+        payload = {
+            "signal_ids": [alert_id],
+            "status": "closed",
+            "reason": kibana_reason,
+        }
         try:
-            # First, find the alert to get its index
-            query = {
-                "query": {
-                    "term": {"_id": alert_id}
-                }
-            }
-            
-            # Search with fallback index patterns
-            indices_patterns = [
-                "alerts-*,.siem-signals-*,logs-endpoint.alerts-*",
-                "alerts-*",
-                "_all",  # Fallback to all indices if specific patterns fail
-            ]
-            response = self._search_with_fallback(indices_patterns, query)
-            
-            hits = response.get("hits", {}).get("hits", [])
-            if not hits:
-                raise IntegrationError(f"Alert {alert_id} not found")
-            
-            hit = hits[0]
-            index_name = hit.get("_index")
-            if not index_name:
-                raise IntegrationError(f"Could not determine index for alert {alert_id}")
-            
-            # Normalize reason to verdict format
-            verdict = reason or "false_positive"
-            # Map common reason values to verdict format
-            if verdict in ["FP", "fp", "false_positive"]:
-                verdict = "false_positive"
-            elif verdict in ["BTP", "btp", "benign_true_positive"]:
-                verdict = "benign_true_positive"
-            elif verdict in ["TP", "tp", "true_positive"]:
-                verdict = "true_positive"
-            elif verdict in ["in-progress", "in_progress", "inprogress", "investigating"]:
-                verdict = "in-progress"
-            
-            # Build update document using script for nested signal.ai object
-            script_update = {
-                "script": {
-                    "source": """
-                        if (ctx._source.signal == null) {
-                            ctx._source.signal = [:];
-                        }
-                        if (ctx._source.signal.ai == null) {
-                            ctx._source.signal.ai = [:];
-                        }
-                        ctx._source.signal.ai.verdict = params.verdict;
-                        ctx._source.signal.ai.verdict_at = params.timestamp;
-                    """,
-                    "lang": "painless",
-                    "params": {
-                        "verdict": verdict,
-                        "timestamp": datetime.utcnow().isoformat() + "Z"
-                    }
-                }
-            }
-            
-            # If comment is provided, also add it to signal.ai.comments.comment
-            if comment:
-                # Get existing comments first
-                source = hit.get("_source", {})
-                existing_comments = []
-                signal = source.get("signal", {})
-                if isinstance(signal, dict):
-                    signal_ai = signal.get("ai", {})
-                    if isinstance(signal_ai, dict):
-                        ai_comments = signal_ai.get("comments", {})
-                        if isinstance(ai_comments, dict):
-                            ai_comment = ai_comments.get("comment")
-                            if isinstance(ai_comment, list):
-                                existing_comments = list(ai_comment)
-                            elif ai_comment:
-                                existing_comments = [ai_comment]
-                
-                # Add the new comment
-                new_note = {
-                    "timestamp": datetime.utcnow().isoformat() + "Z",
-                    "comment": comment,
-                    "author": "sami-gpt",
-                }
-                existing_comments.append(new_note)
-                
-                # Update script to also set comments
-                script_update["script"]["source"] = """
-                    if (ctx._source.signal == null) {
-                        ctx._source.signal = [:];
-                    }
-                    if (ctx._source.signal.ai == null) {
-                        ctx._source.signal.ai = [:];
-                    }
-                    if (ctx._source.signal.ai.comments == null) {
-                        ctx._source.signal.ai.comments = [:];
-                    }
-                    ctx._source.signal.ai.verdict = params.verdict;
-                    ctx._source.signal.ai.verdict_at = params.timestamp;
-                    ctx._source.signal.ai.comments.comment = params.comments;
-                """
-                script_update["script"]["params"]["comments"] = existing_comments
-            
-            # Update the alert using Elasticsearch update API
-            update_response = self._http.post(
-                f"/{index_name}/_update/{alert_id}?refresh=wait_for",
-                json_data=script_update
+            status_response = kibana.post(
+                "/api/detection_engine/signals/status",
+                json_data=payload,
             )
-            
-            # Verify the update was successful
-            if update_response.get("result") not in ["updated", "noop"]:
-                logger.warning(f"Unexpected update result: {update_response.get('result')}")
-            
-            # Check for errors in the response
-            if "error" in update_response:
-                error_msg = update_response.get("error", {})
-                logger.error(f"Elasticsearch update error: {error_msg}")
-                raise IntegrationError(f"Failed to update alert: {error_msg}")
-            
-            # Get updated alert details
-            updated_alert = self.get_security_alert_by_id(alert_id, include_detections=False)
-            
-            return {
-                "success": True,
-                "alert_id": alert_id,
-                "verdict": verdict,
-                "comment": comment,
-                "alert": updated_alert,
-            }
-        except IntegrationError:
-            raise
-        except Exception as e:
-            logger.exception(f"Error setting verdict for alert {alert_id}: {e}")
-            raise IntegrationError(f"Failed to set verdict for alert: {e}") from e
+        except IntegrationError as exc:
+            hint = ""
+            status = str(exc)
+            if "401" in status or "403" in status or "Unauthorized" in status:
+                hint = (
+                    " The cluster API key was accepted by Elasticsearch but Kibana rejected "
+                    "the close-alert call. Use a Kibana API key with Security privileges, "
+                    "or set kibana_url on the cluster."
+                )
+            raise IntegrationError(f"Failed to close alert {alert_id}:{hint} {exc}") from exc
+
+        if isinstance(status_response, dict):
+            failures = status_response.get("failures") or []
+            updated = status_response.get("updated")
+            if failures:
+                raise IntegrationError(
+                    f"Failed to close alert {alert_id}: Kibana reported failures {failures}"
+                )
+            if updated == 0:
+                raise IntegrationError(
+                    f"Failed to close alert {alert_id}: Kibana updated 0 alerts "
+                    "(check the alert id / space)"
+                )
+
+        verdict_result: Optional[Dict[str, Any]] = None
+        try:
+            verdict_result = self.update_alert_verdict(alert_id, verdict, comment=comment)
+        except Exception as exc:
+            logger.warning(
+                "Alert %s was closed in Kibana but AI verdict update failed: %s",
+                alert_id,
+                exc,
+            )
+
+        updated_alert = (verdict_result or {}).get("alert") if isinstance(verdict_result, dict) else None
+        if updated_alert is None:
+            try:
+                updated_alert = self.get_security_alert_by_id(alert_id, include_detections=False)
+            except Exception as exc:
+                logger.debug("Could not reload alert %s after close: %s", alert_id, exc)
+                updated_alert = {}
+
+        return {
+            "success": True,
+            "alert_id": alert_id,
+            "status": "closed",
+            "reason": verdict,
+            "comment": comment,
+            "alert": updated_alert or {},
+            "kibana": status_response if isinstance(status_response, dict) else {"result": status_response},
+        }
 
     def update_alert_verdict(
         self,

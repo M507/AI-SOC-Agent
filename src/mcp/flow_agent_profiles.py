@@ -70,6 +70,7 @@ def load_agent_profiles_config() -> Dict[str, Any]:
                 "case_runbooks": [
                     "soc1/cases/suspicious_login_triage",
                     "soc1/cases/malware_initial_triage",
+                    "soc1/cases/widget_abuse_triage",
                 ],
                 "decision_authority": {
                     "close_false_positives": True,

@@ -15,7 +15,7 @@ Configured in `config/agent_profiles.json`:
 - `soc1/triage/initial_alert_triage`
 - `soc1/enrichment/ioc_enrichment`
 - `soc1/remediation/close_false_positive`
-- Case-specific: `soc1/cases/suspicious_login_triage`, `soc1/cases/malware_initial_triage`
+- Case-specific: `soc1/cases/suspicious_login_triage`, `soc1/cases/malware_initial_triage`, `soc1/cases/widget_abuse_triage`
 
 ### Guidelines
 
