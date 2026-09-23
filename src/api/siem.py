@@ -211,23 +211,45 @@ class SIEMClient(Protocol):
         limit: int = 500,
         hours_back: Optional[int] = None,
     ) -> QueryResult:
-        """
-        Execute a KQL (Kusto Query Language) or advanced query for deeper investigations.
-        
-        This method allows for complex queries that may include:
-        - Advanced filtering and aggregation
-        - Time-based analysis
-        - Cross-index searches
-        - Complex joins and correlations
-        
-        Args:
-            kql_query: KQL query string or advanced query DSL
-            limit: Maximum number of events to return (default: 500)
-            hours_back: Optional time window in hours to limit the search
-            
-        Returns:
-            QueryResult containing matching events
-        """
+        """Execute a Kibana Query Language (KQL) search."""
+        ...
+
+    def search_lucene_query(
+        self,
+        lucene_query: str,
+        limit: int = 500,
+        hours_back: Optional[int] = None,
+        index_pattern: Optional[str] = None,
+    ) -> QueryResult:
+        """Execute a Lucene query_string search."""
+        ...
+
+    def search_eql_query(
+        self,
+        eql_query: str,
+        limit: int = 100,
+        hours_back: Optional[int] = None,
+        index_pattern: Optional[str] = None,
+    ) -> QueryResult:
+        """Execute an Elastic Event Query Language (EQL) search."""
+        ...
+
+    def search_dsl_query(
+        self,
+        dsl_query: str,
+        limit: int = 500,
+        hours_back: Optional[int] = None,
+        index_pattern: Optional[str] = None,
+    ) -> QueryResult:
+        """Execute an Elasticsearch Query DSL (JSON) search."""
+        ...
+
+    def search_esql_query(
+        self,
+        esql_query: str,
+        limit: int = 500,
+    ) -> QueryResult:
+        """Execute an ES|QL query."""
         ...
 
     def get_siem_event_by_id(
@@ -302,6 +324,27 @@ class SIEMClient(Protocol):
         
         Returns:
             Dictionary with success status and alert details including the note.
+        """
+        ...
+
+    def get_alert_notes(
+        self,
+        alert_id: Optional[str] = None,
+        alert_ids: Optional[List[str]] = None,
+    ) -> Dict[str, Any]:
+        """
+        Fetch analyst notes attached to one or more security alerts.
+
+        On Elastic Security these come from the Kibana Notes API
+        (``GET /api/note?documentIds=...``), not from alert ``_source``.
+
+        Args:
+            alert_id: Single alert Elasticsearch ``_id`` / ``kibana.alert.uuid``.
+            alert_ids: Optional batch of alert ids (similar-alert review).
+
+        Returns:
+            Dictionary with ``notes``, ``note_texts``, ``total_count``, and
+            the resolved ``alert_ids``.
         """
         ...
 

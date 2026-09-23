@@ -1,6 +1,6 @@
 # SOC1: Suspicious Login Alert Triage Runbook
 
-Guide the initial triage of common suspicious login alerts (e.g., Impossible Travel, Login from Untrusted Location, Multiple Failed Logins) for SOC1 analysts. **SOC1 MUST ALWAYS BEGIN FROM SECURITY ALERTS (`${ALERT_ID}`), NEVER FROM EXISTING CASES.** This runbook focuses on gathering basic context to determine if escalation to SOC2 is needed, if the alert can be closed as a false positive, or if it should be left as an open case with comprehensive alert details if uncertain.
+Guide the initial triage of common suspicious login alerts (e.g., Impossible Travel, Login from Untrusted Location, Multiple Failed Logins) for SOC1 analysts. **SOC1 MUST ALWAYS BEGIN FROM SECURITY ALERTS (`${ALERT_ID}`), NEVER FROM EXISTING CASES.** This runbook focuses on gathering basic context to determine if escalation to SOC2 is needed, if the alert can be closed as a false positive, or leave a clear alert note + uncertain/TP verdict if not closing.
 
 ## Scope
 
@@ -37,7 +37,7 @@ This runbook explicitly **excludes**:
 ## Tools
 
 *   **Case Management Tools:** `review_case`, `add_case_comment`, `attach_observable_to_case`, `search_cases`, `add_case_task`
-*   **SIEM Tools:** `get_security_alert_by_id`, `lookup_entity`, `search_security_events`, `search_user_activity`, `get_ip_address_report`, `pivot_on_indicator`, `get_ioc_matches`, `get_alerts_by_entity`, `get_alerts_by_time_window`
+*   **SIEM Tools:** `get_security_alert_by_id`, `get_alert_notes`, `lookup_entity`, `search_security_events`, `search_kql_query`, `search_lucene_query`, `search_eql_query`, `search_dsl_query`, `search_esql_query`, `search_user_activity`, `get_ip_address_report`, `pivot_on_indicator`, `get_ioc_matches`, `get_alerts_by_entity`, `get_alerts_by_time_window`, `get_rule_detections`, `get_security_alerts`
 *   **Engineering Tools:** `list_fine_tuning_recommendations`, `create_fine_tuning_recommendation`, `add_comment_to_fine_tuning_recommendation`, `create_visibility_recommendation`
 
 ## Workflow Steps
@@ -83,10 +83,11 @@ This runbook explicitly **excludes**:
     *   Look for basic patterns: logins from other unusual IPs, successful logins after failures, frequency of logins from `${SOURCE_IP}` vs. others (`LOGIN_ACTIVITY_SUMMARY`).
     *   **Alert Correlation:** Use `get_alerts_by_entity` with `entity_value=${USER_ID}` and `entity_type="user"` to find related alerts for this user. Use `get_alerts_by_entity` with `entity_value=${SOURCE_IP}` and `entity_type="ip"` to find related alerts for this IP. Use `get_alerts_by_time_window` to find alerts occurring around the same time as the suspicious login.
 
-7.  **Check Related Cases:**
+7.  **Check Related Cases / Past Alerts:**
     *   Use `search_cases` with `text` parameter containing `${USER_ID}`, `${SOURCE_IP}`, and `${HOSTNAME}` (if available).
-    *   Filter by `status="open"` to find open cases.
-    *   Obtain `${RELATED_CASES}`.
+    *   Use `get_rule_detections` / `get_security_alerts` with status closed/acknowledged for the same rule type.
+    *   For strong same-type / same-key matches, open with `get_security_alert_by_id` (includes that alert’s Kibana notes) and/or batch `get_alert_notes`.
+    *   Obtain `${RELATED_CASES}` / historical note takeaways.
 
 8.  **Attach Observables to Case:**
     *   Attach the source IP as an observable: Use `attach_observable_to_case` with `case_id=${CASE_ID}`, `observable_type="ip"`, `observable_value=${SOURCE_IP}`, and description.
@@ -94,12 +95,12 @@ This runbook explicitly **excludes**:
 
 9.  **Create Case (If Needed) & Synthesize & Document:**
     *   **Only create a case if:** Assessment determined that case creation is needed (uncertain, suspicious, or requires tracking).
-    *   If creating case, use `create_case` with comprehensive description including ALL alert details from `${ALERT_COMPLETE_DETAILS}`.
+    *   Do **not** create a case. If not closing, use `add_alert_note` / `update_alert_verdict` with comprehensive alert details from `${ALERT_COMPLETE_DETAILS}`.
     *   Store `${CASE_ID}` for subsequent steps.
     *   Combine findings: User context (`USER_SIEM_SUMMARY`), Source IP context (`IP_REPORT`, `IP_SIEM_SUMMARY`, `IP_RELATED_EVENTS`, `IP_IOC_MATCH`), Hostname context (`HOSTNAME_SIEM_SUMMARY`), Login patterns (`LOGIN_ACTIVITY_SUMMARY`), Related cases (`${RELATED_CASES}`).
     *   Assess the severity and store in `${ASSESSMENT}` (FP, BTP, TP/Suspicious, Uncertain).
     *   **MANDATORY: Include ALL alert details from `${ALERT_COMPLETE_DETAILS}` in documentation.**
-    *   Prepare comment text: `COMMENT_TEXT = "SOC1 Suspicious Login Triage for Alert ${ALERT_ID} (User: ${USER_ID} from ${SOURCE_IP}, Host: ${HOSTNAME}): **Complete Alert Details:** [include ALL from `${ALERT_COMPLETE_DETAILS}` - alert ID, detection rule name, timestamps, host/user info, event data, etc.]. User SIEM Summary: ${USER_SIEM_SUMMARY}. Source IP Report: ${IP_REPORT}. Source IP SIEM: ${IP_SIEM_SUMMARY}. Source IP IOC Match: ${IP_IOC_MATCH}. Hostname SIEM: ${HOSTNAME_SIEM_SUMMARY}. Recent Login Pattern: ${LOGIN_ACTIVITY_SUMMARY}. Related Open Cases: ${RELATED_CASES}. Assessment: [FP/BTP/TP/Uncertain]. Recommendation: [Close as FP/Known Activity | Escalate to SOC2 for further investigation | Leave as open case if uncertain]"`
+    *   Prepare comment text: `COMMENT_TEXT = "SOC1 Suspicious Login Triage for Alert ${ALERT_ID} (User: ${USER_ID} from ${SOURCE_IP}, Host: ${HOSTNAME}): **Complete Alert Details:** [include ALL from `${ALERT_COMPLETE_DETAILS}` - alert ID, detection rule name, timestamps, host/user info, event data, etc.]. User SIEM Summary: ${USER_SIEM_SUMMARY}. Source IP Report: ${IP_REPORT}. Source IP SIEM: ${IP_SIEM_SUMMARY}. Source IP IOC Match: ${IP_IOC_MATCH}. Hostname SIEM: ${HOSTNAME_SIEM_SUMMARY}. Recent Login Pattern: ${LOGIN_ACTIVITY_SUMMARY}. Same-type historical alerts: ${RELATED_CASES}. Assessment: [FP/BTP/TP/Uncertain]. Recommendation: [Close as FP/Known Activity | Escalate to SOC2 for further investigation | Document on alert as uncertain (no case)]"`
 
     ```{warning}
     Account lockdown actions are SOC3 responsibility. If high confidence of compromise is identified, escalate to SOC3 with clear recommendation for account lockdown.
@@ -142,9 +143,9 @@ This runbook explicitly **excludes**:
 
 11. **Action Based on Assessment:**
     *   **If FP/BTP (High Confidence):**
-        *   Use `close_alert` with `alert_id=${ALERT_ID}`, `reason="false_positive"` or `reason="benign_true_positive"`, and detailed comment.
+        *   Record `update_alert_verdict` immediately, then use `close_alert` with `alert_id=${ALERT_ID}`, `reason="false_positive"` or `reason="benign_true_positive"`, and detailed comment. Close is queued for Requests — do not claim the alert is already closed.
         *   If case was created, use `update_case_status` with `case_id=${CASE_ID}` and `status="closed"`.
-        *   Set `${ACTION_TAKEN}` = "Closed as FP/BTP during SOC1 triage."
+        *   Set `${ACTION_TAKEN}` = "AI verdict recorded; close requested (pending analyst approval)."
         *   End runbook execution.
     *   **If TP/Suspicious OR If Uncertain:**
         *   **MUST create case if not already created, with ALL alert details from `${ALERT_COMPLETE_DETAILS}`.**
@@ -185,7 +186,7 @@ The suspicious login alert has been successfully triaged by SOC1:
 *   **MANDATORY: Results analyzed and recommendations created/updated when appropriate:**
     *   **For FP/BTP assessments:** Fine-tuning recommendation created or updated (if applicable) to track false positive patterns and improve detection rules.
     *   **For TP/Suspicious/Uncertain assessments:** Visibility recommendation created (if gaps identified) to improve detection capabilities and triage efficiency.
-*   Appropriate action (closure, escalation to SOC2, or leave as open case with comprehensive details) has been taken.
+*   Appropriate action (closure, escalation to SOC2, or document on the alert without creating a case) has been taken.
 *   **If escalated or left open: Task created for SOC2 with detailed investigation requirements and reference to alert details. If high confidence of compromise: Additional task created for SOC3 account security assessment.**
 *   All findings and alert details have been documented in the case or alert closure.
 
@@ -206,10 +207,10 @@ The suspicious login alert has been successfully triaged by SOC1:
 
 *   **MANDATORY: SOC1 MUST ALWAYS START FROM `${ALERT_ID}`** - never begin from existing cases.
 *   Focus on quick triage - do not perform deep behavioral analysis.
-*   **If uncertain about legitimacy: Leave as open case with ALL alert details documented** rather than closing as false positive.
+*   **If uncertain about legitimacy: Write a full alert note with ALL alert details** rather than closing as false positive. **Always** call `update_alert_verdict` with a final value (`uncertain` or `true_positive`) before ending — never leave `in-progress`.
 *   When in doubt, create case with comprehensive alert details and escalate to SOC2.
 *   Account lockdown requires SOC3 authorization and execution.
-*   Every open case MUST include comprehensive alert details (alert ID, event data, context, detection rule name, timestamps, host/user info) for SOC2 investigation.
+*   Every non-close alert note MUST include comprehensive alert details (alert ID, event data, context, detection rule name, timestamps, host/user info) for SOC2 investigation.
 *   **MANDATORY: Recommendation Analysis and Creation:** After making the assessment, the AI MUST analyze results and create recommendations when appropriate:
     *   **For FP/BTP assessments:** Check if a fine-tuning recommendation should be created or updated. If a similar recommendation exists, add a comment to it. If not, create a new fine-tuning recommendation with specific improvement suggestions.
     *   **For TP/Suspicious/Uncertain assessments:** Check for visibility gaps (missing user activity data, incomplete IP context, detection rule lacks context). If gaps are identified, create a visibility recommendation with specific improvement suggestions.

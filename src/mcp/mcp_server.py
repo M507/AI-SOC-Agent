@@ -41,12 +41,22 @@ from ..integrations.kb import FileSystemKBClient
 from ..integrations.eng.trello.trello_client import TrelloClient
 from ..integrations.eng.clickup.clickup_client import ClickUpClient
 from ..integrations.eng.github.github_client import GitHubClient
-from ..orchestrator import tools_case, tools_cti, tools_edr, tools_siem, tools_kb, tools_eng
+from ..orchestrator import tools_case, tools_cti, tools_edr, tools_siem, tools_kb, tools_eng, tools_netbox
 from .rules_engine import RulesEngine
 from .agent_profiles import AgentProfileManager
 from .runbook_manager import RunbookManager
 
 logger = get_logger(__name__)
+
+# Appended to irreversible MCP tools. The server queues these for the Requests view.
+_QUEUED_FOR_ANALYST = (
+    " Files a request in the SamiGPT Requests view and does not run until an analyst "
+    "approves it. Tell the analyst it is pending in Requests; do not claim the action already happened."
+)
+_INFORMATIONAL_FOR_ANALYST = (
+    " Files an informational note in the SamiGPT Requests view. Nothing is executed "
+    "and there is nothing to approve. Tell the analyst it is a suggestion only."
+)
 
 
 def configure_mcp_logging(log_dir: str = "logs") -> None:
@@ -144,10 +154,13 @@ class SamiGPTMCPServer:
         self,
         case_client: Optional[CaseManagementClient] = None,
         siem_client: Optional[SIEMClient] = None,
+        siem_clients: Optional[Dict[str, SIEMClient]] = None,
+        default_cluster_id: Optional[str] = None,
         edr_client: Optional[EDRClient] = None,
         cti_client: Optional[Any] = None,
         cti_clients: Optional[list] = None,
         kb_client: Optional[KBClient] = None,
+        netbox_client: Optional[Any] = None,
         eng_client: Optional[Union[TrelloClient, ClickUpClient, GitHubClient]] = None,
     ):
         """
@@ -155,13 +168,24 @@ class SamiGPTMCPServer:
 
         Args:
             case_client: Case management client.
-            siem_client: SIEM client.
+            siem_client: Default SIEM client (used when no cluster is selected).
+            siem_clients: Map of Elastic cluster id → SIEM client.
+            default_cluster_id: Cluster used when a tool call has no cluster id.
             edr_client: EDR client.
             cti_client: CTI (Cyber Threat Intelligence) client (single, for backward compatibility).
             cti_clients: List of CTI clients (for multi-platform support).
+            kb_client: Knowledge-base client.
+            netbox_client: NetBox DCIM/IPAM client.
+            eng_client: Engineering board client.
         """
         self.case_client = case_client
-        self.siem_client = siem_client
+        self._siem_clients: Dict[str, SIEMClient] = dict(siem_clients or {})
+        self._default_cluster_id = default_cluster_id
+        self._default_siem = siem_client
+        if self._default_siem is None and self._default_cluster_id:
+            self._default_siem = self._siem_clients.get(self._default_cluster_id)
+        if self._default_siem is None and self._siem_clients:
+            self._default_siem = next(iter(self._siem_clients.values()))
         self.edr_client = edr_client
         # Support both single client (backward compat) and multiple clients
         if cti_clients is not None:
@@ -172,11 +196,13 @@ class SamiGPTMCPServer:
             self.cti_client = cti_client
         # KB client defaults to filesystem-based client so it is always available
         self.kb_client: KBClient = kb_client or FileSystemKBClient()
+        self.netbox_client = netbox_client
         self.eng_client = eng_client
         self.rules_engine = RulesEngine(
             case_client=case_client,
-            siem_client=siem_client,
+            siem_client=None,
             edr_client=edr_client,
+            get_siem_client=lambda: self.siem_client,
         )
         self.agent_profile_manager = AgentProfileManager()
         self.runbook_manager = RunbookManager()
@@ -185,6 +211,75 @@ class SamiGPTMCPServer:
         self._initialized = False
         self._mcp_logger = logging.getLogger("sami.mcp")
         self._register_tools()
+
+    @property
+    def siem_client(self) -> Optional[SIEMClient]:
+        from .cluster_context import get_elastic_cluster_id
+
+        cluster_id = get_elastic_cluster_id()
+        if cluster_id and cluster_id in self._siem_clients:
+            return self._siem_clients[cluster_id]
+        if cluster_id and cluster_id not in self._siem_clients:
+            self._mcp_logger.warning(
+                "Unknown Elastic cluster id %s; using default SIEM client",
+                cluster_id,
+            )
+        return self._default_siem
+
+    def _tools_for_current_cluster(self) -> Dict[str, Any]:
+        """Return registered tools allowed by the bound cluster's MSV string."""
+        from ..core.elastic_clusters import skill_vector_for_cluster
+        from ..core.skill_vector import allowed_tool_names
+        from .cluster_context import get_elastic_cluster_id
+
+        allowed = set(allowed_tool_names(self.tools.keys(), skill_vector_for_cluster(get_elastic_cluster_id())))
+        return {name: definition for name, definition in self.tools.items() if name in allowed}
+
+    def replace_siem_clients(
+        self,
+        siem_clients: Dict[str, SIEMClient],
+        default_cluster_id: Optional[str] = None,
+        default_client: Optional[SIEMClient] = None,
+    ) -> None:
+        """Hot-swap cluster clients after Elastic settings change."""
+        self._siem_clients = dict(siem_clients or {})
+        self._default_cluster_id = default_cluster_id
+        self._default_siem = default_client
+        if self._default_siem is None and self._default_cluster_id:
+            self._default_siem = self._siem_clients.get(self._default_cluster_id)
+        if self._default_siem is None and self._siem_clients:
+            self._default_siem = next(iter(self._siem_clients.values()))
+        # Re-register SIEM tools if they were skipped at startup.
+        if self._default_siem or self._siem_clients:
+            if "search_security_events" not in getattr(self, "tools", {}):
+                self._register_siem_tools()
+
+    def health_snapshot(self) -> Dict[str, Any]:
+        """Return a JSON-serializable health view for the HTTP / UI health check."""
+        eng_provider = None
+        if self.eng_client:
+            eng_provider = self.eng_client.__class__.__name__
+        return {
+            "status": "healthy",
+            "server": self.SERVER_NAME,
+            "version": self.SERVER_VERSION,
+            "protocol_versions": list(self.SUPPORTED_PROTOCOL_VERSIONS),
+            "initialized": self._initialized,
+            "tools_count": len(self.tools),
+            "tools": sorted(self.tools.keys()),
+            "integrations": {
+                "case_management": self.case_client is not None,
+                "siem": self.siem_client is not None,
+                "edr": self.edr_client is not None,
+                "cti": bool(self.cti_clients),
+                "kb": self.kb_client is not None,
+                "netbox": self.netbox_client is not None,
+                "eng": self.eng_client is not None,
+            },
+            "elastic_clusters": sorted(self._siem_clients.keys()),
+            "elastic_default_cluster_id": self._default_cluster_id,
+            "eng_provider": eng_provider,
+        }
 
     def _register_tools(self) -> None:
         """Register all available tools."""
@@ -198,6 +293,8 @@ class SamiGPTMCPServer:
         self._register_edr_tools()
         # CTI tools
         self._register_cti_tools()
+        # NetBox DCIM/IPAM tools
+        self._register_netbox_tools()
         # Rules engine tools
         self._register_rules_tools()
         # Runbook and agent profile tools
@@ -207,6 +304,72 @@ class SamiGPTMCPServer:
         self._register_kb_tools()
         # Engineering tools (Trello)
         self._register_eng_tools()
+        self._register_lab_detection_tools()
+        self._register_approval_tools()
+
+    def _register_approval_tools(self) -> None:
+        """File analyst-approval requests instead of executing irreversible work."""
+        from ..ai_controller.approval_queue.catalog import list_action_specs
+
+        action_types = [spec.action_type for spec in list_action_specs()]
+        self._mcp_logger.info("Registering approval-queue tools")
+        self.tools["create_approval_request"] = {
+            "name": "create_approval_request",
+            "description": (
+                "File an action for a human analyst in the SamiGPT Requests view. "
+                "Use this for irreversible or user-gated work: closing alerts, isolating hosts, "
+                "and 'is this you?' identity checks. Do not claim those actions already happened — "
+                "they wait for approval. Fine-tune and visibility notes are informational only "
+                "(no approve button). For identity_verify, set question "
+                "and follow_ups.yes / follow_ups.no to the next action (acknowledge/close vs escalate "
+                "to an Elastic Security case). Do not open IRIS or TheHive cases for this flow."
+            ),
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "action_type": {
+                        "type": "string",
+                        "enum": action_types,
+                        "description": "The action the analyst should approve",
+                    },
+                    "title": {
+                        "type": "string",
+                        "description": "Short analyst-facing title",
+                    },
+                    "summary": {
+                        "type": "string",
+                        "description": "One-paragraph what/why, shown in the Requests list",
+                    },
+                    "rationale": {
+                        "type": "string",
+                        "description": "Investigation notes, evidence, and why this action is recommended",
+                    },
+                    "payload": {
+                        "type": "object",
+                        "description": (
+                            "All fields needed to execute later (alert_id, endpoint_id, username, "
+                            "reason, comment, title, description, ...). Store everything now."
+                        ),
+                    },
+                    "question": {
+                        "type": "string",
+                        "description": "Required for identity_verify: the yes/no question for the analyst",
+                    },
+                    "follow_ups": {
+                        "type": "object",
+                        "description": (
+                            "For identity_verify: {yes: {id, label, action_type, payload}, "
+                            "no: {...}}. Defaults to close-as-benign on yes and escalate on no."
+                        ),
+                    },
+                    "session_id": {
+                        "type": "string",
+                        "description": "Optional originating SamiGPT session id",
+                    },
+                },
+                "required": ["action_type", "title", "summary"],
+            },
+        }
 
     def _register_kb_tools(self) -> None:
         """
@@ -250,102 +413,29 @@ class SamiGPTMCPServer:
 
     def _register_eng_tools(self) -> None:
         """
-        Register engineering tools (Trello/ClickUp/GitHub).
-        
+        Register engineering tools (Trello/ClickUp/GitHub Issues).
+
         Available tools:
-        - create_fine_tuning_recommendation: Create a fine-tuning recommendation (supports Trello, ClickUp, and GitHub)
-        - create_visibility_recommendation: Create a visibility/engineering recommendation (supports Trello, ClickUp, and GitHub)
-        - list_fine_tuning_recommendations: List all fine-tuning recommendations (ClickUp only)
-        - list_visibility_recommendations: List all visibility/engineering recommendations (ClickUp only)
-        - add_comment_to_fine_tuning_recommendation: Add a comment to a fine-tuning recommendation task (ClickUp only)
-        - add_comment_to_visibility_recommendation: Add a comment to a visibility recommendation task (ClickUp only)
+        - list_fine_tuning_recommendations
+        - list_visibility_recommendations
+        - add_comment_to_fine_tuning_recommendation
+        - add_comment_to_visibility_recommendation
         """
         if not self.eng_client:
             self._mcp_logger.warning(
                 "Engineering tools not registered: No engineering client configured. "
-                "Configure Trello, ClickUp, or GitHub in config.json to enable engineering tools."
+                "Configure Trello, ClickUp, or GitHub Issues in config.json to enable engineering tools."
             )
             return
 
-        self._mcp_logger.info("Registering 6 engineering tools (Trello/ClickUp/GitHub)")
-
-        self.tools["create_fine_tuning_recommendation"] = {
-            "name": "create_fine_tuning_recommendation",
-            "description": "Create a fine-tuning recommendation on the fine-tuning board (supports Trello, ClickUp, and GitHub)",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "title": {
-                        "type": "string",
-                        "description": "Task/card title"
-                    },
-                    "description": {
-                        "type": "string",
-                        "description": "Task/card description"
-                    },
-                    "list_name": {
-                        "type": "string",
-                        "description": "Optional list name (Trello only, defaults to first list on board)"
-                    },
-                    "labels": {
-                        "type": "array",
-                        "items": {"type": "string"},
-                        "description": "Optional list of label names (Trello only)"
-                    },
-                    "status": {
-                        "type": "string",
-                        "description": "Optional status name (ClickUp only, defaults to first status in list)"
-                    },
-                    "tags": {
-                        "type": "array",
-                        "items": {"type": "string"},
-                        "description": "Optional list of tag names (ClickUp only)"
-                    }
-                },
-                "required": ["title", "description"]
-            }
-        }
-
-        self.tools["create_visibility_recommendation"] = {
-            "name": "create_visibility_recommendation",
-            "description": "Create a visibility/engineering recommendation on the engineering board (supports Trello, ClickUp, and GitHub)",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "title": {
-                        "type": "string",
-                        "description": "Task/card title"
-                    },
-                    "description": {
-                        "type": "string",
-                        "description": "Task/card description"
-                    },
-                    "list_name": {
-                        "type": "string",
-                        "description": "Optional list name (Trello only, defaults to first list on board)"
-                    },
-                    "labels": {
-                        "type": "array",
-                        "items": {"type": "string"},
-                        "description": "Optional list of label names (Trello only)"
-                    },
-                    "status": {
-                        "type": "string",
-                        "description": "Optional status name (ClickUp only, defaults to first status in list)"
-                    },
-                    "tags": {
-                        "type": "array",
-                        "items": {"type": "string"},
-                        "description": "Optional list of tag names (ClickUp only)"
-                    }
-                },
-                "required": ["title", "description"]
-            }
-        }
+        self._mcp_logger.info("Registering 4 engineering tools (Trello/ClickUp/GitHub Issues)")
 
         self.tools["list_fine_tuning_recommendations"] = {
             "name": "list_fine_tuning_recommendations",
-            "description": "List all fine-tuning recommendation tasks from the fine-tuning board (ClickUp only)",
+            "description": (
+                "List fine-tuning recommendation issues/tasks from the configured engineering "
+                "provider (GitHub Issues, ClickUp, or Trello)."
+            ),
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -385,7 +475,10 @@ class SamiGPTMCPServer:
 
         self.tools["list_visibility_recommendations"] = {
             "name": "list_visibility_recommendations",
-            "description": "List all visibility/engineering recommendation tasks from the engineering board (ClickUp only)",
+            "description": (
+                "List visibility-gap recommendation issues/tasks from the configured engineering "
+                "provider (GitHub Issues, ClickUp, or Trello)."
+            ),
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -425,13 +518,15 @@ class SamiGPTMCPServer:
 
         self.tools["add_comment_to_fine_tuning_recommendation"] = {
             "name": "add_comment_to_fine_tuning_recommendation",
-            "description": "Add a comment to a fine-tuning recommendation task (ClickUp only)",
+            "description": (
+                "Add a comment to a fine-tuning recommendation. For GitHub Issues, task_id is the issue number."
+            ),
             "inputSchema": {
                 "type": "object",
                 "properties": {
                     "task_id": {
                         "type": "string",
-                        "description": "ClickUp task ID"
+                        "description": "Issue number (GitHub) or task ID (ClickUp)"
                     },
                     "comment_text": {
                         "type": "string",
@@ -444,13 +539,15 @@ class SamiGPTMCPServer:
 
         self.tools["add_comment_to_visibility_recommendation"] = {
             "name": "add_comment_to_visibility_recommendation",
-            "description": "Add a comment to a visibility/engineering recommendation task (ClickUp only)",
+            "description": (
+                "Add a comment to a visibility recommendation. For GitHub Issues, task_id is the issue number."
+            ),
             "inputSchema": {
                 "type": "object",
                 "properties": {
                     "task_id": {
                         "type": "string",
-                        "description": "ClickUp task ID"
+                        "description": "Issue number (GitHub) or task ID (ClickUp)"
                     },
                     "comment_text": {
                         "type": "string",
@@ -459,6 +556,117 @@ class SamiGPTMCPServer:
                 },
                 "required": ["task_id", "comment_text"]
             }
+        }
+
+    def _register_lab_detection_tools(self) -> None:
+        """Local Home Lab rule search plus informational fine-tune / visibility notes."""
+        self._mcp_logger.info("Registering Home Lab detection-rule tools")
+        self.tools["search_lab_detection_rules"] = {
+            "name": "search_lab_detection_rules",
+            "description": (
+                "Search the local Home Lab detection-rule catalog by keywords. Returns compact hits "
+                "(name, tags, data sources, indexes, short query excerpt) — never the full catalog. "
+                "Use 1–3 specific searches (process, technique, data source). Default 8 hits, max 15. "
+                "Then call get_lab_detection_rule for at most one or two candidates. Do not loop every rule."
+            ),
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "Keywords: rule name, MITRE technique, process, data source, or index",
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Max hits (default 8, max 15)",
+                    },
+                },
+                "required": ["query"],
+            },
+        }
+        self.tools["get_lab_detection_rule"] = {
+            "name": "get_lab_detection_rule",
+            "description": (
+                "Load one Home Lab detection rule excerpt by rule_id or name. Includes query, tags, "
+                "false_positives, and exceptions. Omits investigation notes. Query is truncated. "
+                "Use after search_lab_detection_rules. Do not fetch more than two full rules per step."
+            ),
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "rule_id": {
+                        "type": "string",
+                        "description": "Home Lab or Elastic rule UUID",
+                    },
+                    "rule_name": {
+                        "type": "string",
+                        "description": "Exact or partial rule name",
+                    },
+                },
+            },
+        }
+        self.tools["create_fine_tuning_recommendation"] = {
+            "name": "create_fine_tuning_recommendation",
+            "description": (
+                "Pull the matching Home Lab detection rule and file a fine-tune suggestion "
+                "(query, exceptions, or false-positive notes). Pass rule_id or rule_name when known; "
+                "otherwise search_lab_detection_rules first."
+                + _INFORMATIONAL_FOR_ANALYST
+            ),
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "title": {
+                        "type": "string",
+                        "description": "Short title for the suggestion",
+                    },
+                    "description": {
+                        "type": "string",
+                        "description": "What to change in the rule and why",
+                    },
+                    "rule_id": {
+                        "type": "string",
+                        "description": "Home Lab / Elastic rule UUID when known",
+                    },
+                    "rule_name": {
+                        "type": "string",
+                        "description": "Detection rule name when known",
+                    },
+                    "alert_id": {
+                        "type": "string",
+                        "description": "Related alert id, if any",
+                    },
+                },
+                "required": ["title", "description"],
+            },
+        }
+        self.tools["create_visibility_recommendation"] = {
+            "name": "create_visibility_recommendation",
+            "description": (
+                "File an informational visibility-gap note. Search first with search_lab_detection_rules "
+                "(1–3 short keyword queries) and load at most one or two rules with get_lab_detection_rule. "
+                "Only file this if the catalog does not already cover the behavior. Do not dump the catalog "
+                "into context. The server re-checks coverage when filing."
+                + _INFORMATIONAL_FOR_ANALYST
+            ),
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "title": {
+                        "type": "string",
+                        "description": "Short title for the gap note",
+                    },
+                    "description": {
+                        "type": "string",
+                        "description": "What telemetry or detection appears missing and why",
+                    },
+                    "source": {
+                        "type": "string",
+                        "description": "Missing source, e.g. DNS, PowerShell, cloud audit",
+                    },
+                },
+                "required": ["title", "description"],
+            },
         }
 
     def _register_case_tools(self) -> None:
@@ -1042,17 +1250,21 @@ class SamiGPTMCPServer:
         - get_ip_address_report: Get IP reputation, geolocation, and related alerts
         - search_user_activity: Search security events related to a specific user
         - pivot_on_indicator: Search for all events related to an IOC (hash, IP, domain, etc.)
-        - search_kql_query: Execute KQL or advanced queries for deeper investigations
+        - search_kql_query: Execute Kibana Query Language (KQL) searches
+        - search_lucene_query: Execute Lucene query_string searches
+        - search_eql_query: Execute Elastic Event Query Language (EQL) hunts
+        - search_dsl_query: Execute Elasticsearch Query DSL (JSON)
+        - search_esql_query: Execute ES|QL queries
         
         See TOOLS.md for detailed documentation and usage examples.
         """
-        if not self.siem_client:
+        if not self.siem_client and not self._siem_clients:
             self._mcp_logger.warning(
                 "SIEM tools not registered: No SIEM client configured. "
                 "Configure Elastic or other SIEM in config.json to enable SIEM tools."
             )
             return
-        self._mcp_logger.info(f"Registering {26} SIEM tools")
+        self._mcp_logger.info("Registering SIEM tools")
 
         self.tools["search_security_events"] = {
             "name": "search_security_events",
@@ -1167,13 +1379,17 @@ class SamiGPTMCPServer:
 
         self.tools["search_kql_query"] = {
             "name": "search_kql_query",
-            "description": "Execute a KQL (Kusto Query Language) or advanced query for deeper investigations. Supports complex queries including advanced filtering, aggregations, time-based analysis, cross-index searches, and complex joins. Supports both KQL syntax and vendor-specific query DSL (e.g., Elasticsearch Query DSL).",
+            "description": (
+                "Execute a Kibana Query Language (KQL) search. "
+                "For Lucene, EQL, Query DSL, or ES|QL use search_lucene_query, "
+                "search_eql_query, search_dsl_query, or search_esql_query."
+            ),
             "inputSchema": {
                 "type": "object",
                 "properties": {
                     "kql_query": {
                         "type": "string",
-                        "description": "KQL query string or advanced query DSL (JSON for Elasticsearch)",
+                        "description": "KQL query string",
                     },
                     "limit": {
                         "type": "integer",
@@ -1189,10 +1405,123 @@ class SamiGPTMCPServer:
             },
         }
 
+        self.tools["search_lucene_query"] = {
+            "name": "search_lucene_query",
+            "description": (
+                "Search security indices with Lucene query_string syntax "
+                "(e.g. process.name:powershell AND host.name:workstation-*)."
+            ),
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "lucene_query": {
+                        "type": "string",
+                        "description": "Lucene query string",
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Maximum number of events to return",
+                        "default": 500,
+                    },
+                    "hours_back": {
+                        "type": "integer",
+                        "description": "Optional time window in hours",
+                    },
+                    "index_pattern": {
+                        "type": "string",
+                        "description": "Optional Elasticsearch index pattern override",
+                    },
+                },
+                "required": ["lucene_query"],
+            },
+        }
+
+        self.tools["search_eql_query"] = {
+            "name": "search_eql_query",
+            "description": (
+                "Run an Elastic Event Query Language (EQL) hunt for process/network "
+                "sequences (e.g. process where process.name == \"cmd.exe\")."
+            ),
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "eql_query": {
+                        "type": "string",
+                        "description": "EQL query",
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Maximum number of events to return",
+                        "default": 100,
+                    },
+                    "hours_back": {
+                        "type": "integer",
+                        "description": "Optional time window in hours",
+                    },
+                    "index_pattern": {
+                        "type": "string",
+                        "description": "Optional Elasticsearch index pattern override",
+                    },
+                },
+                "required": ["eql_query"],
+            },
+        }
+
+        self.tools["search_dsl_query"] = {
+            "name": "search_dsl_query",
+            "description": "Run a JSON Elasticsearch Query DSL body against security indices.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "dsl_query": {
+                        "type": "string",
+                        "description": "JSON Elasticsearch Query DSL object as a string",
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Maximum number of events to return",
+                        "default": 500,
+                    },
+                    "hours_back": {
+                        "type": "integer",
+                        "description": "Optional time window in hours",
+                    },
+                    "index_pattern": {
+                        "type": "string",
+                        "description": "Optional Elasticsearch index pattern override",
+                    },
+                },
+                "required": ["dsl_query"],
+            },
+        }
+
+        self.tools["search_esql_query"] = {
+            "name": "search_esql_query",
+            "description": (
+                "Run an Elastic ES|QL query (FROM ... | WHERE ... | KEEP ...). "
+                "Include LIMIT in the query or rely on the limit parameter."
+            ),
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "esql_query": {
+                        "type": "string",
+                        "description": "ES|QL query text",
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Appended as LIMIT when missing from the query",
+                        "default": 500,
+                    },
+                },
+                "required": ["esql_query"],
+            },
+        }
+
         # Alert summarization / grouping tool
         self.tools["get_recent_alerts"] = {
             "name": "get_recent_alerts",
-            "description": "Get recent SIEM alerts (last N hours) and smart-group similar alerts together for AI triage.",
+            "description": "Get recent SIEM alerts (last N hours) and smart-group similar alerts together for AI triage. Excludes already-investigated (verdicted) alerts. Filter by rule name/id, status, severity, or hostname.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -1208,7 +1537,7 @@ class SamiGPTMCPServer:
                     },
                     "status_filter": {
                         "type": "string",
-                        "description": "Filter by alert status (implementation-specific string filter)",
+                        "description": "Filter by workflow status: open, acknowledged (akn/ack), or closed. Default excludes closed.",
                     },
                     "severity": {
                         "type": "string",
@@ -1217,6 +1546,14 @@ class SamiGPTMCPServer:
                     "hostname": {
                         "type": "string",
                         "description": "Filter alerts by hostname (matches host.name field)",
+                    },
+                    "rule_name": {
+                        "type": "string",
+                        "description": "Filter alerts by detection rule name",
+                    },
+                    "rule_id": {
+                        "type": "string",
+                        "description": "Filter alerts by detection rule ID",
                     },
                 },
             },
@@ -1434,7 +1771,13 @@ class SamiGPTMCPServer:
         # Alert Management Tools
         self.tools["get_security_alerts"] = {
             "name": "get_security_alerts",
-            "description": "Get security alerts directly from the SIEM platform.",
+            "description": (
+                "Get security alerts from the SIEM. Filter by workflow status "
+                "(open, acknowledged/akn, closed), rule name/id, severity, or hostname. "
+                "Default excludes closed and already-investigated alerts. Use "
+                "status_filter=acknowledged|closed (or include_investigated=true) to "
+                "review historical ack/closed alerts by rule."
+            ),
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -1450,11 +1793,30 @@ class SamiGPTMCPServer:
                     },
                     "status_filter": {
                         "type": "string",
-                        "description": "Filter by status",
+                        "description": "Workflow status: open, acknowledged (akn/ack), or closed. Default excludes closed.",
                     },
                     "severity": {
                         "type": "string",
                         "description": "Filter by severity (low, medium, high, critical)",
+                    },
+                    "hostname": {
+                        "type": "string",
+                        "description": "Filter by host.name",
+                    },
+                    "rule_name": {
+                        "type": "string",
+                        "description": "Filter by detection rule name",
+                    },
+                    "rule_id": {
+                        "type": "string",
+                        "description": "Filter by detection rule ID",
+                    },
+                    "include_investigated": {
+                        "type": "boolean",
+                        "description": (
+                            "Include alerts that already have signal.ai.verdict. "
+                            "Defaults to true when status_filter is acknowledged or closed."
+                        ),
                     },
                 },
             },
@@ -1462,7 +1824,12 @@ class SamiGPTMCPServer:
 
         self.tools["get_security_alert_by_id"] = {
             "name": "get_security_alert_by_id",
-            "description": "Get detailed information about a specific security alert by its ID.",
+            "description": (
+                "Get detailed information about a specific security alert by its ID. "
+                "Also includes Security Solution / Rule Tuner analyst notes from Kibana "
+                "(notes / note_texts) — notes are not on alert _source. "
+                "For batch note fetch across similar past alerts, use get_alert_notes."
+            ),
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -1497,7 +1864,13 @@ class SamiGPTMCPServer:
 
         self.tools["close_alert"] = {
             "name": "close_alert",
-            "description": "Close a security alert in the SIEM platform. Use this when an alert has been determined to be a false positive or benign true positive during triage.",
+            "description": (
+                "Request closing a SIEM alert (false positive or benign true positive)."
+                + _QUEUED_FOR_ANALYST
+                + " Always include reason and a detailed comment so the analyst can decide."
+                + " Prefer also passing rationale with investigation notes (entities, why FP/BTP)."
+                + " Use update_alert_verdict immediately for your working assessment; that does not close the alert."
+            ),
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -1511,16 +1884,136 @@ class SamiGPTMCPServer:
                     },
                     "comment": {
                         "type": "string",
-                        "description": "Comment explaining why the alert is being closed",
+                        "description": (
+                            "Human-readable explanation for the analyst reviewing the Requests queue. "
+                            "Include rule name, host/user, and why this is FP or BTP."
+                        ),
+                    },
+                    "rationale": {
+                        "type": "string",
+                        "description": (
+                            "Investigation notes for the Requests view (entities, timeline, evidence). "
+                            "Shown to the analyst before they approve."
+                        ),
+                    },
+                    "summary": {
+                        "type": "string",
+                        "description": "Short analyst-facing summary of what would be closed and why",
                     },
                 },
-                "required": ["alert_id"],
+                "required": ["alert_id", "reason", "comment"],
+            },
+        }
+
+        self.tools["create_elastic_case"] = {
+            "name": "create_elastic_case",
+            "description": (
+                "Open a case in Elastic Security (Kibana Cases) on the bound cluster. "
+                "Does not use IRIS or TheHive. Loads the full SIEM alert (title, rule, "
+                "entities, triggering events, comments) into the case and attaches the alert. "
+                "Use after an 'is this you?' No answer, or when escalating a true positive "
+                "that should be tracked in Elastic."
+            ),
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "alert_id": {
+                        "type": "string",
+                        "description": "SIEM alert ID to include and attach",
+                    },
+                    "title": {
+                        "type": "string",
+                        "description": "Optional case title. Default is built from the alert and primary entity.",
+                    },
+                    "description": {
+                        "type": "string",
+                        "description": "Investigation notes. The full alert is always appended.",
+                    },
+                    "severity": {
+                        "type": "string",
+                        "description": "Case severity: low, medium, high, critical",
+                        "enum": ["low", "medium", "high", "critical"],
+                    },
+                    "tags": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Extra tags (sami-gpt and escalated are added automatically)",
+                    },
+                    "username": {
+                        "type": "string",
+                        "description": "User from an identity check, included in the case body",
+                    },
+                    "source_ip": {"type": "string"},
+                    "hostname": {"type": "string"},
+                    "timestamp": {"type": "string"},
+                    "activity": {"type": "string"},
+                },
+                "required": [],
+            },
+        }
+
+        self.tools["isolate_endpoint"] = {
+            "name": "isolate_endpoint",
+            "description": (
+                "Request isolating an endpoint from the network via Elastic Defend "
+                "(Kibana Endpoint Security) on the bound cluster. Pass agent.id when known, "
+                "or a hostname to look up."
+                + _QUEUED_FOR_ANALYST
+            ),
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "endpoint_id": {
+                        "type": "string",
+                        "description": "Elastic Agent / endpoint id (agent.id from the alert)",
+                    },
+                    "hostname": {
+                        "type": "string",
+                        "description": "Hostname if the agent id is unknown",
+                    },
+                    "reason": {
+                        "type": "string",
+                        "description": "Why isolation is needed",
+                    },
+                },
+                "required": ["endpoint_id"],
+            },
+        }
+
+        self.tools["release_endpoint_isolation"] = {
+            "name": "release_endpoint_isolation",
+            "description": (
+                "Request releasing an endpoint from Elastic Defend isolation on the bound cluster."
+                + _QUEUED_FOR_ANALYST
+            ),
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "endpoint_id": {
+                        "type": "string",
+                        "description": "Elastic Agent / endpoint id",
+                    },
+                    "hostname": {
+                        "type": "string",
+                        "description": "Hostname if the agent id is unknown",
+                    },
+                    "reason": {
+                        "type": "string",
+                        "description": "Why isolation should be released",
+                    },
+                },
+                "required": ["endpoint_id"],
             },
         }
 
         self.tools["update_alert_verdict"] = {
             "name": "update_alert_verdict",
-            "description": "Update the verdict for a security alert. Use this to set or update the verdict field (e.g., 'in-progress', 'false_positive', 'benign_true_positive', 'true_positive', 'uncertain'). This is the preferred method for setting verdicts as it clearly indicates the intent to update the verdict rather than close the alert.",
+            "description": (
+                "Record the AI's working verdict on an alert (in-progress, false_positive, "
+                "benign_true_positive, true_positive, uncertain). This is the investigator's "
+                "assessment, not a close of the alert, and does not wait for analyst approval. "
+                "Use close_alert (queued for the Requests view) when the alert itself should be closed."
+            ),
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -1578,6 +2071,36 @@ class SamiGPTMCPServer:
                     },
                 },
                 "required": ["alert_id", "note"],
+            },
+        }
+
+        self.tools["get_alert_notes"] = {
+            "name": "get_alert_notes",
+            "description": (
+                "Fetch Security Solution / Rule Tuner analyst notes for one or more alerts. "
+                "Notes are NOT on alert _source — always call this when reviewing similar or "
+                "past closed/ack alerts so prior analyst guidance is visible. "
+                "documentIds = alert Elasticsearch _id (kibana.alert.uuid / Rule Tuner alert.id). "
+                "Prefer alert_ids batch when reviewing multiple similar alerts."
+            ),
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "alert_id": {
+                        "type": "string",
+                        "description": (
+                            "Single alert Elasticsearch _id / kibana.alert.uuid to fetch notes for"
+                        ),
+                    },
+                    "alert_ids": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": (
+                            "Batch of alert ids (preferred when reviewing similar past alerts)"
+                        ),
+                    },
+                },
+                "required": [],
             },
         }
 
@@ -1700,17 +2223,25 @@ class SamiGPTMCPServer:
 
         self.tools["get_rule_detections"] = {
             "name": "get_rule_detections",
-            "description": "Retrieve historical detections generated by a specific security detection rule.",
+            "description": (
+                "Retrieve historical detections for a security detection rule "
+                "(including acknowledged and closed). Identify the rule with "
+                "rule_id and/or rule_name."
+            ),
             "inputSchema": {
                 "type": "object",
                 "properties": {
                     "rule_id": {
                         "type": "string",
-                        "description": "Unique ID of the rule",
+                        "description": "Unique ID of the rule (required if rule_name omitted)",
+                    },
+                    "rule_name": {
+                        "type": "string",
+                        "description": "Detection rule name (required if rule_id omitted)",
                     },
                     "alert_state": {
                         "type": "string",
-                        "description": "Filter by alert state",
+                        "description": "Filter by workflow status: open, acknowledged (akn/ack), or closed",
                     },
                     "hours_back": {
                         "type": "integer",
@@ -1723,7 +2254,6 @@ class SamiGPTMCPServer:
                         "default": 50,
                     },
                 },
-                "required": ["rule_id"],
             },
         }
 
@@ -1754,10 +2284,10 @@ class SamiGPTMCPServer:
         Available tools:
         - get_endpoint_summary: Get endpoint overview (hostname, platform, isolation status)
         - get_detection_details: Get detailed detection information
-        - isolate_endpoint: Isolate endpoint from network (CRITICAL ACTION - use with caution)
-        - release_endpoint_isolation: Release endpoint from isolation
-        - kill_process_on_endpoint: Terminate process on endpoint (DISRUPTIVE - use with caution)
-        - collect_forensic_artifacts: Initiate forensic artifact collection
+        - isolate_endpoint: Request isolation (queued for Requests)
+        - release_endpoint_isolation: Request release from isolation (queued)
+        - kill_process_on_endpoint: Request process kill (queued)
+        - collect_forensic_artifacts: Request forensic collection (queued)
         
         See TOOLS.md for detailed documentation and usage examples.
         """
@@ -1801,14 +2331,26 @@ class SamiGPTMCPServer:
 
         self.tools["isolate_endpoint"] = {
             "name": "isolate_endpoint",
-            "description": "Isolate an endpoint from the network to prevent further compromise or lateral movement. This is a critical response action.",
+            "description": (
+                "Request isolating an endpoint from the network via Elastic Defend "
+                "(Kibana Endpoint Security) on the bound cluster."
+                + _QUEUED_FOR_ANALYST
+            ),
             "inputSchema": {
                 "type": "object",
                 "properties": {
                     "endpoint_id": {
                         "type": "string",
-                        "description": "The endpoint ID to isolate",
-                    }
+                        "description": "Elastic Agent / endpoint id (agent.id from the alert)",
+                    },
+                    "hostname": {
+                        "type": "string",
+                        "description": "Hostname if the agent id is unknown",
+                    },
+                    "reason": {
+                        "type": "string",
+                        "description": "Why isolation is needed",
+                    },
                 },
                 "required": ["endpoint_id"],
             },
@@ -1816,7 +2358,10 @@ class SamiGPTMCPServer:
 
         self.tools["release_endpoint_isolation"] = {
             "name": "release_endpoint_isolation",
-            "description": "Release an endpoint from network isolation, restoring normal network connectivity.",
+            "description": (
+                "Request releasing an endpoint from network isolation."
+                + _QUEUED_FOR_ANALYST
+            ),
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -1831,7 +2376,10 @@ class SamiGPTMCPServer:
 
         self.tools["kill_process_on_endpoint"] = {
             "name": "kill_process_on_endpoint",
-            "description": "Terminate a specific process running on an endpoint by its process ID. Use with caution as this is a disruptive action.",
+            "description": (
+                "Request terminating a process on an endpoint by PID."
+                + _QUEUED_FOR_ANALYST
+            ),
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -1850,7 +2398,10 @@ class SamiGPTMCPServer:
 
         self.tools["collect_forensic_artifacts"] = {
             "name": "collect_forensic_artifacts",
-            "description": "Initiate collection of forensic artifacts from an endpoint, such as process lists, network connections, file system artifacts, etc.",
+            "description": (
+                "Request forensic artifact collection from an endpoint (processes, network, filesystem, etc.)."
+                + _QUEUED_FOR_ANALYST
+            ),
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -1908,6 +2459,110 @@ class SamiGPTMCPServer:
             },
         }
 
+    def _register_netbox_tools(self) -> None:
+        """
+        Register NetBox DCIM/IPAM enrichment tools.
+
+        Available tools:
+        - netbox_lookup_ip
+        - netbox_lookup_host
+        - netbox_lookup_prefix
+        - netbox_search
+        """
+        if not self.netbox_client:
+            self._mcp_logger.warning(
+                "NetBox tools not registered: No NetBox client configured. "
+                "Configure netbox in config.json to enable NetBox tools."
+            )
+            return
+        self._mcp_logger.info("Registering 4 NetBox tools")
+
+        self.tools["netbox_lookup_ip"] = {
+            "name": "netbox_lookup_ip",
+            "description": (
+                "Look up an IP address in NetBox IPAM. Returns assignment (device or VM), "
+                "DNS name, status, VRF/tenant, and description. Use during investigations to "
+                "identify what asset owns an IP seen in alerts or logs."
+            ),
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "ip": {
+                        "type": "string",
+                        "description": "IPv4/IPv6 address to look up (with or without prefix length)",
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Maximum results (default 25)",
+                    },
+                },
+                "required": ["ip"],
+            },
+        }
+        self.tools["netbox_lookup_host"] = {
+            "name": "netbox_lookup_host",
+            "description": (
+                "Search NetBox for devices and virtual machines by name/hostname. "
+                "Returns role, site, status, primary IP, and description."
+            ),
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "name": {
+                        "type": "string",
+                        "description": "Device or VM name / hostname to search",
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Maximum results (default 25)",
+                    },
+                },
+                "required": ["name"],
+            },
+        }
+        self.tools["netbox_lookup_prefix"] = {
+            "name": "netbox_lookup_prefix",
+            "description": (
+                "Look up NetBox IPAM prefixes. Pass a CIDR to match that prefix, or an IP "
+                "to find the containing prefix (site, role, description)."
+            ),
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "CIDR (e.g. 10.7.7.0/24) or IP whose containing prefix to find",
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Maximum results (default 25)",
+                    },
+                },
+                "required": ["query"],
+            },
+        }
+        self.tools["netbox_search"] = {
+            "name": "netbox_search",
+            "description": (
+                "Free-text search across NetBox devices, virtual machines, and IP addresses. "
+                "Use when you have a partial hostname, DNS name, or asset label."
+            ),
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "Free-text search query",
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Maximum results per object type (default 25)",
+                    },
+                },
+                "required": ["query"],
+            },
+        }
+
     def _register_rules_tools(self) -> None:
         """
         Register rules engine tools.
@@ -1957,7 +2612,7 @@ class SamiGPTMCPServer:
         Runbooks provide structured investigation procedures organized by SOC tier.
         See run_books/ directory for available runbooks.
         """
-        self._mcp_logger.info("Registering 3 runbook tools")
+        self._mcp_logger.info("Registering 5 runbook tools")
         self.tools["list_runbooks"] = {
             "name": "list_runbooks",
             "description": "List available investigation runbooks, optionally filtered by SOC tier or category.",
@@ -1971,7 +2626,7 @@ class SamiGPTMCPServer:
                     },
                     "category": {
                         "type": "string",
-                        "enum": ["triage", "investigation", "response", "forensics", "correlation", "enrichment", "remediation"],
+                        "enum": ["triage", "investigation", "response", "forensics", "correlation", "enrichment", "remediation", "cases"],
                         "description": "Filter by category"
                     }
                 }
@@ -1995,7 +2650,13 @@ class SamiGPTMCPServer:
         
         self.tools["execute_runbook"] = {
             "name": "execute_runbook",
-            "description": "Execute an investigation runbook. The runbook content will be provided as context for you to follow step-by-step. Use the appropriate MCP tools for each step as specified in the runbook.",
+            "description": (
+                "Execute an investigation runbook. The runbook content will be provided as context "
+                "for you to follow step-by-step. Use the appropriate MCP tools for each step. "
+                "Irreversible tools (close_alert, isolate, kill, forensics) file a "
+                "Requests-view approval and do not run until an analyst approves them. "
+                "Fine-tune, visibility, and runbook-gap notes are informational only."
+            ),
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -2019,6 +2680,101 @@ class SamiGPTMCPServer:
                 },
                 "required": ["runbook_name"]
             }
+        }
+
+        self.tools["create_runbook_recommendation"] = {
+            "name": "create_runbook_recommendation",
+            "description": (
+                "AFTER investigation is complete (final alert verdict set), if no case-specific "
+                "playbook under soc*/cases matched this alert type, file an informational Requests "
+                "note asking SOC engineering to author one. Include enough detail and examples "
+                "(rule name, entities, what steps helped, suggested path). "
+                "Never delay or block triage for this — file it last. "
+                "First call list_runbooks with category=cases when unsure."
+                + _INFORMATIONAL_FOR_ANALYST
+            ),
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "title": {
+                        "type": "string",
+                        "description": "Short title, e.g. 'Need case runbook: Impossible Travel'",
+                    },
+                    "description": {
+                        "type": "string",
+                        "description": (
+                            "Author brief: objective, when to use, key decision points, "
+                            "example alert/rule, entities, and sample investigation steps that worked"
+                        ),
+                    },
+                    "alert_type": {
+                        "type": "string",
+                        "description": "Alert / detection type name",
+                    },
+                    "rule_name": {
+                        "type": "string",
+                        "description": "Detection rule name",
+                    },
+                    "rule_id": {
+                        "type": "string",
+                        "description": "Detection rule ID",
+                    },
+                    "alert_id": {
+                        "type": "string",
+                        "description": "Related alert id that motivated this request",
+                    },
+                    "suggested_path": {
+                        "type": "string",
+                        "description": "Suggested path e.g. soc1/cases/impossible_travel_triage",
+                    },
+                    "soc_tier": {
+                        "type": "string",
+                        "description": "Target tier (default soc1)",
+                    },
+                    "investigation_summary": {
+                        "type": "string",
+                        "description": "What the agent did and concluded on this alert",
+                    },
+                    "example_entities": {
+                        "type": "string",
+                        "description": "Example IPs/hosts/users/hashes from the investigation",
+                    },
+                    "why_needed": {
+                        "type": "string",
+                        "description": "Why the generic triage runbook was not enough",
+                    },
+                },
+                "required": ["title", "description"],
+            },
+        }
+
+        self.tools["save_case_runbook"] = {
+            "name": "save_case_runbook",
+            "description": (
+                "Write a finished case-specific runbook markdown file under "
+                "run_books/<soc>/cases/<slug>.md (e.g. soc1/cases/impossible_travel_triage). "
+                "Use after drafting a playbook that follows runbook_guidelines and existing "
+                "soc1/cases examples. Path must be relative without .md. "
+                "Called from the Requests 'Create runbook' flow / Open WebUI authoring session."
+            ),
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "Relative path e.g. soc1/cases/impossible_travel_triage",
+                    },
+                    "content": {
+                        "type": "string",
+                        "description": "Full markdown body starting with # SOC1: ... Runbook",
+                    },
+                    "overwrite": {
+                        "type": "boolean",
+                        "description": "Replace an existing file (default false)",
+                    },
+                },
+                "required": ["path", "content"],
+            },
         }
 
     def _register_agent_profile_tools(self) -> None:
@@ -2325,16 +3081,26 @@ To be populated during investigation.
                 if is_triage_runbook:
                     execution_instructions += (
                         "IMPORTANT: Follow Step 2a (Quick Assessment) in the runbook FIRST. "
-                        "Only create a case using create_case tool if the quick assessment determines "
+                        "Only create a case using create_case if the quick assessment determines "
                         "that case creation is needed (uncertain, suspicious, or requires tracking). "
-                        "If the alert is clearly FP/BTP with high confidence, close the alert directly "
-                        "using close_alert without creating a case. "
+                        "Record your working assessment immediately with update_alert_verdict "
+                        "(no approval). If the alert should be closed as FP/BTP, call close_alert — "
+                        "that files a Requests-view approval and does not close until an analyst approves. "
+                        "Do not tell the analyst the alert is already closed."
                     )
                 else:
                     execution_instructions += "IMPORTANT: Create a case using create_case tool if one doesn't exist, following the case standard in standards/case_standard.md. "
         
         execution_instructions += (
             f"Follow the workflow steps in the runbook below. Use the appropriate MCP tools for each step. "
+            f"Irreversible actions (close_alert, isolate_endpoint, kill_process_on_endpoint, "
+            f"collect_forensic_artifacts) are queued for analyst "
+            f"approval in the SamiGPT Requests view — report them as pending, not completed. "
+            f"create_fine_tuning_recommendation, create_visibility_recommendation, and "
+            f"create_runbook_recommendation file informational notes only (no approve button). "
+            f"For visibility, search Home Lab rules first and only file if coverage is still missing. "
+            f"For runbook gaps, file create_runbook_recommendation only AFTER the final verdict "
+            f"if no soc*/cases playbook matched — never block triage for it. "
             f"Document your progress and findings in case comments as specified in the runbook. "
             f"Attach all observables (IOCs) to the case using attach_observable_to_case. "
             f"Follow the case standard format for all documentation."
@@ -2378,6 +3144,7 @@ To be populated during investigation.
             "description": profile.description,
             "capabilities": profile.capabilities,
             "runbooks": profile.runbooks,
+            "tools": profile.tools or [],
             "decision_authority": {
                 "close_false_positives": profile.decision_authority.close_false_positives,
                 "close_benign_true_positives": profile.decision_authority.close_benign_true_positives,
@@ -2611,6 +3378,25 @@ To be populated during investigation.
         
         method = request.get("method")
         params = request.get("params", {})
+        from .cluster_context import (
+            extract_cluster_id,
+            reset_elastic_cluster_id,
+            set_elastic_cluster_id,
+        )
+
+        cluster_token = set_elastic_cluster_id(extract_cluster_id(params))
+        try:
+            return await self._dispatch_request(request, method, params)
+        finally:
+            reset_elastic_cluster_id(cluster_token)
+
+    async def _dispatch_request(
+        self,
+        request: Dict[str, Any],
+        method: Optional[str],
+        params: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        """Handle an MCP request after cluster context is applied."""
         
         # Get id, but only if it's present and valid (not null)
         # Use 'id' in request to check presence, then get value
@@ -2717,9 +3503,10 @@ To be populated during investigation.
             )
         
         try:
+            visible = self._tools_for_current_cluster()
             # Convert tools dict to list
             tools_list = []
-            for tool_name, tool_def in self.tools.items():
+            for tool_name, tool_def in visible.items():
                 if isinstance(tool_def, dict):
                     tools_list.append(tool_def)
                 else:
@@ -2767,6 +3554,35 @@ To be populated during investigation.
                 request_id,
                 -32601,
                 f"Tool not found: {tool_name}",
+            )
+
+        if tool_name not in self._tools_for_current_cluster():
+            self._mcp_logger.warning(
+                "RESPONSE [id=%s] Skill %s disabled for this Elastic cluster",
+                request_id,
+                tool_name,
+            )
+            return self._create_error_response(
+                request_id,
+                -32601,
+                f"Skill '{tool_name}' is disabled for this Elastic cluster",
+            )
+
+        from ..ai_controller.approval_queue.mcp_bridge import enqueue_gated_tool
+        from .cluster_context import get_elastic_cluster_id
+
+        queued = enqueue_gated_tool(tool_name, tool_args, cluster_id=get_elastic_cluster_id())
+        if queued:
+            result_text = json.dumps(queued, indent=2)
+            self._mcp_logger.info(
+                "RESPONSE [id=%s] tool=%s queued for approval: %s",
+                request_id,
+                tool_name,
+                queued.get("request_id"),
+            )
+            return self._create_response(
+                request_id,
+                result={"content": [{"type": "text", "text": result_text}]},
             )
 
         # Execute the tool
@@ -2820,7 +3636,55 @@ To be populated during investigation.
         self._mcp_logger.debug(
             f"Executing tool: {tool_name} with args: {json.dumps(args)[:500]}"
         )
-        
+
+        if tool_name == "create_approval_request":
+            from ..ai_controller.approval_queue.mcp_bridge import create_request_from_tool_args
+            from .cluster_context import get_elastic_cluster_id
+
+            payload = args.get("payload")
+            if isinstance(payload, str):
+                try:
+                    args = dict(args)
+                    args["payload"] = json.loads(payload)
+                except json.JSONDecodeError:
+                    pass
+            result = create_request_from_tool_args(args, cluster_id=get_elastic_cluster_id())
+            self._mcp_logger.info(
+                "Tool %s filed approval request %s",
+                tool_name,
+                result.get("request_id"),
+            )
+            return result
+
+        if tool_name == "search_lab_detection_rules":
+            from ..ai_controller.approval_queue.lab_rules import search_rules
+
+            hits = search_rules(args.get("query") or "", limit=args.get("limit") or 8)
+            self._mcp_logger.info(
+                "Tool %s executed: %s compact hits", tool_name, len(hits)
+            )
+            return {
+                "success": True,
+                "count": len(hits),
+                "hits": hits,
+                "hint": (
+                    "Compact index only. Load 1–2 candidates with get_lab_detection_rule. "
+                    "Do not request the full catalog."
+                ),
+            }
+        if tool_name == "get_lab_detection_rule":
+            from ..ai_controller.approval_queue.lab_rules import get_rule
+
+            rule = get_rule(rule_id=args.get("rule_id"), rule_name=args.get("rule_name"))
+            if rule is None:
+                return {
+                    "success": False,
+                    "found": False,
+                    "message": "No matching Home Lab detection rule.",
+                }
+            self._mcp_logger.info("Tool %s executed: loaded %s", tool_name, rule.get("name"))
+            return {"success": True, **rule}
+
         # Case management tools
         if tool_name == "create_case" and self.case_client:
             result = tools_case.create_case(
@@ -3080,6 +3944,44 @@ To be populated during investigation.
             )
             self._mcp_logger.debug(f"Tool {tool_name} completed successfully")
             return result
+        elif tool_name == "search_lucene_query" and self.siem_client:
+            result = tools_siem.search_lucene_query(
+                lucene_query=args["lucene_query"],
+                limit=args.get("limit", 500),
+                hours_back=args.get("hours_back"),
+                index_pattern=args.get("index_pattern"),
+                client=self.siem_client,
+            )
+            self._mcp_logger.debug(f"Tool {tool_name} completed successfully")
+            return result
+        elif tool_name == "search_eql_query" and self.siem_client:
+            result = tools_siem.search_eql_query(
+                eql_query=args["eql_query"],
+                limit=args.get("limit", 100),
+                hours_back=args.get("hours_back"),
+                index_pattern=args.get("index_pattern"),
+                client=self.siem_client,
+            )
+            self._mcp_logger.debug(f"Tool {tool_name} completed successfully")
+            return result
+        elif tool_name == "search_dsl_query" and self.siem_client:
+            result = tools_siem.search_dsl_query(
+                dsl_query=args["dsl_query"],
+                limit=args.get("limit", 500),
+                hours_back=args.get("hours_back"),
+                index_pattern=args.get("index_pattern"),
+                client=self.siem_client,
+            )
+            self._mcp_logger.debug(f"Tool {tool_name} completed successfully")
+            return result
+        elif tool_name == "search_esql_query" and self.siem_client:
+            result = tools_siem.search_esql_query(
+                esql_query=args["esql_query"],
+                limit=args.get("limit", 500),
+                client=self.siem_client,
+            )
+            self._mcp_logger.debug(f"Tool {tool_name} completed successfully")
+            return result
         elif tool_name == "get_recent_alerts" and self.siem_client:
             result = tools_siem.get_recent_alerts(
                 hours_back=args.get("hours_back", 1),
@@ -3087,6 +3989,8 @@ To be populated during investigation.
                 status_filter=args.get("status_filter"),
                 severity=args.get("severity"),
                 hostname=args.get("hostname"),
+                rule_name=args.get("rule_name"),
+                rule_id=args.get("rule_id"),
                 client=self.siem_client,
             )
             self._mcp_logger.debug(
@@ -3099,6 +4003,10 @@ To be populated during investigation.
                 max_alerts=args.get("max_alerts", 10),
                 status_filter=args.get("status_filter"),
                 severity=args.get("severity"),
+                hostname=args.get("hostname"),
+                rule_name=args.get("rule_name"),
+                rule_id=args.get("rule_id"),
+                include_investigated=args.get("include_investigated"),
                 client=self.siem_client,
             )
             self._mcp_logger.debug(f"Tool {tool_name} completed successfully")
@@ -3127,6 +4035,23 @@ To be populated during investigation.
             )
             self._mcp_logger.debug(f"Tool {tool_name} completed successfully")
             return result
+        elif tool_name == "create_elastic_case" and self.siem_client:
+            identity = {
+                key: args[key]
+                for key in ("username", "source_ip", "hostname", "timestamp", "activity")
+                if args.get(key)
+            }
+            result = tools_siem.create_elastic_case(
+                title=args.get("title"),
+                description=args.get("description"),
+                alert_id=args.get("alert_id"),
+                severity=args.get("severity") or "high",
+                tags=args.get("tags"),
+                identity=identity or None,
+                client=self.siem_client,
+            )
+            self._mcp_logger.debug(f"Tool {tool_name} completed successfully")
+            return result
         elif tool_name == "update_alert_verdict" and self.siem_client:
             result = tools_siem.update_alert_verdict(
                 alert_id=args["alert_id"],
@@ -3148,6 +4073,14 @@ To be populated during investigation.
             result = tools_siem.add_alert_note(
                 alert_id=args["alert_id"],
                 note=args["note"],
+                client=self.siem_client,
+            )
+            self._mcp_logger.debug(f"Tool {tool_name} completed successfully")
+            return result
+        elif tool_name == "get_alert_notes" and self.siem_client:
+            result = tools_siem.get_alert_notes(
+                alert_id=args.get("alert_id"),
+                alert_ids=args.get("alert_ids"),
                 client=self.siem_client,
             )
             self._mcp_logger.debug(f"Tool {tool_name} completed successfully")
@@ -3198,7 +4131,8 @@ To be populated during investigation.
             return result
         elif tool_name == "get_rule_detections" and self.siem_client:
             result = tools_siem.get_rule_detections(
-                rule_id=args["rule_id"],
+                rule_id=args.get("rule_id"),
+                rule_name=args.get("rule_name"),
                 alert_state=args.get("alert_state"),
                 hours_back=args.get("hours_back", 24),
                 limit=args.get("limit", 50),
@@ -3349,6 +4283,48 @@ To be populated during investigation.
             self._mcp_logger.debug(f"Tool {tool_name} completed successfully")
             return result
 
+        # NetBox tools
+        elif tool_name == "netbox_lookup_ip" and self.netbox_client:
+            result = tools_netbox.netbox_lookup_ip(
+                ip=args["ip"],
+                client=self.netbox_client,
+                limit=int(args.get("limit") or 25),
+            )
+            self._mcp_logger.debug(
+                f"Tool {tool_name} completed: {result.get('count', 0)} IP record(s)"
+            )
+            return result
+        elif tool_name == "netbox_lookup_host" and self.netbox_client:
+            result = tools_netbox.netbox_lookup_host(
+                name=args["name"],
+                client=self.netbox_client,
+                limit=int(args.get("limit") or 25),
+            )
+            self._mcp_logger.debug(
+                f"Tool {tool_name} completed: {result.get('count', 0)} host(s)"
+            )
+            return result
+        elif tool_name == "netbox_lookup_prefix" and self.netbox_client:
+            result = tools_netbox.netbox_lookup_prefix(
+                query=args["query"],
+                client=self.netbox_client,
+                limit=int(args.get("limit") or 25),
+            )
+            self._mcp_logger.debug(
+                f"Tool {tool_name} completed: {result.get('count', 0)} prefix(es)"
+            )
+            return result
+        elif tool_name == "netbox_search" and self.netbox_client:
+            result = tools_netbox.netbox_search(
+                query=args["query"],
+                client=self.netbox_client,
+                limit=int(args.get("limit") or 25),
+            )
+            self._mcp_logger.debug(
+                f"Tool {tool_name} completed: {result.get('count', 0)} total hit(s)"
+            )
+            return result
+
         # Rules engine tools
         elif tool_name == "list_rules":
             result = {"rules": self.rules_engine.list_rules()}
@@ -3490,6 +4466,21 @@ To be populated during investigation.
             )
             self._mcp_logger.info(
                 f"Tool {tool_name} executed: runbook '{args['runbook_name']}' provided for execution"
+            )
+            return result
+        elif tool_name == "save_case_runbook":
+            from ..ai_controller.approval_queue.create_runbook import save_case_runbook
+
+            result = save_case_runbook(
+                path=args["path"],
+                content=args["content"],
+                overwrite=bool(args.get("overwrite", False)),
+            )
+            self._mcp_logger.info(
+                "Tool %s executed: path=%s success=%s",
+                tool_name,
+                args.get("path"),
+                result.get("success"),
             )
             return result
 
@@ -3657,16 +4648,22 @@ async def main() -> None:
     mcp_log_dir = config.logging.log_dir if config.logging else "logs"
     configure_mcp_logging(mcp_log_dir)
 
-    logger.info("Starting SamiGPT MCP Server...")
+    logger.info("Starting SamiGPT MCP Server (stdio)...")
     mcp_logger = logging.getLogger("sami.mcp")
     mcp_logger.info("=" * 80)
-    mcp_logger.info("MCP Server Starting")
+    mcp_logger.info("MCP Server Starting (stdio transport)")
     mcp_logger.info("=" * 80)
 
-    # Initialize clients
-    case_client = None
-    
-    # Log configuration status
+    from .factory import build_mcp_server
+
+    built = build_mcp_server(config)
+    server = built.server
+    case_client = server.case_client
+    siem_client = server.siem_client
+    edr_client = server.edr_client
+    cti_client = server.cti_client
+    eng_client = server.eng_client
+
     mcp_logger.info("Configuration Status:")
     mcp_logger.info(f"  IRIS configured: {config.iris is not None}")
     if config.iris:
@@ -3677,232 +4674,6 @@ async def main() -> None:
     mcp_logger.info(f"  EDR configured: {config.edr is not None}")
     mcp_logger.info(f"  CTI configured: {config.cti is not None}")
     
-    # Prioritize IRIS if both are configured
-    if config.iris:
-        try:
-            mcp_logger.info("Attempting to initialize IRIS case management client...")
-            case_client = IRISCaseManagementClient.from_config(config)
-            logger.info("IRIS case management client initialized")
-            mcp_logger.info("✓ IRIS case management client initialized successfully")
-        except Exception as e:
-            logger.error(f"Failed to initialize IRIS client: {e}")
-            mcp_logger.error(f"✗ Failed to initialize IRIS client: {e}", exc_info=True)
-    elif config.thehive:
-        try:
-            mcp_logger.info("Attempting to initialize TheHive case management client...")
-            case_client = TheHiveCaseManagementClient.from_config(config)
-            logger.info("TheHive case management client initialized")
-            mcp_logger.info("✓ TheHive case management client initialized successfully")
-        except Exception as e:
-            logger.error(f"Failed to initialize TheHive client: {e}")
-            mcp_logger.error(f"✗ Failed to initialize TheHive client: {e}", exc_info=True)
-    else:
-        mcp_logger.warning("No case management system configured (neither IRIS nor TheHive)")
-
-    # Initialize SIEM client
-    siem_client = None
-    if config.elastic:
-        try:
-            mcp_logger.info("Attempting to initialize Elastic SIEM client...")
-            siem_client = ElasticSIEMClient.from_config(config)
-            logger.info("Elastic SIEM client initialized")
-            mcp_logger.info("✓ Elastic SIEM client initialized successfully")
-            if config.elastic:
-                mcp_logger.info(f"    Elastic URL: {config.elastic.base_url}")
-                mcp_logger.info(f"    Elastic API key: {'*' * 20}...{config.elastic.api_key[-10:] if config.elastic.api_key and len(config.elastic.api_key) > 10 else '***'}")
-        except Exception as e:
-            logger.error(f"Failed to initialize Elastic SIEM client: {e}")
-            mcp_logger.error(f"✗ Failed to initialize Elastic SIEM client: {e}", exc_info=True)
-    
-    # Initialize EDR client
-    edr_client = None
-    if config.edr:
-        if config.edr.edr_type == "elastic_defend":
-            try:
-                mcp_logger.info("Attempting to initialize Elastic Defend EDR client...")
-                edr_client = ElasticDefendEDRClient.from_config(config)
-                logger.info("Elastic Defend EDR client initialized")
-                mcp_logger.info("✓ Elastic Defend EDR client initialized successfully")
-                if config.edr:
-                    mcp_logger.info(f"    EDR URL: {config.edr.base_url}")
-                    mcp_logger.info(f"    EDR Type: {config.edr.edr_type}")
-                    mcp_logger.info(f"    EDR API key: {'*' * 20}...{config.edr.api_key[-10:] if config.edr.api_key and len(config.edr.api_key) > 10 else '***'}")
-            except Exception as e:
-                logger.error(f"Failed to initialize Elastic Defend EDR client: {e}")
-                mcp_logger.error(f"✗ Failed to initialize Elastic Defend EDR client: {e}", exc_info=True)
-        else:
-            logger.info(
-                f"EDR configuration found ({config.edr.edr_type}), but integration not yet implemented"
-            )
-            mcp_logger.warning(
-                f"EDR type '{config.edr.edr_type}' is not yet implemented. Only 'elastic_defend' is supported."
-            )
-
-    # Initialize CTI client(s) - support both single and multiple platforms
-    cti_clients = []
-    cti_client = None  # For backward compatibility
-    
-    # Check for main CTI config
-    if config.cti:
-        if config.cti.cti_type == "local_tip":
-            try:
-                mcp_logger.info("Attempting to initialize Local TIP CTI client...")
-                local_tip_client = LocalTipCTIClient.from_config(config)
-                cti_clients.append(local_tip_client)
-                cti_client = local_tip_client  # For backward compatibility
-                logger.info("Local TIP CTI client initialized")
-                mcp_logger.info("✓ Local TIP CTI client initialized successfully")
-                mcp_logger.info(f"    CTI URL: {config.cti.base_url}")
-                mcp_logger.info(f"    CTI Type: {config.cti.cti_type}")
-            except Exception as e:
-                logger.error(f"Failed to initialize Local TIP CTI client: {e}")
-                mcp_logger.error(f"✗ Failed to initialize Local TIP CTI client: {e}", exc_info=True)
-        elif config.cti.cti_type == "opencti":
-            try:
-                mcp_logger.info("Attempting to initialize OpenCTI client...")
-                opencti_client = OpenCTIClient.from_config(config)
-                cti_clients.append(opencti_client)
-                cti_client = opencti_client  # For backward compatibility
-                logger.info("OpenCTI client initialized")
-                mcp_logger.info("✓ OpenCTI client initialized successfully")
-                mcp_logger.info(f"    CTI URL: {config.cti.base_url}")
-                mcp_logger.info(f"    CTI Type: {config.cti.cti_type}")
-            except Exception as e:
-                logger.error(f"Failed to initialize OpenCTI client: {e}")
-                mcp_logger.error(f"✗ Failed to initialize OpenCTI client: {e}", exc_info=True)
-        else:
-            logger.info(
-                f"CTI configuration found ({config.cti.cti_type}), but integration not yet implemented"
-            )
-            mcp_logger.warning(
-                f"CTI type '{config.cti.cti_type}' is not yet implemented. Supported types: 'local_tip', 'opencti'."
-            )
-    
-    # Check for additional CTI config (cti_opencti) to support both platforms
-    # This allows config.json to have both "cti" (local_tip) and "cti_opencti" (opencti)
-    config_dict = None
-    try:
-        from ..core.config_storage import load_config_from_file
-        import json
-        import os
-        config_file = os.getenv("SAMIGPT_CONFIG_FILE", "config.json")
-        if os.path.exists(config_file):
-            with open(config_file, "r") as f:
-                config_dict = json.load(f)
-    except Exception:
-        pass  # If we can't load config dict, that's okay
-    
-    if config_dict and "cti_opencti" in config_dict:
-        cti_opencti_config = config_dict["cti_opencti"]
-        if cti_opencti_config.get("cti_type") == "opencti":
-            try:
-                # Create a temporary config with OpenCTI settings
-                from ..core.config import CTIConfig, SamiConfig
-                opencti_config = CTIConfig(
-                    cti_type="opencti",
-                    base_url=cti_opencti_config.get("base_url"),
-                    api_key=cti_opencti_config.get("api_key"),
-                    timeout_seconds=cti_opencti_config.get("timeout_seconds", 30),
-                    verify_ssl=cti_opencti_config.get("verify_ssl", True),
-                )
-                temp_config = SamiConfig(cti=opencti_config)
-                
-                mcp_logger.info("Attempting to initialize additional OpenCTI client...")
-                opencti_client = OpenCTIClient.from_config(temp_config)
-                # Only add if we don't already have an OpenCTI client
-                if not any("OpenCTI" in c.__class__.__name__ for c in cti_clients):
-                    cti_clients.append(opencti_client)
-                    logger.info("Additional OpenCTI client initialized")
-                    mcp_logger.info("✓ Additional OpenCTI client initialized successfully")
-                    mcp_logger.info(f"    CTI URL: {opencti_config.base_url}")
-            except Exception as e:
-                logger.error(f"Failed to initialize additional OpenCTI client: {e}")
-                mcp_logger.error(f"✗ Failed to initialize additional OpenCTI client: {e}", exc_info=True)
-    
-    # Also check for cti_local_tip if main cti is opencti
-    if config_dict and "cti_local_tip" in config_dict:
-        cti_local_tip_config = config_dict["cti_local_tip"]
-        if cti_local_tip_config.get("cti_type") == "local_tip":
-            try:
-                from ..core.config import CTIConfig, SamiConfig
-                local_tip_config = CTIConfig(
-                    cti_type="local_tip",
-                    base_url=cti_local_tip_config.get("base_url"),
-                    api_key=cti_local_tip_config.get("api_key"),
-                    timeout_seconds=cti_local_tip_config.get("timeout_seconds", 30),
-                    verify_ssl=cti_local_tip_config.get("verify_ssl", False),
-                )
-                temp_config = SamiConfig(cti=local_tip_config)
-                
-                mcp_logger.info("Attempting to initialize additional Local TIP client...")
-                local_tip_client = LocalTipCTIClient.from_config(temp_config)
-                # Only add if we don't already have a Local TIP client
-                if not any("LocalTip" in c.__class__.__name__ for c in cti_clients):
-                    cti_clients.append(local_tip_client)
-                    logger.info("Additional Local TIP client initialized")
-                    mcp_logger.info("✓ Additional Local TIP client initialized successfully")
-                    mcp_logger.info(f"    CTI URL: {local_tip_config.base_url}")
-            except Exception as e:
-                logger.error(f"Failed to initialize additional Local TIP client: {e}")
-                mcp_logger.error(f"✗ Failed to initialize additional Local TIP client: {e}", exc_info=True)
-    
-    if len(cti_clients) > 1:
-        mcp_logger.info(f"✓ Multiple CTI platforms configured: {len(cti_clients)} platforms will be queried concurrently")
-
-    # Initialize Engineering client (Trello, ClickUp, or GitHub)
-    eng_client = None
-    if config.eng:
-        provider = config.eng.provider.lower() if config.eng.provider else "trello"
-        
-        if provider == "github" and config.eng.github:
-            try:
-                eng_client = GitHubClient.from_config(config)
-                mcp_logger.info("✓ GitHub (Engineering) client initialized")
-            except Exception as e:
-                mcp_logger.warning(f"Failed to initialize GitHub client: {e}")
-        elif provider == "clickup" and config.eng.clickup:
-            try:
-                eng_client = ClickUpClient.from_config(config)
-                mcp_logger.info("✓ ClickUp (Engineering) client initialized")
-            except Exception as e:
-                mcp_logger.warning(f"Failed to initialize ClickUp client: {e}")
-        elif provider == "trello" and config.eng.trello:
-            try:
-                eng_client = TrelloClient.from_config(config)
-                mcp_logger.info("✓ Trello (Engineering) client initialized")
-            except Exception as e:
-                mcp_logger.warning(f"Failed to initialize Trello client: {e}")
-        else:
-            # Try to auto-detect based on what's configured (priority: GitHub > ClickUp > Trello)
-            if config.eng.github:
-                try:
-                    eng_client = GitHubClient.from_config(config)
-                    mcp_logger.info("✓ GitHub (Engineering) client initialized (auto-detected)")
-                except Exception as e:
-                    mcp_logger.warning(f"Failed to initialize GitHub client: {e}")
-            elif config.eng.clickup:
-                try:
-                    eng_client = ClickUpClient.from_config(config)
-                    mcp_logger.info("✓ ClickUp (Engineering) client initialized (auto-detected)")
-                except Exception as e:
-                    mcp_logger.warning(f"Failed to initialize ClickUp client: {e}")
-            elif config.eng.trello:
-                try:
-                    eng_client = TrelloClient.from_config(config)
-                    mcp_logger.info("✓ Trello (Engineering) client initialized (auto-detected)")
-                except Exception as e:
-                    mcp_logger.warning(f"Failed to initialize Trello client: {e}")
-
-    # Create MCP server
-    server = SamiGPTMCPServer(
-        case_client=case_client,
-        siem_client=siem_client,
-        edr_client=edr_client,
-        cti_client=cti_client,  # For backward compatibility
-        cti_clients=cti_clients if len(cti_clients) > 0 else None,  # Pass list of clients
-        eng_client=eng_client,
-    )
-
     # Log tool registration summary
     total_tools = len(server.tools)
     logger.info(f"MCP server initialized with {total_tools} tools")
@@ -3929,7 +4700,7 @@ async def main() -> None:
         mcp_logger.warning(
             "⚠️  Only rules engine tools are available. "
             "Configure integrations in config.json to enable case management, SIEM, and EDR tools. "
-            "Use the web configuration UI: python -m src.web.config_server"
+            "Use python app.py and sign in to the HTTPS web UI to configure integrations."
         )
 
     # Run MCP server (stdio mode)

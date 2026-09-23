@@ -1,12 +1,21 @@
 // API client for AI Controller backend
 
 class APIClient {
+    async _fetch(url, options = {}) {
+        const response = await fetch(url, { credentials: 'same-origin', ...options });
+        if (response.status === 401 && !String(url).includes('/api/auth/')) {
+            window.location.href = '/login';
+            throw new Error('Authentication required');
+        }
+        return response;
+    }
+
     /**
      * Load UI configuration (e.g., debug mode).
      */
     async loadConfig() {
         try {
-            const response = await fetch('/api/config');
+            const response = await this._fetch('/api/config');
             if (!response.ok) {
                 throw new Error(`HTTP ${response.status}`);
             }
@@ -23,7 +32,7 @@ class APIClient {
      */
     async updateConfig(config) {
         try {
-            const response = await fetch('/api/config', {
+            const response = await this._fetch('/api/config', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json'
@@ -50,7 +59,7 @@ class APIClient {
             if (sessionType) {
                 url += `?session_type=${sessionType}`;
             }
-            const response = await fetch(url);
+            const response = await this._fetch(url);
             if (!response.ok) {
                 throw new Error(`HTTP ${response.status}`);
             }
@@ -68,7 +77,7 @@ class APIClient {
     async loadAutoruns(enabledOnly = false) {
         try {
             const url = `/api/autoruns?enabled_only=${enabledOnly}`;
-            const response = await fetch(url);
+            const response = await this._fetch(url);
             if (!response.ok) {
                 throw new Error(`HTTP ${response.status}`);
             }
@@ -85,7 +94,7 @@ class APIClient {
      */
     async getSession(sessionId) {
         try {
-            const response = await fetch(`/api/sessions/${sessionId}`);
+            const response = await this._fetch(`/api/sessions/${sessionId}`);
             if (!response.ok) {
                 throw new Error(`HTTP ${response.status}`);
             }
@@ -100,16 +109,17 @@ class APIClient {
     /**
      * Create a new session.
      */
-    async createSession(name, sessionType = 'manual') {
+    async createSession(name, sessionType = 'manual', clusterId = null) {
         try {
-            const response = await fetch('/api/sessions', {
+            const response = await this._fetch('/api/sessions', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json'
                 },
                 body: JSON.stringify({
                     name,
-                    session_type: sessionType
+                    session_type: sessionType,
+                    cluster_id: clusterId || null,
                 })
             });
             if (!response.ok) {
@@ -129,7 +139,7 @@ class APIClient {
      */
     async executeCommand(sessionId, command) {
         try {
-            const response = await fetch(`/api/sessions/${sessionId}/execute`, {
+            const response = await this._fetch(`/api/sessions/${sessionId}/execute`, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json'
@@ -153,7 +163,7 @@ class APIClient {
      */
     async stopSession(sessionId) {
         try {
-            const response = await fetch(`/api/sessions/${sessionId}/stop`, {
+            const response = await this._fetch(`/api/sessions/${sessionId}/stop`, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json'
@@ -176,7 +186,7 @@ class APIClient {
      */
     async deleteSession(sessionId) {
         try {
-            const response = await fetch(`/api/sessions/${sessionId}`, {
+            const response = await this._fetch(`/api/sessions/${sessionId}`, {
                 method: 'DELETE',
                 headers: {
                     'Content-Type': 'application/json'
@@ -199,7 +209,7 @@ class APIClient {
     /**
      * Create a new autorun.
      */
-    async createAutorun(name, command, intervalSeconds, conditionFunction) {
+    async createAutorun(name, command, intervalSeconds, conditionFunction, clusterId = null) {
         try {
             const body = {
                 name,
@@ -209,7 +219,10 @@ class APIClient {
             if (conditionFunction) {
                 body.condition_function = conditionFunction;
             }
-            const response = await fetch('/api/autoruns', {
+            if (clusterId) {
+                body.cluster_id = clusterId;
+            }
+            const response = await this._fetch('/api/autoruns', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json'
@@ -233,7 +246,7 @@ class APIClient {
      */
     async getAutorun(autorunId) {
         try {
-            const response = await fetch(`/api/autoruns/${autorunId}`);
+            const response = await this._fetch(`/api/autoruns/${autorunId}`);
             if (!response.ok) {
                 throw new Error(`HTTP ${response.status}`);
             }
@@ -250,7 +263,7 @@ class APIClient {
      */
     async updateAutorun(autorunId, updates) {
         try {
-            const response = await fetch(`/api/autoruns/${autorunId}`, {
+            const response = await this._fetch(`/api/autoruns/${autorunId}`, {
                 method: 'PUT',
                 headers: {
                     'Content-Type': 'application/json'
@@ -274,7 +287,7 @@ class APIClient {
      */
     async clearAutorunSession(autorunId) {
         try {
-            const response = await fetch(`/api/autoruns/${autorunId}/clear`, {
+            const response = await this._fetch(`/api/autoruns/${autorunId}/clear`, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json'
@@ -297,7 +310,7 @@ class APIClient {
      */
     async deleteAutorun(autorunId) {
         try {
-            const response = await fetch(`/api/autoruns/${autorunId}`, {
+            const response = await this._fetch(`/api/autoruns/${autorunId}`, {
                 method: 'DELETE',
                 headers: {
                     'Content-Type': 'application/json'
@@ -311,6 +324,418 @@ class APIClient {
             return data;
         } catch (error) {
             console.error('Error deleting autorun:', error);
+            return { success: false, error: error.message };
+        }
+    }
+
+    async request(url, options = {}) {
+        const response = await this._fetch(url, options);
+        if (!response.ok) {
+            const errorText = await response.text();
+            let message = `HTTP ${response.status}: ${errorText}`;
+            try {
+                const parsed = JSON.parse(errorText);
+                if (parsed && parsed.detail) {
+                    message = typeof parsed.detail === 'string'
+                        ? parsed.detail
+                        : JSON.stringify(parsed.detail);
+                }
+            } catch (_unused) {
+                // Keep the raw status + body when the error is not JSON.
+            }
+            throw new Error(message);
+        }
+        return response.json();
+    }
+
+    async getLLMProviders() {
+        try {
+            return await this.request('/api/llm/providers');
+        } catch (error) {
+            console.error('Error loading LLM providers:', error);
+            return { success: false, providers: [], error: error.message };
+        }
+    }
+
+    async getLLMSettings() {
+        try {
+            return await this.request('/api/llm/settings');
+        } catch (error) {
+            console.error('Error loading LLM settings:', error);
+            return { success: false, settings: {}, error: error.message };
+        }
+    }
+
+    async saveLLMSettings(settings) {
+        try {
+            return await this.request('/api/llm/settings', {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(settings),
+            });
+        } catch (error) {
+            console.error('Error saving LLM settings:', error);
+            return { success: false, error: error.message };
+        }
+    }
+
+    async testLLMProvider(payload) {
+        try {
+            return await this.request('/api/llm/test', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload || {}),
+            });
+        } catch (error) {
+            console.error('Error testing LLM provider:', error);
+            return { success: false, ok: false, message: error.message };
+        }
+    }
+
+    async listLLMModels(payload) {
+        try {
+            return await this.request('/api/llm/models', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload || {}),
+            });
+        } catch (error) {
+            console.error('Error listing LLM models:', error);
+            return { success: false, models: [], message: error.message };
+        }
+    }
+
+    async testLLMModel(payload) {
+        try {
+            return await this.request('/api/llm/test-model', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload || {}),
+            });
+        } catch (error) {
+            console.error('Error testing LLM model:', error);
+            return { success: false, ok: false, message: error.message };
+        }
+    }
+
+    async getOpenWebUIMCPStatus(verify = false) {
+        try {
+            return await this.request(`/api/llm/openwebui-mcp/status?verify=${verify ? 'true' : 'false'}`);
+        } catch (error) {
+            return { success: false, error: error.message, activity: [] };
+        }
+    }
+
+    async getMCPReadiness() {
+        try {
+            return await this.request('/api/llm/mcp-readiness');
+        } catch (error) {
+            return {
+                success: false,
+                ready: false,
+                severity: 'error',
+                title: 'Could not check MCP readiness',
+                message: error.message,
+                action_label: 'Open MCP Server',
+                action_section: 'mcp',
+            };
+        }
+    }
+
+    async connectOpenWebUIMCP(publicUrl) {
+        try {
+            return await this.request('/api/llm/openwebui-mcp/connect', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ public_url: publicUrl }),
+            });
+        } catch (error) {
+            return { success: false, error: error.message };
+        }
+    }
+
+    async disconnectOpenWebUIMCP() {
+        try {
+            return await this.request('/api/llm/openwebui-mcp/disconnect', { method: 'POST' });
+        } catch (error) {
+            return { success: false, error: error.message };
+        }
+    }
+
+    async clearOpenWebUIMCPActivity() {
+        try {
+            return await this.request('/api/llm/openwebui-mcp/activity', { method: 'DELETE' });
+        } catch (error) {
+            return { success: false, error: error.message };
+        }
+    }
+
+    async getMCPHealth() {
+        try {
+            return await this.request('/api/mcp/health');
+        } catch (error) {
+            return { success: false, running: false, status: 'unreachable', last_error: error.message };
+        }
+    }
+
+    async getMCPSettings() {
+        try {
+            return await this.request('/api/mcp/settings');
+        } catch (error) {
+            return { success: false, error: error.message };
+        }
+    }
+
+    async saveMCPSettings(settings) {
+        try {
+            return await this.request('/api/mcp/settings', {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(settings),
+            });
+        } catch (error) {
+            return { success: false, error: error.message };
+        }
+    }
+
+    async mcpAction(action) {
+        try {
+            return await this.request(`/api/mcp/${action}`, { method: 'POST' });
+        } catch (error) {
+            return { success: false, error: error.message };
+        }
+    }
+
+    async getNetBoxSettings() {
+        try {
+            return await this.request('/api/netbox/settings');
+        } catch (error) {
+            return { success: false, settings: {}, error: error.message };
+        }
+    }
+
+    async saveNetBoxSettings(payload) {
+        try {
+            return await this.request('/api/netbox/settings', {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload || {}),
+            });
+        } catch (error) {
+            return { success: false, error: error.message };
+        }
+    }
+
+    async testNetBoxSettings(payload) {
+        try {
+            return await this.request('/api/netbox/test', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload || {}),
+            });
+        } catch (error) {
+            return { success: false, ok: false, error: error.message };
+        }
+    }
+
+    async getElasticClusters() {
+        try {
+            return await this.request('/api/elastic/clusters');
+        } catch (error) {
+            return { success: false, clusters: [], error: error.message };
+        }
+    }
+
+    async getRecentAlerts(clusterId = null, limit = 10, hoursBack = 24) {
+        try {
+            const params = new URLSearchParams();
+            if (clusterId) params.set('cluster_id', clusterId);
+            params.set('limit', String(limit));
+            params.set('hours_back', String(hoursBack));
+            return await this.request(`/api/elastic/recent-alerts?${params.toString()}`);
+        } catch (error) {
+            return { success: false, alerts: [], error: error.message };
+        }
+    }
+
+    async createElasticCluster(payload) {
+        try {
+            return await this.request('/api/elastic/clusters', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload || {}),
+            });
+        } catch (error) {
+            return { success: false, error: error.message };
+        }
+    }
+
+    async deleteElasticCluster(clusterId) {
+        try {
+            return await this.request(`/api/elastic/clusters/${encodeURIComponent(clusterId)}`, {
+                method: 'DELETE',
+            });
+        } catch (error) {
+            return { success: false, error: error.message };
+        }
+    }
+
+    async setDefaultElasticCluster(clusterId) {
+        try {
+            return await this.request('/api/elastic/default', {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ cluster_id: clusterId }),
+            });
+        } catch (error) {
+            return { success: false, error: error.message };
+        }
+    }
+
+    async testElasticCluster(payload) {
+        try {
+            return await this.request('/api/elastic/test', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload || {}),
+            });
+        } catch (error) {
+            return { ok: false, success: false, error: error.message };
+        }
+    }
+
+    async setDefaultSkillVector(skillVector) {
+        try {
+            return await this.request('/api/elastic/default-skills', {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ skill_vector: skillVector }),
+            });
+        } catch (error) {
+            return { success: false, error: error.message };
+        }
+    }
+
+    async setClusterSkillVector(clusterId, skillVector) {
+        try {
+            return await this.request(`/api/elastic/clusters/${encodeURIComponent(clusterId)}/skills`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ skill_vector: skillVector }),
+            });
+        } catch (error) {
+            return { success: false, error: error.message };
+        }
+    }
+
+    async getIntegrations() {
+        try {
+            return await this.request('/api/integrations');
+        } catch (error) {
+            return { success: false, integrations: [], error: error.message };
+        }
+    }
+
+    async testIntegration(integrationId) {
+        try {
+            return await this.request(`/api/integrations/${encodeURIComponent(integrationId)}/test`, {
+                method: 'POST',
+            });
+        } catch (error) {
+            return { success: false, ok: false, level: 'error', error: error.message, message: error.message };
+        }
+    }
+
+    async getIntegrationSkills(integrationId) {
+        try {
+            return await this.request(`/api/integrations/${encodeURIComponent(integrationId)}/skills`);
+        } catch (error) {
+            return { success: false, skills: [], error: error.message };
+        }
+    }
+
+    async testIntegrationSkills(integrationId, skills = null) {
+        try {
+            return await this.request(`/api/integrations/${encodeURIComponent(integrationId)}/skills/test`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ skills }),
+            });
+        } catch (error) {
+            return { success: false, skills: [], error: error.message };
+        }
+    }
+
+    async listRequests(status = null, queue = 'all') {
+        try {
+            const params = new URLSearchParams();
+            if (status) {
+                params.set('status', status);
+            }
+            if (queue && queue !== 'all') {
+                params.set('queue', queue);
+            }
+            const query = params.toString() ? `?${params.toString()}` : '';
+            return await this.request(`/api/requests${query}`);
+        } catch (error) {
+            return {
+                success: false,
+                requests: [],
+                counts: { pending: 0, open: 0, archived: 0, all: 0, actionable: 0 },
+                tab_counts: { open: 0, archived: 0, all: 0 },
+                error: error.message,
+            };
+        }
+    }
+
+    async getRequestCatalog() {
+        try {
+            return await this.request('/api/requests/catalog');
+        } catch (error) {
+            return { success: false, actions: [], error: error.message };
+        }
+    }
+
+    async approveRequest(requestId, comment = '') {
+        return this._requestDecision(`/api/requests/${encodeURIComponent(requestId)}/approve`, { comment });
+    }
+
+    async denyRequest(requestId, comment = '') {
+        return this._requestDecision(`/api/requests/${encodeURIComponent(requestId)}/deny`, { comment });
+    }
+
+    async acknowledgeRequest(requestId, comment = '') {
+        return this._requestDecision(`/api/requests/${encodeURIComponent(requestId)}/acknowledge`, { comment });
+    }
+
+    async createRunbookFromRequest(requestId, comment = '') {
+        return this._requestDecision(`/api/requests/${encodeURIComponent(requestId)}/create-runbook`, { comment });
+    }
+
+    async ignoreRequest(requestId, comment = '') {
+        return this._requestDecision(`/api/requests/${encodeURIComponent(requestId)}/ignore`, { comment });
+    }
+
+    async answerRequest(requestId, answer, comment = '') {
+        return this._requestDecision(`/api/requests/${encodeURIComponent(requestId)}/answer`, { answer, comment });
+    }
+
+    async bulkRequests(action, requestIds, comment = '') {
+        return this._requestDecision('/api/requests/bulk', {
+            action,
+            request_ids: requestIds,
+            comment,
+        });
+    }
+
+    async _requestDecision(url, body) {
+        try {
+            return await this.request(url, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(body),
+            });
+        } catch (error) {
             return { success: false, error: error.message };
         }
     }

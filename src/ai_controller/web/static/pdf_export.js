@@ -2,6 +2,14 @@
 // Exports autorun chat history as PDF
 
 class PDFExporter {
+    notify(message, isError) {
+        if (window.toast) {
+            window.toast.show(message, { key: 'export', type: isError ? 'error' : 'success' });
+            return;
+        }
+        window.alert(message);
+    }
+
     /**
      * Export autorun chat as PDF.
      * @param {Object} autorun - The autorun object to export
@@ -28,7 +36,7 @@ class PDFExporter {
         // Check if html2pdf is available
         if (typeof html2pdf === 'undefined') {
             console.error('[PDFExporter] ERROR: html2pdf library not loaded');
-            alert('PDF export library not loaded. Please refresh the page and try again.');
+            this.notify('PDF export library not loaded. Refresh the page and try again.', true);
             return;
         }
         console.log('[PDFExporter] ✓ html2pdf library is available');
@@ -78,7 +86,7 @@ class PDFExporter {
             }
             if (!terminal) {
                 console.error('[PDFExporter] ERROR: Terminal element not found in DOM');
-                alert('Terminal content not found.');
+                this.notify('Terminal content not found.', true);
                 return;
             }
             console.log('[PDFExporter] ✓ Terminal element found:', {
@@ -103,7 +111,7 @@ class PDFExporter {
 
             if (!hasTerminalContent && !hasSessionData) {
                 console.error('[PDFExporter] ERROR: No content available to export');
-                alert('No content to export. The autorun chat is empty.');
+                this.notify('Nothing to export. This autorun has no chat history yet.', true);
                 return;
             }
             console.log('[PDFExporter] ✓ Content validation passed');
@@ -224,7 +232,7 @@ class PDFExporter {
                 if (pdfContainer.parentNode) {
                     document.body.removeChild(pdfContainer);
                 }
-                alert('Error: No content to export. Please check the console for details.');
+                this.notify('Nothing to export. Check the browser console for details.', true);
                 return;
             }
             console.log('[PDFExporter] ✓ Content validation passed');
@@ -323,7 +331,7 @@ class PDFExporter {
                     console.error('[PDFExporter] Fallback error message:', fallbackError.message);
                     console.error('[PDFExporter] Fallback error stack:', fallbackError.stack);
                     console.error('[PDFExporter] Full fallback error object:', fallbackError);
-                    alert('Error generating PDF. Please check the browser console for details. The content may be too large or there may be a rendering issue.');
+                    this.notify('Could not generate the PDF. The content may be too large.', true);
                     throw fallbackError;
                 }
             } finally {
@@ -338,6 +346,7 @@ class PDFExporter {
             }
 
             console.log(`[PDFExporter] ===== PDF Export Completed Successfully =====`);
+            this.notify('PDF exported.');
             console.log(`[PDFExporter] Autorun ID: ${autorun.id}`);
         } catch (error) {
             console.error('[PDFExporter] ===== PDF Export Failed =====');
@@ -345,7 +354,7 @@ class PDFExporter {
             console.error('[PDFExporter] Error message:', error.message);
             console.error('[PDFExporter] Error stack:', error.stack);
             console.error('[PDFExporter] Full error object:', error);
-            alert('Error exporting autorun to PDF. See console for details.');
+            this.notify('Could not export the autorun to PDF.', true);
         }
     }
 

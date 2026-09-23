@@ -1,0 +1,115 @@
+/* Toast notifications — transient status in the bottom-right corner */
+
+.toast-region {
+    position: fixed;
+    right: 20px;
+    bottom: 20px;
+    z-index: 2000;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    width: min(360px, calc(100vw - 32px));
+    pointer-events: none;
+}
+
+.toast {
+    pointer-events: auto;
+    position: relative;
+    overflow: hidden;
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    padding: 12px 14px 14px 14px;
+    background: #252526;
+    border: 1px solid #3e3e42;
+    border-left-width: 3px;
+    border-radius: 6px;
+    color: #d4d4d4;
+    font-size: 13px;
+    line-height: 1.45;
+}
+
+.toast.is-success {
+    border-left-color: #89d185;
+}
+
+.toast.is-error {
+    border-left-color: #f48771;
+}
+
+.toast.is-info {
+    border-left-color: #4a9eff;
+}
+
+.toast-message {
+    flex: 1;
+    min-width: 0;
+    margin: 0;
+}
+
+.toast-close {
+    flex: 0 0 auto;
+    margin: -4px -4px 0 0;
+    padding: 0 6px;
+    border: none;
+    background: transparent;
+    color: #858585;
+    font-size: 18px;
+    line-height: 1;
+    cursor: pointer;
+}
+
+.toast-close:hover,
+.toast-close:focus {
+    color: #d4d4d4;
+}
+
+.toast-progress {
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    height: 2px;
+    background: #3e3e42;
+    transform-origin: left center;
+    transform: scaleX(0);
+}
+
+.toast.is-success .toast-progress {
+    background: #89d185;
+}
+
+.toast.is-error .toast-progress {
+    background: #f48771;
+}
+
+.toast.is-info .toast-progress {
+    background: #4a9eff;
+}
+
+.toast-progress.is-running {
+    animation: toast-progress linear forwards;
+}
+
+.toast.is-leaving {
+    opacity: 0;
+    transform: translateY(6px);
+    transition: opacity 0.16s ease, transform 0.16s ease;
+}
+
+@keyframes toast-progress {
+    from { transform: scaleX(1); }
+    to { transform: scaleX(0); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .toast.is-leaving {
+        transition: none;
+        transform: none;
+    }
+
+    .toast-progress.is-running {
+        animation: none;
+        transform: scaleX(0);
+    }
+}

@@ -9,28 +9,118 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 from datetime import datetime, timedelta
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Request
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from ..agent_executor import AgentExecutor, ExecutionResult
+from ..autorun_conditions import build_condition_context, parse_condition_spec
 from ..session_manager import SessionManager, Session, SessionType, SessionStatus, AutorunConfig
 from ...core.logging import get_logger
+from .auth import AuthMiddleware, SecurityHeadersMiddleware, init_auth, websocket_user
+from .routes_auth import router as auth_router
+from .routes_llm import router as llm_router
+from .routes_mcp import router as mcp_router
+from .routes_elastic import router as elastic_router
+from .routes_integrations import router as integrations_router
+from .routes_netbox import router as netbox_router
+from .routes_requests import router as requests_router
 
 logger = get_logger("sami.ai_controller.web.server")
+
+
+class _ReloadCancelledErrorFilter(logging.Filter):
+    """Hide only the benign lifespan cancellation emitted during debug reload."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        message = record.getMessage().lower()
+        # Starlette serializes cancellation into the shutdown.failed message,
+        # so uvicorn logs it as text without exc_info.
+        serialized_cancel = (
+            "asyncio.exceptions.cancellederror" in message
+            and "starlette/routing.py" in message
+        )
+        if serialized_cancel:
+            return False
+        exc_info = record.exc_info
+        if not exc_info:
+            return True
+        exc_type = exc_info[0]
+        is_cancel = isinstance(exc_type, type) and issubclass(exc_type, asyncio.CancelledError)
+        is_lifespan = "lifespan" in message
+        return not (is_cancel and is_lifespan)
+
+
+def _install_reload_cancel_filter() -> None:
+    uvicorn_logger = logging.getLogger("uvicorn.error")
+    if not any(isinstance(item, _ReloadCancelledErrorFilter) for item in uvicorn_logger.filters):
+        uvicorn_logger.addFilter(_ReloadCancelledErrorFilter())
+
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    """
+    Run startup/shutdown cleanly when uvicorn reloads the worker.
+
+    WatchFiles cancels the worker while Starlette is blocked on the lifespan
+    receive queue. Any CancelledError that escapes is sent as
+    lifespan.shutdown.failed and printed as ERROR even though the next worker
+    starts cleanly. Swallow cancel, clear the pending cancel count (3.11+), and
+    finish shutdown without awaiting under cancellation.
+    """
+    await _web_startup()
+    cancelled = False
+    try:
+        yield
+    except asyncio.CancelledError:
+        cancelled = True
+        logger.info("Web server lifespan cancelled (reload or stop)")
+        task = asyncio.current_task()
+        if task is not None:
+            # Allow Starlette to send lifespan.shutdown.complete after we exit.
+            while task.cancelling():
+                task.uncancel()
+    finally:
+        if cancelled:
+            _web_shutdown_sync()
+        else:
+            try:
+                await _web_shutdown()
+            except asyncio.CancelledError:
+                _web_shutdown_sync()
+                task = asyncio.current_task()
+                if task is not None:
+                    while task.cancelling():
+                        task.uncancel()
+
 
 # Create FastAPI app
 app = FastAPI(
     title="SamiGPT AI Controller",
     description="Web interface for managing and executing agent commands",
     version="1.0.0",
+    docs_url=None,
+    redoc_url=None,
+    openapi_url=None,
+    lifespan=lifespan,
 )
+app.add_middleware(SecurityHeadersMiddleware)
+app.add_middleware(AuthMiddleware)
+app.include_router(auth_router)
+app.include_router(llm_router)
+app.include_router(mcp_router)
+app.include_router(elastic_router)
+app.include_router(integrations_router)
+app.include_router(netbox_router)
+app.include_router(requests_router)
 
 # Initialize components
 executor: Optional[AgentExecutor] = None
@@ -38,6 +128,7 @@ session_manager: Optional[SessionManager] = None
 
 # UI behavior flags (e.g., controlled by CLI flags like --debug)
 UI_DEBUG_MODE: bool = False
+MCP_AUTO_START: bool = True
 
 # WebSocket connections by session ID
 active_connections: Dict[str, List[WebSocket]] = {}
@@ -47,6 +138,7 @@ running_tasks: Dict[str, asyncio.Task] = {}
 
 # Autorun scheduler state
 autorun_scheduler_task: Optional[asyncio.Task] = None
+mcp_start_task: Optional[asyncio.Task] = None
 running_autoruns: set[str] = set()
 
 
@@ -59,18 +151,21 @@ class CommandRequest(BaseModel):
 
 class AutorunCreateRequest(BaseModel):
     """Request to create an autorun."""
-    name: str
-    command: str
-    interval_seconds: int
-    condition_function: Optional[str] = None  # Function/tool name to check before executing
+    name: str = Field(min_length=1)
+    command: str = Field(min_length=1)
+    interval_seconds: int = Field(ge=5)
+    condition_function: Optional[str] = None
+    cluster_id: Optional[str] = None
 
 
 class AutorunUpdateRequest(BaseModel):
     """Request to update an autorun."""
     enabled: Optional[bool] = None
-    interval_seconds: Optional[int] = None
-    name: Optional[str] = None
-    condition_function: Optional[str] = None  # Function/tool name to check before executing
+    interval_seconds: Optional[int] = Field(default=None, ge=5)
+    name: Optional[str] = Field(default=None, min_length=1)
+    command: Optional[str] = Field(default=None, min_length=1)
+    condition_function: Optional[str] = None
+    cluster_id: Optional[str] = None
 
 
 class UIConfigUpdate(BaseModel):
@@ -78,15 +173,94 @@ class UIConfigUpdate(BaseModel):
     ui_debug: Optional[bool] = None
 
 
-def initialize(config_storage_dir: Optional[str] = None, debug_ui: bool = False):
+def _session_payload(session: Session) -> Dict[str, Any]:
+    from ...core.elastic_clusters import cluster_summary
+
+    data = session.to_dict()
+    data["cluster"] = cluster_summary(session.cluster_id)
+    return data
+
+
+def _autorun_payload(autorun: AutorunConfig) -> Dict[str, Any]:
+    from ...core.elastic_clusters import cluster_summary
+
+    data = autorun.to_dict()
+    data["cluster"] = cluster_summary(autorun.cluster_id)
+    return data
+
+
+def _env_flag(name: str, default: bool = False) -> bool:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def create_app():
+    """
+    Build the serving app. Used by `python app.py --debug` so each reload
+    worker re-reads env and re-initializes after a file change.
+    """
+    debug_ui = _env_flag("SAMI_DEBUG_UI")
+    if debug_ui:
+        _install_reload_cancel_filter()
+    initialize(
+        config_storage_dir=os.environ.get("SAMI_STORAGE_DIR") or None,
+        debug_ui=debug_ui,
+        mcp_auto_start=_env_flag("SAMI_MCP_AUTO_START", default=True),
+        cookie_secure=_env_flag("SAMI_COOKIE_SECURE", default=True),
+    )
+    return app
+
+
+def uvicorn_reload_kwargs(root: Path) -> dict:
+    """Watch Python sources only. UI files are read from disk on each request."""
+    web_dir = root / "src" / "ai_controller" / "web"
+    return {
+        "reload": True,
+        "reload_delay": 1.0,
+        "reload_dirs": [str(root / "src")],
+        "reload_includes": ["*.py"],
+        "reload_excludes": [
+            ".*",
+            ".git",
+            "venv",
+            ".venv",
+            "data",
+            "logs",
+            "certs",
+            "__pycache__",
+            ".pytest_cache",
+            "htmlcov",
+            "*.pyc",
+            "*.log",
+            "*.js",
+            "*.css",
+            "*.html",
+            "*.map",
+            str(root / "src" / "ai_controller" / "logs"),
+            str(web_dir / "static"),
+            str(web_dir / "templates"),
+        ],
+    }
+
+
+def initialize(
+    config_storage_dir: Optional[str] = None,
+    debug_ui: bool = False,
+    mcp_auto_start: bool = True,
+    cookie_secure: bool = True,
+):
     """Initialize the web server components."""
-    global executor, session_manager, UI_DEBUG_MODE
+    global executor, session_manager, UI_DEBUG_MODE, MCP_AUTO_START
     
     try:
-        if config_storage_dir:
-            session_manager = SessionManager(storage_dir=config_storage_dir)
-        else:
-            session_manager = SessionManager()
+        init_auth(cookie_secure=cookie_secure)
+        storage_dir = config_storage_dir or "data/ai_controller"
+        from ..approval_queue import init_queue
+
+        init_queue(storage_dir)
+        session_manager = SessionManager(storage_dir=storage_dir)
         
         # Load config for executor
         from ...core.config_storage import load_config_from_file
@@ -94,10 +268,12 @@ def initialize(config_storage_dir: Optional[str] = None, debug_ui: bool = False)
         executor = AgentExecutor(config)
         
         UI_DEBUG_MODE = debug_ui
+        MCP_AUTO_START = mcp_auto_start
         logger.info(
-            "AI Controller web server initialized (ui_debug_mode=%s, storage_dir=%s)",
+            "AI Controller web server initialized (ui_debug_mode=%s, storage_dir=%s, mcp_auto_start=%s)",
             UI_DEBUG_MODE,
             config_storage_dir or "default",
+            MCP_AUTO_START,
         )
     except Exception as e:
         logger.exception("Error initializing web server components")
@@ -132,17 +308,26 @@ async def _run_autorun(autorun: AutorunConfig):
         if not session:
             session_name = f"Autorun: {fresh_autorun.name}"
             logger.debug("Creating new AUTORUN session for autorun %s (%s)", fresh_autorun.id, session_name)
-            session = session_manager.create_session(session_name, SessionType.AUTORUN)
+            session = session_manager.create_session(
+                session_name,
+                SessionType.AUTORUN,
+                cluster_id=fresh_autorun.cluster_id,
+            )
             session_manager.update_autorun(fresh_autorun.id, session_id=session.id)
             session_id = session.id
 
         # Check condition function if configured
         # Validate that condition_function is not None and not empty string
         condition_function = fresh_autorun.condition_function
+        condition_context: Optional[str] = None
         if condition_function and condition_function.strip():
             logger.info("Checking condition function '%s' for autorun %s (%s)", 
                        condition_function, fresh_autorun.id, fresh_autorun.name)
-            condition_result, condition_details = await _check_autorun_condition(condition_function, executor)
+            condition_result, condition_details = await _check_autorun_condition(
+                condition_function,
+                executor,
+                cluster_id=fresh_autorun.cluster_id,
+            )
             
             # Add condition check entry to session
             condition_command_str = f"[CONDITION CHECK] {condition_function}"
@@ -217,11 +402,17 @@ async def _run_autorun(autorun: AutorunConfig):
                 )
                 return
             else:
+                condition_context = build_condition_context(
+                    parse_condition_spec(condition_function),
+                    condition_details.get("output"),
+                )
                 logger.info(
-                    "Condition function '%s' returned content for autorun %s (%s). Proceeding with execution.",
+                    "Condition function '%s' returned content for autorun %s (%s). "
+                    "Proceeding with execution (context_chars=%s).",
                     condition_function,
                     fresh_autorun.id,
-                    fresh_autorun.name
+                    fresh_autorun.name,
+                    len(condition_context) if condition_context else 0,
                 )
         else:
             logger.warning(
@@ -248,7 +439,11 @@ async def _run_autorun(autorun: AutorunConfig):
             "command": command_str,
         })
 
-        result: Optional[ExecutionResult] = await executor.execute_command(command)
+        result: Optional[ExecutionResult] = await executor.execute_command(
+            command,
+            cluster_id=fresh_autorun.cluster_id or (session.cluster_id if session else None),
+            context=condition_context,
+        )
 
         # Update entry and session status
         status = SessionStatus.COMPLETED if result and result.success else SessionStatus.FAILED
@@ -301,7 +496,11 @@ async def _run_autorun(autorun: AutorunConfig):
         running_autoruns.discard(autorun.id)
 
 
-async def _check_autorun_condition(condition_function: str, executor: AgentExecutor) -> Tuple[bool, Dict[str, Any]]:
+async def _check_autorun_condition(
+    condition_function: str,
+    executor: AgentExecutor,
+    cluster_id: Optional[str] = None,
+) -> Tuple[bool, Dict[str, Any]]:
     """
     Check if an autorun condition function returns content.
     
@@ -311,6 +510,7 @@ async def _check_autorun_condition(condition_function: str, executor: AgentExecu
           False if it returns empty/None (should skip execution)
         - details: Dictionary with verbose information about the condition check
     """
+    spec = parse_condition_spec(condition_function)
     details = {
         "condition_function": condition_function,
         "command_executed": None,
@@ -328,33 +528,32 @@ async def _check_autorun_condition(condition_function: str, executor: AgentExecu
         # SPECIAL-CASE: get_recent_alerts should be executed directly at the Python level,
         #               not via the AI agent / cursor-agent. This avoids consuming AI
         #               tokens just to check if there is work to do.
-        if condition_function == "get_recent_alerts":
+        if spec.name == "get_recent_alerts":
             try:
                 # Import here to avoid heavy imports at module load
                 from ...core.config_storage import load_config_from_file
-                from src.integrations.siem.elastic.elastic_client import ElasticSIEMClient
+                from src.core.elastic_clusters import client_for_id
                 from src.orchestrator.tools_siem import get_recent_alerts
-            except Exception as e:
-                logger.exception("Failed to import dependencies for get_recent_alerts condition: %s", e)
-                details["evaluation"] = "✗ CONDITION ERROR: Failed to import get_recent_alerts dependencies"
-                details["error"] = str(e)
-                return False, details
 
-            try:
-                config = load_config_from_file()
-                if not getattr(config, "elastic", None):
+                siem_client = client_for_id(cluster_id)
+                if siem_client is None:
                     msg = "Elastic SIEM is not configured; cannot evaluate get_recent_alerts condition"
                     logger.warning(msg)
                     details["evaluation"] = f"✗ CONDITION ERROR: {msg}"
                     details["error"] = msg
                     return False, details
 
-                # Build SIEM client directly from config
-                siem_client = ElasticSIEMClient.from_config(config)
-                details["command_executed"] = "python:get_recent_alerts(hours_back=1, max_alerts=100)"
+                # Build SIEM client for the autorun's cluster (or the default)
+                max_alerts = spec.alert_limit()
+                details["command_executed"] = (
+                    f"python:get_recent_alerts(hours_back=1, max_alerts={max_alerts})"
+                )
 
-                logger.debug("Executing get_recent_alerts condition directly via SIEM client")
-                output = get_recent_alerts(hours_back=1, max_alerts=100, client=siem_client)
+                logger.debug(
+                    "Executing get_recent_alerts condition directly via SIEM client (max_alerts=%s)",
+                    max_alerts,
+                )
+                output = get_recent_alerts(hours_back=1, max_alerts=max_alerts, client=siem_client)
                 details["execution_success"] = True
                 details["output"] = output
                 details["output_type"] = type(output).__name__ if output is not None else "None"
@@ -364,7 +563,7 @@ async def _check_autorun_condition(condition_function: str, executor: AgentExecu
                 details["error"] = str(e)
                 return False, details
 
-        elif condition_function == "list_cases":
+        elif spec.name == "list_cases":
             try:
                 # Import here to avoid heavy imports at module load
                 from ...core.config_storage import load_config_from_file
@@ -381,12 +580,13 @@ async def _check_autorun_condition(condition_function: str, executor: AgentExecu
                 config = load_config_from_file()
                 # Prioritize IRIS if both are configured (same as mcp_server.py)
                 case_client = None
+                case_limit = spec.case_limit()
                 if getattr(config, "iris", None):
                     case_client = IRISCaseManagementClient.from_config(config)
-                    details["command_executed"] = "python:list_cases(status='open', limit=50) [IRIS]"
+                    details["command_executed"] = f"python:list_cases(status='open', limit={case_limit}) [IRIS]"
                 elif getattr(config, "thehive", None):
                     case_client = TheHiveCaseManagementClient.from_config(config)
-                    details["command_executed"] = "python:list_cases(status='open', limit=50) [TheHive]"
+                    details["command_executed"] = f"python:list_cases(status='open', limit={case_limit}) [TheHive]"
                 else:
                     msg = "Case management system (IRIS or TheHive) is not configured; cannot evaluate list_cases condition"
                     logger.warning(msg)
@@ -395,7 +595,7 @@ async def _check_autorun_condition(condition_function: str, executor: AgentExecu
                     return False, details
 
                 logger.debug("Executing list_cases condition directly via case management client")
-                output = list_cases(status="open", limit=50, client=case_client)
+                output = list_cases(status="open", limit=case_limit, client=case_client)
                 details["execution_success"] = True
                 details["output"] = output
                 details["output_type"] = type(output).__name__ if output is not None else "None"
@@ -653,22 +853,74 @@ async def autorun_scheduler_loop():
         await asyncio.sleep(5)
 
 
-@app.on_event("startup")
-async def on_startup():
-    """Start background tasks such as the autorun scheduler."""
-    global autorun_scheduler_task
+async def _web_startup():
+    """Start background tasks such as the autorun scheduler and MCP HTTP listener."""
+    global autorun_scheduler_task, mcp_start_task
     if autorun_scheduler_task is None:
         autorun_scheduler_task = asyncio.create_task(autorun_scheduler_loop())
         logger.info("Autorun scheduler task started")
 
+    if MCP_AUTO_START:
+        mcp_start_task = asyncio.create_task(_start_mcp_background())
 
-@app.on_event("shutdown")
-async def on_shutdown():
-    """Cleanly stop background tasks."""
-    global autorun_scheduler_task
-    if autorun_scheduler_task:
+
+async def _start_mcp_background() -> None:
+    """Start MCP off the lifespan path so a slow bind cannot cancel web startup."""
+    try:
+        from ...core.config_storage import get_section
+        from ...mcp.supervisor import get_supervisor
+
+        mcp_cfg = get_section(
+            "mcp",
+            {"enabled": True, "auto_start": True, "host": "127.0.0.1", "port": 8082},
+        )
+        if not (mcp_cfg.get("enabled", True) and mcp_cfg.get("auto_start", True)):
+            return
+        await asyncio.to_thread(
+            get_supervisor().start,
+            mcp_cfg.get("host", "127.0.0.1"),
+            int(mcp_cfg.get("port", 8082)),
+            bool(mcp_cfg.get("tls", True)),
+        )
+        logger.info("MCP HTTP server auto-started")
+    except asyncio.CancelledError:
+        raise
+    except Exception:
+        logger.exception("Failed to auto-start MCP HTTP server")
+
+
+def _web_shutdown_sync() -> None:
+    """Cancel background work and stop MCP without awaiting (safe under cancel)."""
+    global autorun_scheduler_task, mcp_start_task
+    if mcp_start_task and not mcp_start_task.done():
+        mcp_start_task.cancel()
+    mcp_start_task = None
+    if autorun_scheduler_task and not autorun_scheduler_task.done():
         autorun_scheduler_task.cancel()
-        autorun_scheduler_task = None
+    autorun_scheduler_task = None
+    try:
+        from ...mcp.supervisor import get_supervisor
+
+        get_supervisor().stop()
+    except Exception:
+        logger.warning("Error stopping MCP HTTP server during shutdown", exc_info=True)
+
+
+async def _web_shutdown():
+    """Cleanly stop background tasks."""
+    global autorun_scheduler_task, mcp_start_task
+    mcp_task = mcp_start_task
+    scheduler_task = autorun_scheduler_task
+    _web_shutdown_sync()
+    for task in (mcp_task, scheduler_task):
+        if task is None:
+            continue
+        try:
+            await asyncio.shield(task)
+        except asyncio.CancelledError:
+            pass
+        except Exception:
+            logger.debug("Background task ended with error during shutdown", exc_info=True)
 
 
 # Determine paths
@@ -699,6 +951,19 @@ async def broadcast_to_session(session_id: str, message: dict):
         # Remove disconnected connections
         for conn in disconnected:
             active_connections[session_id].remove(conn)
+
+
+@app.get("/login", response_class=HTMLResponse)
+async def login_page(request: Request):
+    """Serve the sign-in page. Authenticated users go straight to the UI."""
+    from .auth import current_user
+
+    if current_user(request):
+        return RedirectResponse(url="/", status_code=302)
+    html_path = TEMPLATES_DIR / "login.html"
+    if html_path.exists():
+        return HTMLResponse(content=html_path.read_text())
+    return HTMLResponse(content="<h1>Login</h1><p>login.html not found</p>", status_code=500)
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -760,7 +1025,7 @@ async def list_sessions(session_type: Optional[str] = None):
     )
     return JSONResponse(content={
         "success": True,
-        "sessions": [s.to_dict() for s in sessions]
+        "sessions": [_session_payload(s) for s in sessions]
     })
 
 
@@ -771,14 +1036,20 @@ async def create_session(request: Request):
         raise HTTPException(status_code=500, detail="Session manager not initialized")
     
     data = await request.json()
-    name = data.get("name", "New Session")
+    # Name is optional; blank/missing names get a random UUID in create_session.
+    name = data.get("name")
+    if isinstance(name, str):
+        name = name.strip() or None
+    else:
+        name = None
     session_type = SessionType(data.get("session_type", "manual"))
-    
-    session = session_manager.create_session(name, session_type)
-    
+    cluster_id = data.get("cluster_id") or None
+
+    session = session_manager.create_session(name, session_type, cluster_id=cluster_id)
+
     return JSONResponse(content={
         "success": True,
-        "session": session.to_dict()
+        "session": _session_payload(session)
     })
 
 
@@ -794,7 +1065,7 @@ async def get_session(session_id: str):
     
     return JSONResponse(content={
         "success": True,
-        "session": session.to_dict()
+        "session": _session_payload(session)
     })
 
 
@@ -898,116 +1169,111 @@ async def stop_session(session_id: str):
     return JSONResponse(content={"success": True, "status": "stopped"})
 
 
-@app.post("/api/sessions/{session_id}/execute")
-async def execute_command(session_id: str, command_request: CommandRequest):
-    """Execute a command in a session."""
+async def kickoff_session_command(session_id: str, command_text: str) -> Dict[str, Any]:
+    """Parse + start a session command in the background. Returns entry metadata."""
     if not executor or not session_manager:
         raise HTTPException(status_code=500, detail="Server not initialized")
-    
+
     session = session_manager.get_session(session_id)
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
-    
-    # Parse command
-    command = executor.parse_command(command_request.command)
-    
-    # Add entry to session
-    entry = session_manager.add_entry(session_id, command_request.command)
-    
-    # Broadcast that execution started
+
+    # Capture before the nested task: assigning to `session` in except
+    # blocks below would otherwise make it a local and break cluster_id lookup.
+    cluster_id = session.cluster_id
+    command = executor.parse_command(command_text)
+    entry = session_manager.add_entry(session_id, command_text)
+
     await broadcast_to_session(session_id, {
         "type": "execution_started",
         "entry_id": entry.id,
-        "command": command_request.command
+        "command": command_text,
     })
-    
-    # Execute command asynchronously
+
     async def execute_and_update():
         try:
             session_manager.update_session_status(session_id, SessionStatus.RUNNING)
-            
-            result = await executor.execute_command(command)
-            
-            # Update entry
+
+            result = await executor.execute_command(command, cluster_id=cluster_id)
+
             session_manager.update_entry(
                 session_id,
                 entry.id,
                 result=result.to_dict() if result else None,
-                status=SessionStatus.COMPLETED if result and result.success else SessionStatus.FAILED
+                status=SessionStatus.COMPLETED if result and result.success else SessionStatus.FAILED,
             )
-            
-            # Update session status
+
             final_status = SessionStatus.COMPLETED if result and result.success else SessionStatus.FAILED
             session_manager.update_session_status(session_id, final_status)
-            
-            # Broadcast result
+
             await broadcast_to_session(session_id, {
                 "type": "execution_completed",
                 "entry_id": entry.id,
-                "result": result.to_dict() if result else None
+                "result": result.to_dict() if result else None,
             })
         except asyncio.CancelledError:
-            # Task was cancelled (user clicked Stop / closed tab)
             logger.info(f"Execution task for session {session_id} was cancelled")
-            
-            # Only update session if it still exists (might be deleted during cancellation)
             try:
-                session = session_manager.get_session(session_id)
-                if session:
+                current = session_manager.get_session(session_id)
+                if current:
                     session_manager.update_entry(
                         session_id,
                         entry.id,
-                        status=SessionStatus.STOPPED
+                        status=SessionStatus.STOPPED,
                     )
                     session_manager.update_session_status(session_id, SessionStatus.STOPPED)
-                    
                     await broadcast_to_session(session_id, {
                         "type": "execution_failed",
                         "entry_id": entry.id,
-                        "error": "Execution stopped by user"
+                        "error": "Execution stopped by user",
                     })
             except Exception as e:
                 logger.warning(f"Session {session_id} may have been deleted during cancellation: {e}")
         except Exception as e:
             logger.exception(f"Error executing command in session {session_id}")
-            
-            # Only update session if it still exists (might be deleted)
             try:
-                session = session_manager.get_session(session_id)
-                if session:
+                current = session_manager.get_session(session_id)
+                if current:
                     session_manager.update_entry(
                         session_id,
                         entry.id,
-                        status=SessionStatus.FAILED
+                        status=SessionStatus.FAILED,
                     )
                     session_manager.update_session_status(session_id, SessionStatus.FAILED)
-                    
                     await broadcast_to_session(session_id, {
                         "type": "execution_failed",
                         "entry_id": entry.id,
-                        "error": str(e)
+                        "error": str(e),
                     })
             except Exception as update_error:
                 logger.warning(f"Session {session_id} may have been deleted during error handling: {update_error}")
         finally:
-            # Clear running task reference
             if session_id in running_tasks:
                 running_tasks.pop(session_id, None)
-    
-    # Run in background and track task for potential cancellation
+
     task = asyncio.create_task(execute_and_update())
     running_tasks[session_id] = task
-    
+    return {"entry_id": entry.id, "session_id": session_id}
+
+
+@app.post("/api/sessions/{session_id}/execute")
+async def execute_command(session_id: str, command_request: CommandRequest):
+    """Execute a command in a session."""
+    started = await kickoff_session_command(session_id, command_request.command)
     return JSONResponse(content={
         "success": True,
-        "entry_id": entry.id,
-        "message": "Command execution started"
+        "entry_id": started["entry_id"],
+        "message": "Command execution started",
     })
 
 
 @app.websocket("/ws/sessions/{session_id}")
 async def websocket_session(websocket: WebSocket, session_id: str):
     """WebSocket endpoint for real-time session updates."""
+    if not websocket_user(websocket):
+        await websocket.close(code=4401)
+        return
+
     await websocket.accept()
     
     # Add to active connections
@@ -1050,7 +1316,7 @@ async def list_autoruns(enabled_only: bool = False):
     
     return JSONResponse(content={
         "success": True,
-        "autoruns": [a.to_dict() for a in autoruns]
+        "autoruns": [_autorun_payload(a) for a in autoruns]
     })
 
 
@@ -1064,12 +1330,13 @@ async def create_autorun(autorun_request: AutorunCreateRequest):
         name=autorun_request.name,
         command=autorun_request.command,
         interval_seconds=autorun_request.interval_seconds,
-        condition_function=autorun_request.condition_function
+        condition_function=autorun_request.condition_function,
+        cluster_id=autorun_request.cluster_id,
     )
-    
+
     return JSONResponse(content={
         "success": True,
-        "autorun": autorun.to_dict()
+        "autorun": _autorun_payload(autorun)
     })
 
 
@@ -1085,7 +1352,7 @@ async def get_autorun(autorun_id: str):
     
     return JSONResponse(content={
         "success": True,
-        "autorun": autorun.to_dict()
+        "autorun": _autorun_payload(autorun)
     })
 
 
@@ -1101,7 +1368,7 @@ async def update_autorun(autorun_id: str, autorun_update: AutorunUpdateRequest):
         autorun = session_manager.get_autorun(autorun_id)
         return JSONResponse(content={
             "success": True,
-            "autorun": autorun.to_dict()
+            "autorun": _autorun_payload(autorun)
         })
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
@@ -1172,10 +1439,10 @@ async def delete_autorun(autorun_id: str):
 
 if __name__ == "__main__":
     import uvicorn
-    
-    # Initialize
+
+    from ...core.tls import uvicorn_ssl_kwargs
+
     initialize()
-    
-    print("Starting SamiGPT AI Controller...")
-    uvicorn.run(app, host="0.0.0.0", port=8081)
+    print("Starting SamiGPT AI Controller on https://0.0.0.0:8081")
+    uvicorn.run(app, host="0.0.0.0", port=8081, **uvicorn_ssl_kwargs())
 

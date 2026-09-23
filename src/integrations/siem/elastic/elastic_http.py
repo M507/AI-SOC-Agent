@@ -11,10 +11,12 @@ This module is responsible for:
 from __future__ import annotations
 
 import json
+import warnings
 from dataclasses import dataclass
 from typing import Any, Dict, Optional
 
 import requests
+from urllib3.exceptions import InsecureRequestWarning
 
 from ....core.errors import IntegrationError
 from ....core.logging import get_logger
@@ -43,6 +45,7 @@ class ElasticHttpClient:
         headers = {
             "Content-Type": "application/json",
             "Accept": "application/json",
+            "kbn-xsrf": "true",
         }
         
         if self.api_key:
@@ -89,9 +92,17 @@ class ElasticHttpClient:
 
         try:
             error_data = response.json()
-            error_type = error_data.get("error", {}).get("type", "Unknown")
-            error_reason = error_data.get("error", {}).get("reason", f"HTTP {response.status_code}")
-            full_message = f"{error_type}: {error_reason}"
+            error = error_data.get("error")
+            if isinstance(error, dict):
+                error_type = error.get("type", "Unknown")
+                error_reason = error.get("reason", f"HTTP {response.status_code}")
+                detail = f"{error_type}: {error_reason}"
+            else:
+                detail = str(error_data.get("message") or error or response.reason)
+            # Keep the status code in structured Elasticsearch errors. Callers
+            # use it to distinguish a missing index (eligible for fallback)
+            # from malformed queries and authentication failures.
+            full_message = f"HTTP {response.status_code}: {detail}"
         except Exception:
             full_message = f"HTTP {response.status_code}: {response.text[:200]}"
 
@@ -103,6 +114,7 @@ class ElasticHttpClient:
         endpoint: str,
         json_data: Optional[Dict[str, Any]] = None,
         params: Optional[Dict[str, Any]] = None,
+        extra_headers: Optional[Dict[str, str]] = None,
     ) -> Dict[str, Any]:
         """
         Make an HTTP request to Elasticsearch API.
@@ -112,6 +124,7 @@ class ElasticHttpClient:
             endpoint: API endpoint path
             json_data: JSON payload (for POST, PUT, PATCH)
             params: Query parameters (for GET, etc.)
+            extra_headers: Optional headers merged onto the defaults
         
         Returns:
             Response JSON as dictionary
@@ -121,6 +134,8 @@ class ElasticHttpClient:
         """
         url = self._build_url(endpoint)
         headers = self._headers()
+        if extra_headers:
+            headers.update(extra_headers)
 
         try:
             logger.debug(f"Elastic {method} {url}")
@@ -129,15 +144,21 @@ class ElasticHttpClient:
             if json_data:
                 logger.debug(f"  JSON payload: {json.dumps(json_data)[:200]}...")
 
-            response = requests.request(
-                method=method,
-                url=url,
-                headers=headers,
-                json=json_data,
-                params=params,
-                timeout=self.timeout_seconds,
-                verify=self.verify_ssl,
-            )
+            # verify_ssl=False is an explicit per-cluster setting (common for
+            # lab Elasticsearch). Avoid flooding autorun logs with one warning
+            # per request while retaining warnings for every other client.
+            with warnings.catch_warnings():
+                if not self.verify_ssl:
+                    warnings.simplefilter("ignore", InsecureRequestWarning)
+                response = requests.request(
+                    method=method,
+                    url=url,
+                    headers=headers,
+                    json=json_data,
+                    params=params,
+                    timeout=self.timeout_seconds,
+                    verify=self.verify_ssl,
+                )
 
             logger.debug(f"Elastic response status: {response.status_code}")
             if response.status_code >= 400:
@@ -148,18 +169,60 @@ class ElasticHttpClient:
             if response.status_code == 204:  # No Content
                 return {}
 
-            return response.json()
+            try:
+                return response.json()
+            except ValueError as e:
+                text = (response.text or "")[:300]
+                raise IntegrationError(
+                    f"Elastic API returned non-JSON from {url}: {text}"
+                ) from e
 
         except requests.exceptions.Timeout as e:
             raise IntegrationError(f"Elastic API request timeout: {e}") from e
         except requests.exceptions.RequestException as e:
             raise IntegrationError(f"Elastic API request failed: {e}") from e
 
-    def get(self, endpoint: str, params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    def get(
+        self,
+        endpoint: str,
+        params: Optional[Dict[str, Any]] = None,
+        extra_headers: Optional[Dict[str, str]] = None,
+    ) -> Dict[str, Any]:
         """GET request."""
-        return self.request("GET", endpoint, params=params)
+        return self.request(
+            "GET", endpoint, params=params, extra_headers=extra_headers
+        )
 
-    def post(self, endpoint: str, json_data: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    def post(
+        self,
+        endpoint: str,
+        json_data: Optional[Dict[str, Any]] = None,
+        extra_headers: Optional[Dict[str, str]] = None,
+    ) -> Dict[str, Any]:
         """POST request."""
-        return self.request("POST", endpoint, json_data=json_data)
+        return self.request(
+            "POST", endpoint, json_data=json_data, extra_headers=extra_headers
+        )
+
+    def patch(
+        self,
+        endpoint: str,
+        json_data: Optional[Dict[str, Any]] = None,
+        extra_headers: Optional[Dict[str, str]] = None,
+    ) -> Dict[str, Any]:
+        """PATCH request."""
+        return self.request(
+            "PATCH", endpoint, json_data=json_data, extra_headers=extra_headers
+        )
+
+    def delete(
+        self,
+        endpoint: str,
+        json_data: Optional[Dict[str, Any]] = None,
+        extra_headers: Optional[Dict[str, str]] = None,
+    ) -> Dict[str, Any]:
+        """DELETE request."""
+        return self.request(
+            "DELETE", endpoint, json_data=json_data, extra_headers=extra_headers
+        )
 

@@ -11,6 +11,24 @@ This document provides comprehensive documentation for all tools available in th
 
 This ensures clear distinction between case management operations and SIEM alert operations.
 
+## Analyst approval (Requests view)
+
+## Analyst approval (Requests view)
+
+These tools **file a request** and do not run until an analyst approves them in the SamiGPT Requests view: `close_alert`, `isolate_endpoint`, `release_endpoint_isolation`, `kill_process_on_endpoint`, `collect_forensic_artifacts`.
+
+`isolate_endpoint` / `release_endpoint_isolation` run against **Elastic Defend on the bound cluster** (Kibana Endpoint Security) after approval. They do not need a separate EDR integration.
+
+`create_fine_tuning_recommendation`, `create_visibility_recommendation`, and `create_runbook_recommendation` file **informational** notes only. Fine-tune / visibility pull Home Lab rules under `/root/Home-Lab-Rules/rules/elastic_1/rules/`. Runbook-gap notes request a missing `soc*/cases` playbook **after** investigation. There is no approve button.
+
+Search first with `search_lab_detection_rules` (compact hits). Load at most one or two rules with `get_lab_detection_rule`. Do not dump the catalog into context.
+
+`update_alert_verdict` is **not** gated. It records the AI's working assessment immediately and does not close the alert.
+
+`create_approval_request` is used for identity checks ("is this you?") and custom follow-ups. A **No** answer opens an Elastic Security case (`create_elastic_case`), not IRIS or TheHive.
+
+`create_elastic_case` runs immediately against the bound Elastic cluster.
+
 ## Table of Contents
 
 - [Case Management Tools](#case-management-tools)
@@ -841,6 +859,10 @@ The following checklist shows which SIEM tools are currently implemented:
 - [x] `search_user_activity`
 - [x] `pivot_on_indicator`
 - [x] `search_kql_query`
+- [x] `search_lucene_query`
+- [x] `search_eql_query`
+- [x] `search_dsl_query`
+- [x] `search_esql_query`
 
 **Alert Management Tools:**
 - [x] `get_security_alerts`
@@ -850,6 +872,7 @@ The following checklist shows which SIEM tools are currently implemented:
 - [x] `update_alert_verdict`
 - [x] `tag_alert`
 - [x] `add_alert_note`
+- [x] `get_alert_notes`
 
 **Event Management Tools:**
 - [x] `get_siem_event_by_id`
@@ -1134,110 +1157,167 @@ Given an IOC (file hash, IP address, domain, etc.), search for all related secur
 
 ### `search_kql_query`
 
-Execute a KQL (Kusto Query Language) or advanced query for deeper investigations. This tool enables complex queries including advanced filtering, aggregations, time-based analysis, cross-index searches, and complex joins. Supports both KQL syntax and vendor-specific query DSL (e.g., Elasticsearch Query DSL).
+Execute a Kibana Query Language (KQL) search for investigations.
 
-**Note:** This tool is designed for SOC 2 and SOC 3 analysts who need to perform deeper investigations with complex queries. For simpler searches, use `search_security_events` instead.
+For other Elastic query languages use:
+- `search_lucene_query` — Lucene `query_string`
+- `search_eql_query` — Event Query Language (EQL)
+- `search_dsl_query` — Elasticsearch Query DSL (JSON)
+- `search_esql_query` — ES|QL
 
 **Parameters:**
-- `kql_query` (string, required): KQL query string or advanced query DSL (JSON for Elasticsearch)
+- `kql_query` (string, required): KQL query string
 - `limit` (integer, optional): Maximum number of events to return (default: 500)
-- `hours_back` (integer, optional): Optional time window in hours to limit the search
+- `hours_back` (integer, optional): Optional time window in hours
 
-**Returns:**
-- `success` (boolean): Whether the operation succeeded
-- `query` (string): The query that was executed
-- `total_count` (integer): Total number of matching events
-- `returned_count` (integer): Number of events returned
-- `events` (array): List of security events, each containing:
-  - `id` (string): Event identifier
-  - `timestamp` (string): ISO timestamp of the event
-  - `source_type` (string): Event source type
-  - `message` (string): Event message/log entry
-  - `host` (string): Hostname where event occurred
-  - `username` (string): Username associated with event
-  - `ip` (string): IP address
-  - `process_name` (string): Process name
-  - `file_hash` (string): File hash if applicable
+**Returns:** normalized `events` with `id`, `timestamp`, `message`, `host`, `username`, `ip`, `process_name`, `file_hash`.
 
-**Usage Example 1: KQL-like Query**
+**Usage Example:**
 ```json
 {
   "name": "search_kql_query",
   "arguments": {
-    "kql_query": "host == \"server01\" and process contains \"powershell\" | where timestamp > ago(24h)",
-    "limit": 500,
+    "kql_query": "host.name: \"server-01\" and process.name: \"powershell.exe\"",
+    "limit": 100,
     "hours_back": 24
   }
 }
 ```
 
-**Usage Example 2: Elasticsearch Query DSL**
+---
+
+### `search_lucene_query`
+
+Search security indices with Lucene `query_string` syntax.
+
+**Parameters:**
+- `lucene_query` (string, required): Lucene query (e.g. `process.name:powershell AND host.name:workstation-*`)
+- `limit` (integer, optional): Max events (default: 500)
+- `hours_back` (integer, optional): Time window in hours
+- `index_pattern` (string, optional): Override index pattern
+
+**Usage Example:**
 ```json
 {
-  "name": "search_kql_query",
+  "name": "search_lucene_query",
   "arguments": {
-    "kql_query": "{\"query\": {\"bool\": {\"must\": [{\"match\": {\"process.name\": \"powershell\"}}, {\"range\": {\"@timestamp\": {\"gte\": \"now-24h\"}}}]}}, \"size\": 500}",
-    "limit": 500
+    "lucene_query": "process.name:powershell.exe AND event.action:start",
+    "hours_back": 24,
+    "limit": 50
   }
 }
 ```
 
-**Use Cases:**
-- Perform complex multi-field searches
-- Execute advanced aggregations and statistical analysis
-- Cross-index correlation searches
-- Time-based pattern analysis
-- Deep threat hunting investigations
-- Complex join operations across data sources
-- Advanced filtering with multiple conditions
-- Custom investigation queries beyond standard search capabilities
+---
 
-**Supported Query Formats:**
-- **KQL-like syntax**: Basic KQL patterns (field == value, field != value, field contains "value", time ranges with ago())
-- **Elasticsearch Query DSL**: Full JSON query DSL for Elasticsearch
-- **Vendor-specific**: Other SIEM query languages as supported by the backend
+### `search_eql_query`
 
-**Best Practices:**
-- Use `hours_back` parameter to limit time range for better performance
-- Start with smaller `limit` values for initial queries
-- For Elasticsearch, use Query DSL for maximum flexibility
-- Combine with other tools like `pivot_on_indicator` for comprehensive investigations
+Run an Elastic Event Query Language (EQL) hunt — best for process/network sequences.
+
+**Parameters:**
+- `eql_query` (string, required): EQL query
+- `limit` (integer, optional): Max events (default: 100)
+- `hours_back` (integer, optional): Time window in hours
+- `index_pattern` (string, optional): Override index pattern
+
+**Usage Example:**
+```json
+{
+  "name": "search_eql_query",
+  "arguments": {
+    "eql_query": "process where process.name == \"cmd.exe\" and process.parent.name == \"winword.exe\"",
+    "hours_back": 48,
+    "limit": 50
+  }
+}
+```
+
+---
+
+### `search_dsl_query`
+
+Run a raw Elasticsearch Query DSL JSON body against security indices.
+
+**Parameters:**
+- `dsl_query` (string, required): JSON Query DSL object as a string
+- `limit` (integer, optional): Max events (default: 500)
+- `hours_back` (integer, optional): Time window in hours
+- `index_pattern` (string, optional): Override index pattern
+
+**Usage Example:**
+```json
+{
+  "name": "search_dsl_query",
+  "arguments": {
+    "dsl_query": "{\"query\":{\"bool\":{\"must\":[{\"term\":{\"host.name\":\"server-01\"}}]}}}",
+    "hours_back": 24,
+    "limit": 50
+  }
+}
+```
+
+---
+
+### `search_esql_query`
+
+Run an Elastic ES|QL query (`FROM ... | WHERE ... | KEEP ...`).
+
+**Parameters:**
+- `esql_query` (string, required): ES|QL query text
+- `limit` (integer, optional): Appended as `LIMIT` when missing (default: 500)
+
+**Usage Example:**
+```json
+{
+  "name": "search_esql_query",
+  "arguments": {
+    "esql_query": "FROM logs-* | WHERE host.name == \"server-01\" | KEEP @timestamp, host.name, message | LIMIT 50"
+  }
+}
+```
 
 ---
 
 ### `get_security_alerts`
 
-Get security alerts directly from the SIEM platform. This tool retrieves active alerts that require investigation and triage.
+Get security alerts directly from the SIEM platform. Supports triage (open/uninvestigated) and historical review of acknowledged/closed alerts by rule.
 
 **Note:** This tool operates on SIEM alerts (not cases). For case management operations, use the case management tools (e.g., `list_cases`, `review_case`).
 
 **Parameters:**
 - `hours_back` (integer, optional): How many hours to look back for alerts (default: 24)
 - `max_alerts` (integer, optional): Maximum number of alerts to return (default: 10)
-- `status_filter` (string, optional): Query string to filter alerts by status (default: excludes closed alerts)
+- `status_filter` (string, optional): Workflow status — `open`, `acknowledged` (aliases: `akn`, `ack`), or `closed`. Default excludes closed alerts.
 - `severity` (string, optional): Filter by severity level (low, medium, high, critical)
+- `hostname` (string, optional): Filter by `host.name`
+- `rule_name` (string, optional): Filter by detection rule name
+- `rule_id` (string, optional): Filter by detection rule ID
+- `include_investigated` (boolean, optional): Include alerts that already have `signal.ai.verdict`. Defaults to `true` when `status_filter` is `acknowledged` or `closed`.
 
 **Returns:**
 - `success` (boolean): Whether the operation succeeded
 - `count` (integer): Number of alerts returned
 - `alerts` (array): List of security alerts, each containing:
   - `id` (string): Alert identifier
-  - `title` (string): Alert title/name
+  - `title` / `rule_name` (string): Alert title / detection rule name
+  - `rule_id` (string): Detection rule ID when available
   - `severity` (string): Severity level
-  - `status` (string): Alert status (open, in_progress, closed, etc.)
+  - `status` (string): Alert status (open, acknowledged, closed, etc.)
   - `created_at` (string): ISO timestamp of alert creation
   - `description` (string): Alert description
   - `source` (string): Source system that generated the alert
   - `related_entities` (array): Related IPs, domains, hashes, etc.
+  - `verdict` (string|null): AI/analyst verdict when present
 
 **Usage Example:**
 ```json
 {
   "name": "get_security_alerts",
   "arguments": {
-    "hours_back": 48,
-    "max_alerts": 20,
-    "severity": "high"
+    "hours_back": 168,
+    "max_alerts": 50,
+    "rule_name": "Suspicious PowerShell Encoded Command",
+    "status_filter": "acknowledged"
   }
 }
 ```
@@ -1245,6 +1325,7 @@ Get security alerts directly from the SIEM platform. This tool retrieves active 
 **Use Cases:**
 - Monitor active security alerts
 - Triage incoming threats
+- Review acknowledged or closed alerts for a specific rule
 - Prioritize investigation work
 - Review alert backlog
 - Generate alert summaries
@@ -1254,6 +1335,8 @@ Get security alerts directly from the SIEM platform. This tool retrieves active 
 ### `get_security_alert_by_id`
 
 Get detailed information about a specific security alert by its ID.
+
+Also attaches Security Solution / Rule Tuner notes from Kibana (`notes`, `note_texts`, `notes_total_count`). Notes are **not** on alert `_source`; this tool fetches them automatically. For batch note fetch across similar past alerts, use `get_alert_notes`.
 
 **Note:** This tool operates on SIEM alerts (not cases). For case management operations, use `review_case` instead.
 
@@ -1275,7 +1358,10 @@ Get detailed information about a specific security alert by its ID.
   - `updated_at` (string): ISO timestamp of last update
   - `detections` (array): List of detections that triggered the alert (if included)
   - `related_entities` (array): Related indicators and entities
-  - `comments` (array): Analyst comments and notes
+  - `comments` (array): SamiGPT AI comments stored on the alert document (`signal.ai.comments`)
+  - `notes` (array): Security Solution / Rule Tuner notes from Kibana Notes API
+  - `note_texts` (array): Convenience list of note body strings
+  - `notes_total_count` (integer): Count of Kibana notes
 
 **Usage Example:**
 ```json
@@ -1289,7 +1375,7 @@ Get detailed information about a specific security alert by its ID.
 ```
 
 **Use Cases:**
-- Get complete alert context
+- Get complete alert context including prior analyst notes
 - Review alert details for investigation
 - Check alert status and assignment
 - Review detection details
@@ -1457,26 +1543,50 @@ Search for security detection rules by name, description, or other criteria.
 
 ---
 
-### `get_rule_detections`
+### `search_lab_detection_rules`
 
-Retrieve historical detections generated by a specific security detection rule. This helps understand rule effectiveness and review past alerts.
+Search the **local Home Lab** detection-rule catalog (not live Elastic). Returns compact hits only so the model does not ingest ~1.3k full rules.
+
+**Token strategy:** 1–3 short keyword searches (process, MITRE technique, data source). Default 8 hits, max 15. Then `get_lab_detection_rule` for at most one or two candidates.
 
 **Parameters:**
-- `rule_id` (string, required): Unique ID of the rule to list detections for
-- `alert_state` (string, optional): Filter by alert state (open, closed, etc.)
+- `query` (string, required): Keywords
+- `limit` (integer, optional): Max hits (default 8, max 15)
+
+**Returns:** compact hits with `rule_id`, `name`, `tags`, `data_sources`, `index`, `query_excerpt`, `score`.
+
+---
+
+### `get_lab_detection_rule`
+
+Load **one** Home Lab rule excerpt by `rule_id` or `rule_name`. Includes query (truncated), tags, false_positives, exceptions. Omits investigation notes.
+
+Do not fetch more than two full rules per investigation step.
+
+---
+
+### `get_rule_detections`
+
+Retrieve historical detections generated by a specific security detection rule (by ID and/or name). Includes acknowledged and closed alerts so you can review past firings.
+
+**Parameters:**
+- `rule_id` (string, optional): Unique ID of the rule (required if `rule_name` omitted)
+- `rule_name` (string, optional): Detection rule name (required if `rule_id` omitted)
+- `alert_state` (string, optional): Filter by workflow status — `open`, `acknowledged` (`akn`/`ack`), or `closed`
 - `hours_back` (integer, optional): How many hours back to look (default: 24)
 - `limit` (integer, optional): Maximum number of detections to return (default: 50)
 
 **Returns:**
 - `success` (boolean): Whether the operation succeeded
-- `rule_id` (string): The rule ID queried
+- `rule_id` / `rule_name` (string): The rule identifiers queried
 - `count` (integer): Number of detections returned
 - `detections` (array): List of detections, each containing:
-  - `id` (string): Detection identifier
-  - `alert_id` (string): Associated alert ID
+  - `id` / `alert_id` (string): Detection / alert identifier
   - `timestamp` (string): ISO timestamp of detection
   - `severity` (string): Severity level
   - `status` (string): Detection status
+  - `rule_name` / `rule_id` (string): Rule metadata when available
+  - `verdict` (string|null): AI/analyst verdict when present
   - `description` (string): Detection description
 
 **Usage Example:**
@@ -1484,7 +1594,8 @@ Retrieve historical detections generated by a specific security detection rule. 
 {
   "name": "get_rule_detections",
   "arguments": {
-    "rule_id": "rule-abc123",
+    "rule_name": "Suspicious PowerShell Encoded Command",
+    "alert_state": "closed",
     "hours_back": 168,
     "limit": 100
   }
@@ -1498,6 +1609,7 @@ Retrieve historical detections generated by a specific security detection rule. 
 - Identify false positives
 - Measure rule effectiveness
 - Audit rule behavior
+- Pull acknowledged/closed alerts for a named rule
 
 ---
 
@@ -1995,26 +2107,30 @@ Retrieve detailed information about a specific detection including type, severit
 
 ### `isolate_endpoint`
 
-Isolate an endpoint from the network to prevent further compromise or lateral movement. **This is a critical response action.**
+Request isolating an endpoint from the network via **Elastic Defend** (Kibana Endpoint Security) on the bound cluster. **Queued for analyst approval** — the host is not isolated until Requests is approved.
+
+Pass `agent.id` from the alert as `endpoint_id`. A hostname is used to look the agent up when the id is unknown.
 
 **Parameters:**
-- `endpoint_id` (string, required): The endpoint ID to isolate
+- `endpoint_id` (string, required): Elastic Agent / endpoint id
+- `hostname` (string, optional): Hostname used to resolve the agent
+- `reason` (string, optional): Why isolation is needed
 
 **Returns:**
-- `success` (boolean): Whether the operation succeeded
-- `action` (object): Action details including:
-  - `endpoint_id` (string): Endpoint identifier
-  - `result` (string): Action result status
-  - `requested_at` (string): ISO timestamp of request
-  - `completed_at` (string): ISO timestamp of completion (if completed)
-  - `message` (string): Status message
+- `queued` (boolean): `true` when isolation was filed for approval
+- `request_id` (string): Requests-view id
+- `message` (string): Analyst-facing status (pending approval)
+
+After approval the handler calls Kibana `POST /api/endpoint/action/isolate` (falls back to `/api/endpoint/isolate`).
 
 **Usage Example:**
 ```json
 {
   "name": "isolate_endpoint",
   "arguments": {
-    "endpoint_id": "endpoint-12345"
+    "endpoint_id": "1cd01db9-be24-4bef-8e7c-e923f0ff78ab",
+    "hostname": "ws-1",
+    "reason": "Active ransomware note on disk"
   }
 }
 ```
@@ -2031,19 +2147,15 @@ Isolate an endpoint from the network to prevent further compromise or lateral mo
 
 ### `release_endpoint_isolation`
 
-Release an endpoint from network isolation, restoring normal network connectivity.
+Request releasing an endpoint from network isolation. **Queued for analyst approval** — connectivity is not restored until Requests is approved.
 
 **Parameters:**
 - `endpoint_id` (string, required): The endpoint ID to release
 
 **Returns:**
-- `success` (boolean): Whether the operation succeeded
-- `action` (object): Action details including:
-  - `endpoint_id` (string): Endpoint identifier
-  - `result` (string): Action result status
-  - `requested_at` (string): ISO timestamp of request
-  - `completed_at` (string): ISO timestamp of completion (if completed)
-  - `message` (string): Status message
+- `queued` (boolean): `true` when release was filed for approval
+- `request_id` (string): Requests-view id
+- `message` (string): Analyst-facing status (pending approval)
 
 **Usage Example:**
 ```json
@@ -2065,21 +2177,16 @@ Release an endpoint from network isolation, restoring normal network connectivit
 
 ### `kill_process_on_endpoint`
 
-Terminate a specific process running on an endpoint by its process ID. **Use with caution as this is a disruptive action.**
+Request terminating a process on an endpoint by PID. **Queued for analyst approval** — the process is not killed until Requests is approved.
 
 **Parameters:**
 - `endpoint_id` (string, required): The endpoint ID
 - `pid` (integer, required): The process ID to kill
 
 **Returns:**
-- `success` (boolean): Whether the operation succeeded
-- `action` (object): Action details including:
-  - `endpoint_id` (string): Endpoint identifier
-  - `pid` (integer): Process ID
-  - `result` (string): Action result status
-  - `requested_at` (string): ISO timestamp of request
-  - `completed_at` (string): ISO timestamp of completion (if completed)
-  - `message` (string): Status message
+- `queued` (boolean): `true` when the kill was filed for approval
+- `request_id` (string): Requests-view id
+- `message` (string): Analyst-facing status (pending approval)
 
 **Usage Example:**
 ```json
@@ -2098,13 +2205,13 @@ Terminate a specific process running on an endpoint by its process ID. **Use wit
 - Kill malware processes
 - Emergency response
 
-**⚠️ Warning:** This will terminate the specified process immediately. Use with caution.
+**Note:** Do not tell the analyst the process is already dead. Report the Requests `request_id`.
 
 ---
 
 ### `collect_forensic_artifacts`
 
-Initiate collection of forensic artifacts from an endpoint, such as process lists, network connections, file system artifacts, etc.
+Request forensic artifact collection from an endpoint. **Queued for analyst approval** — collection does not start until Requests is approved.
 
 **Parameters:**
 - `endpoint_id` (string, required): The endpoint ID
@@ -2117,14 +2224,9 @@ Initiate collection of forensic artifacts from an endpoint, such as process list
   - `logs`: System logs
 
 **Returns:**
-- `success` (boolean): Whether the operation succeeded
-- `request` (object): Collection request details including:
-  - `endpoint_id` (string): Endpoint identifier
-  - `artifact_types` (array): Types requested
-  - `result` (string): Request result status
-  - `requested_at` (string): ISO timestamp of request
-  - `completed_at` (string): ISO timestamp of completion (if completed)
-  - `message` (string): Status message
+- `queued` (boolean): `true` when collection was filed for approval
+- `request_id` (string): Requests-view id
+- `message` (string): Analyst-facing status (pending approval)
 
 **Usage Example:**
 ```json
@@ -2153,81 +2255,115 @@ Engineering tools enable creating and managing recommendations for fine-tuning d
 
 ### `create_fine_tuning_recommendation`
 
-Create a fine-tuning recommendation task on the fine-tuning board. This is used to track improvements needed to reduce false positives or enhance detection rules.
+Pull the matching Home Lab detection rule and file a **fine-tune suggestion** in the SamiGPT Requests view. **Informational only** — no approve button, nothing is sent to Trello/ClickUp/GitHub.
 
 **Parameters:**
-- `title` (string, required): Task/card title
-- `description` (string, required): Task/card description
-- `list_name` (string, optional): Optional list name (Trello only, defaults to first list on board)
-- `labels` (array, optional): Optional list of label names (Trello only)
-- `status` (string, optional): Optional status name (ClickUp only, defaults to first status in list)
-- `tags` (array, optional): Optional list of tag names (ClickUp only)
+- `title` (string, required): Short title
+- `description` (string, required): What to change and why
+- `rule_id` (string, optional): Home Lab / Elastic rule UUID
+- `rule_name` (string, optional): Detection rule name
+- `alert_id` (string, optional): Related alert
 
-**Returns:**
-- `success` (boolean): Whether the operation succeeded
-- `provider` (string): Platform provider (clickup, trello, github)
-- `task`/`card`/`project_item` (object): Created task/card details including:
-  - `id` (string): Task/card identifier
-  - `name` (string): Task/card name
-  - `url` (string): URL to view the task/card
+**Returns:** queued informational request plus the pulled `rule` excerpt when found.
 
 **Usage Example:**
 ```json
 {
   "name": "create_fine_tuning_recommendation",
   "arguments": {
-    "title": "Reduce false positives for Elastic Agent alerts",
-    "description": "Alert triggers frequently for Elastic Agent connections to Elastic Cloud. Consider adding whitelist or adjusting rule threshold.",
-    "tags": ["false-positive", "elastic-agent"]
+    "title": "Tune PowerShell PSReflect for lab admin scripts",
+    "description": "Add an exception for the signed build server user when script origin is the internal repo path.",
+    "rule_name": "PowerShell PSReflect Script"
   }
 }
 ```
-
-**Use Cases:**
-- Document detection rule improvements needed after false positive identification
-- Track fine-tuning tasks for rule optimization
-- Create tasks for reducing false positive rates
-- Link fine-tuning needs to specific alert types
 
 ---
 
 ### `create_visibility_recommendation`
 
-Create a visibility/engineering recommendation task on the engineering board. This is used to track improvements needed to enhance security visibility or detection capabilities.
+File an **informational visibility-gap note**. Search Home Lab rules first (`search_lab_detection_rules`, then at most 1–2 `get_lab_detection_rule` calls). Only file this if coverage is still missing. The server re-checks the catalog and stores `coverage_check`.
+
+**Informational only** — no approve button, no engineering board.
 
 **Parameters:**
-- `title` (string, required): Task/card title
-- `description` (string, required): Task/card description
-- `list_name` (string, optional): Optional list name (Trello only, defaults to first list on board)
-- `labels` (array, optional): Optional list of label names (Trello only)
-- `status` (string, optional): Optional status name (ClickUp only, defaults to first status in list)
-- `tags` (array, optional): Optional list of tag names (ClickUp only)
-
-**Returns:**
-- `success` (boolean): Whether the operation succeeded
-- `provider` (string): Platform provider (clickup, trello, github)
-- `task`/`card`/`project_item` (object): Created task/card details including:
-  - `id` (string): Task/card identifier
-  - `name` (string): Task/card name
-  - `url` (string): URL to view the task/card
+- `title` (string, required): Short title
+- `description` (string, required): What appears missing and why
+- `source` (string, optional): Missing source, e.g. DNS, PowerShell, cloud audit
 
 **Usage Example:**
 ```json
 {
   "name": "create_visibility_recommendation",
   "arguments": {
-    "title": "Add endpoint logging for PowerShell execution",
-    "description": "PowerShell execution events are not being captured. Need to enable PowerShell logging on endpoints to improve detection capabilities.",
-    "tags": ["visibility", "powershell"]
+    "title": "No detection for Okta MFA fatigue",
+    "description": "Repeated MFA push-deny then accept is not covered by an enabled Home Lab rule.",
+    "source": "Okta"
   }
 }
 ```
 
 **Use Cases:**
-- Document visibility gaps identified during investigations
-- Track engineering tasks for improving detection coverage
-- Request logging enhancements
-- Link visibility improvements to specific investigation needs
+- Record a suspected telemetry or detection gap after searching the Home Lab catalog
+- Show the analyst whether an existing rule already covers the behavior
+- Keep the note informational until a board API exists
+
+---
+
+### `create_runbook_recommendation`
+
+File an **informational runbook-gap note** when triage finishes and no case-specific playbook under `soc*/cases/` matched the alert type.
+
+**Timing (critical):** Call this **only after** the investigation is done (final `update_alert_verdict`). Never delay history review, enrichment, or verdicts for this step.
+
+**Informational only** — no approve button. Server lists existing case playbooks and stores `coverage_check` / near-matches.
+
+**Parameters:**
+- `title` (string, required): Short title (e.g. Need case runbook: Impossible Travel)
+- `description` (string, required): Author brief with enough detail and examples to write the playbook
+- `alert_type` / `rule_name` / `rule_id` / `alert_id` (optional)
+- `suggested_path` (string, optional): e.g. `soc1/cases/impossible_travel_triage`
+- `soc_tier` (string, optional): default `soc1`
+- `investigation_summary` / `example_entities` / `why_needed` (optional)
+
+**Usage Example:**
+```json
+{
+  "name": "create_runbook_recommendation",
+  "arguments": {
+    "title": "Need case runbook: Impossible Travel",
+    "description": "Objective: triage Impossible Travel alerts... Example: user alice, IPs 1.2.3.4 vs 5.6.7.8. Steps that helped: ...",
+    "rule_name": "Impossible Travel",
+    "alert_id": "abc123",
+    "suggested_path": "soc1/cases/impossible_travel_triage",
+    "why_needed": "Generic initial_alert_triage lacked login-travel specific checks"
+  }
+}
+```
+
+---
+
+### `save_case_runbook`
+
+Write a finished case-specific runbook markdown file under `run_books/<soc>/cases/<slug>.md`.
+
+Used by the Requests **Create runbook** flow (Open WebUI session) after drafting a playbook that matches `runbook_guidelines.md` and existing `soc1/cases` examples.
+
+**Parameters:**
+- `path` (string, required): Relative path without `.md`, e.g. `soc1/cases/impossible_travel_triage`
+- `content` (string, required): Full markdown starting with `# SOC1: ... Runbook`
+- `overwrite` (boolean, optional): Replace an existing file (default false)
+
+**Usage Example:**
+```json
+{
+  "name": "save_case_runbook",
+  "arguments": {
+    "path": "soc1/cases/impossible_travel_triage",
+    "content": "# SOC1: Impossible Travel Triage Runbook\n\n## Objective\n..."
+  }
+}
+```
 
 ---
 
@@ -2516,8 +2652,8 @@ Execute an investigation rule/workflow that chains together multiple skills.
 **Example 2: Respond to Endpoint Detection**
 1. Use `get_detection_details` to understand the threat
 2. Use `get_endpoint_summary` to check endpoint status
-3. Use `isolate_endpoint` if threat is active
-4. Use `collect_forensic_artifacts` to gather evidence
+3. Use `isolate_endpoint` to file a Requests approval if the threat is active — do not claim the host is already isolated
+4. Use `collect_forensic_artifacts` to file a forensics request
 5. Use `get_file_report` to analyze associated files
 6. Create case and document with case management tools
 
@@ -2606,7 +2742,7 @@ Use `list_rules` to check available rules, and check tool availability through t
 
 ### `close_alert`
 
-Close a security alert in the SIEM platform. Use this when an alert has been determined to be a false positive or benign true positive during triage.
+Request closing a security alert (false positive or benign true positive). **Queued for analyst approval** in the SamiGPT Requests view — the alert is not closed until approved. Use `update_alert_verdict` immediately for the AI working assessment.
 
 **Parameters:**
 - `alert_id` (string, required): The ID of the alert to close
@@ -2614,12 +2750,9 @@ Close a security alert in the SIEM platform. Use this when an alert has been det
 - `comment` (string, optional): Comment explaining why the alert is being closed
 
 **Returns:**
-- `success` (boolean): Whether the operation succeeded
-- `alert_id` (string): The ID of the alert that was closed
-- `status` (string): The new status of the alert (typically "closed")
-- `reason` (string): Reason for closing
-- `comment` (string): Comment provided
-- `alert` (object): Updated alert details
+- `queued` (boolean): `true` when the close was filed for approval
+- `request_id` (string): Requests-view id
+- `message` (string): Analyst-facing status (pending approval)
 
 **Usage Example:**
 ```json
@@ -2638,6 +2771,46 @@ Close a security alert in the SIEM platform. Use this when an alert has been det
 - Mark benign true positives as resolved
 - Document closure reasons for audit purposes
 - Reduce alert noise in the SIEM
+
+---
+
+### `create_elastic_case`
+
+Open a case in **Elastic Security** (Kibana Cases API) on the bound cluster. This does **not** use IRIS or TheHive. The full SIEM alert (title, rule text, entities, triggering events, comments) is written into the case description and the alert is attached when possible.
+
+Runs immediately (not queued). Used when an analyst answers **No** to “Is this you?”, and whenever a true positive should be tracked in Elastic.
+
+**Parameters:**
+- `alert_id` (string, optional): SIEM alert to load and attach
+- `title` (string, optional): Case title. Default is `[activity/rule] - [user/host] - [date]`
+- `description` (string, optional): Investigation notes. The full alert is always appended.
+- `severity` (string, optional): `low`, `medium`, `high`, `critical`. Default: `high`
+- `tags` (array, optional): Extra tags (`sami-gpt` and `escalated` are added automatically)
+- `username`, `source_ip`, `hostname`, `timestamp`, `activity` (optional): Identity-check context
+
+**Returns:**
+- `success` (boolean)
+- `provider` (string): `elastic`
+- `case_id` (string): Elastic case id
+- `title`, `description`, `severity`, `status`, `tags`
+- `alert_id` (string)
+- `alert_attached` (boolean): whether the alert was linked on the case
+- `case` (object): raw Cases API response
+
+**Usage Example:**
+```json
+{
+  "name": "create_elastic_case",
+  "arguments": {
+    "alert_id": "alert-123",
+    "description": "Analyst confirmed this VPN login was not the user.",
+    "username": "sami",
+    "source_ip": "8.8.8.8",
+    "activity": "VPN login",
+    "severity": "high"
+  }
+}
+```
 
 ---
 
@@ -2683,7 +2856,7 @@ Update the verdict for a security alert. Use this to set or update the verdict f
 - Document verdict with explanatory comments
 - Track investigation status through verdict field
 
-**Note:** This is the preferred method for setting verdicts as it clearly indicates the intent to update the verdict rather than close the alert. Use `close_alert` when you want to close the alert entirely.
+**Note:** This is the preferred method for the AI working assessment. It runs immediately and does **not** close the alert. Use `close_alert` to file official closure for analyst approval.
 
 ---
 
@@ -2818,6 +2991,48 @@ Add a note or comment to a security alert in the SIEM platform. Use this to docu
 - Case number (if a case was created)
 - For FP/BTP: Specific recommendations for detection rule improvements (bullet points on how to fine-tune the rule)
 - For TP/Suspicious: Key findings and escalation reason
+
+---
+
+### `get_alert_notes`
+
+Fetch Security Solution / Rule Tuner analyst notes for one or more alerts. Notes are **not** on alert `_source` — always call this when reviewing similar or past closed/ack alerts so prior analyst guidance is visible.
+
+Uses Kibana `GET /api/note?documentIds={alert_id}` with `Elastic-Api-Version: 2023-10-31`. `documentIds` is the alert Elasticsearch `_id` (same as `kibana.alert.uuid` / Rule Tuner `alert.id`).
+
+**Parameters:**
+- `alert_id` (string, optional): Single alert id to fetch notes for
+- `alert_ids` (array of string, optional): Batch of alert ids (preferred when reviewing similar past alerts)
+
+At least one of `alert_id` / `alert_ids` is required.
+
+**Returns:**
+- `success` (boolean): Whether the operation succeeded
+- `alert_ids` (array): Resolved alert ids queried
+- `total_count` (integer): Note count from Kibana (`totalCount`)
+- `notes` (array): Normalized notes with `note_id`, `note`, `event_id`, `timeline_id`, `created` / `created_iso`, `created_by`, `updated` / `updated_iso`, `updated_by`, `version`
+- `note_texts` (array): Convenience list of note body strings
+
+**Usage Example:**
+```json
+{
+  "name": "get_alert_notes",
+  "arguments": {
+    "alert_ids": [
+      "0a3dd0aa0508acf0b39b99e85c63a39a7af1cc476c98b35ee4e09fe39871f46c",
+      "another-similar-alert-id"
+    ]
+  }
+}
+```
+
+**Use Cases:**
+- Mandatory historical review of similar closed/ack alerts during SOC1 triage
+- Read what prior analysts wrote about the same rule + same key entities
+- Understand FP/BTP rationale before closing a new matching alert
+- Inspect notes already attached to the current alert
+
+**Note:** Prefer batching with `alert_ids` when reviewing 3–8 similar past alerts. Empty `notes` means no Security Solution notes were found (still record that in `${HISTORICAL_DECISIONS}`).
 
 ---
 

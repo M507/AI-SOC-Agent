@@ -6,7 +6,10 @@ class AIController {
         // Core state
         this.activeSessionId = null;
         this.uiDebugMode = false;
-        this.activeSection = 'sessions'; // 'sessions' | 'autoruns' | 'settings'
+        this.activeSection = 'sessions'; // 'sessions' | 'autoruns' | 'requests' | 'settings' | 'mcp'
+        this.activeSettingsPage = 'llm';
+        this.mcpReadiness = null;
+        this.lastMCPAlertCode = null;
         
         // Initialize managers
         this.api = new APIClient();
@@ -15,6 +18,12 @@ class AIController {
         this.sessionManager = new SessionManager(this);
         this.autorunManager = new AutorunManager(this);
         this.modals = new ModalManager(this);
+        this.settingsManager = new SettingsManager(this);
+        this.elasticClusters = new ElasticClustersManager(this);
+        this.netboxSettings = new NetBoxSettingsManager(this);
+        this.integrationsSettings = new IntegrationsSettingsManager(this);
+        this.mcpPanel = new MCPPanel(this);
+        this.requestsManager = new RequestsManager(this);
         
         this.init();
     }
@@ -22,9 +31,16 @@ class AIController {
     init() {
         this.setupEventListeners();
         this.loadConfig();
+        this.settingsManager.load();
+        this.elasticClusters.load();
+        this.netboxSettings.load();
+        this.integrationsSettings.load();
+        this.mcpPanel.refresh();
+        this.refreshMCPReadiness({ notify: true });
         // Default view is manual sessions; load initial data
         this.loadSessions('manual');
         this.loadAutoruns();
+        this.requestsManager.load();
 
         // Poll for updates every 3 seconds to keep chats live without
         // interfering with non-chat views like Settings.
@@ -48,14 +64,29 @@ class AIController {
                     }
                 }
             }
+
+            if (this.activeSection === 'requests') {
+                this.requestsManager.load();
+            } else {
+                this.requestsManager.refreshCounts();
+            }
         }, 3000);
+
+        this.mcpHealthInterval = setInterval(() => {
+            this.mcpPanel.refresh();
+        }, 10000);
+        this.mcpReadinessInterval = setInterval(() => {
+            this.refreshMCPReadiness();
+        }, 30000);
     }
     
     setupEventListeners() {
         // Left navigation
         const navSessions = document.getElementById('nav-sessions');
         const navAutoruns = document.getElementById('nav-autoruns');
+        const navRequests = document.getElementById('nav-requests');
         const navSettings = document.getElementById('nav-settings');
+        const navMcp = document.getElementById('nav-mcp');
 
         if (navSessions) {
             navSessions.addEventListener('click', () => {
@@ -67,9 +98,38 @@ class AIController {
                 this.setActiveSection('autoruns');
             });
         }
+        if (navRequests) {
+            navRequests.addEventListener('click', () => {
+                this.setActiveSection('requests');
+            });
+        }
         if (navSettings) {
             navSettings.addEventListener('click', () => {
                 this.setActiveSection('settings');
+            });
+        }
+        if (navMcp) {
+            navMcp.addEventListener('click', () => {
+                this.setActiveSection('mcp');
+            });
+        }
+        const readinessAction = document.getElementById('mcp-readiness-action');
+        if (readinessAction) {
+            readinessAction.addEventListener('click', () => this.openMCPReadinessAction());
+        }
+
+        const emptyNewSessionBtn = document.getElementById('empty-new-session-btn');
+        if (emptyNewSessionBtn) {
+            emptyNewSessionBtn.addEventListener('click', () => {
+                this.setActiveSection('sessions');
+                this.modals.showNewSession();
+            });
+        }
+        const emptyNewAutorunBtn = document.getElementById('empty-new-autorun-btn');
+        if (emptyNewAutorunBtn) {
+            emptyNewAutorunBtn.addEventListener('click', () => {
+                this.setActiveSection('autoruns');
+                this.modals.showNewAutorun();
             });
         }
 
@@ -91,11 +151,27 @@ class AIController {
             });
         }
         
-        // Settings button
+        // Settings / MCP header buttons
         const settingsBtn = document.getElementById('settings-btn');
         if (settingsBtn) {
             settingsBtn.addEventListener('click', () => {
                 this.setActiveSection('settings');
+            });
+        }
+        const mcpBtn = document.getElementById('mcp-btn');
+        if (mcpBtn) {
+            mcpBtn.addEventListener('click', () => {
+                this.setActiveSection('mcp');
+            });
+        }
+        const logoutBtn = document.getElementById('logout-btn');
+        if (logoutBtn) {
+            logoutBtn.addEventListener('click', async () => {
+                try {
+                    await fetch('/api/auth/logout', { method: 'POST', credentials: 'same-origin' });
+                } finally {
+                    window.location.href = '/login';
+                }
             });
         }
         
@@ -214,11 +290,39 @@ class AIController {
             }
         });
         
-        // Settings tab
-        const settingsTab = document.getElementById('settings-tab');
-        if (settingsTab) {
-            settingsTab.addEventListener('click', () => {
-                this.setActiveSection('settings');
+        // Settings sub-tabs (LLM, Elastic, UI, Integrations, and future pages)
+        const settingsTabs = document.getElementById('settings-tabs');
+        if (settingsTabs) {
+            settingsTabs.addEventListener('click', (event) => {
+                const tab = event.target.closest('[data-settings-page]');
+                if (!tab) return;
+                if (this.activeSection !== 'settings') {
+                    this.activeSettingsPage = tab.dataset.settingsPage;
+                    this.setActiveSection('settings');
+                    return;
+                }
+                this.setSettingsPage(tab.dataset.settingsPage);
+            });
+        }
+        const mcpTab = document.getElementById('mcp-tab');
+        if (mcpTab) {
+            mcpTab.addEventListener('click', () => {
+                this.setActiveSection('mcp');
+            });
+        }
+        const requestsTabs = document.getElementById('requests-tabs');
+        if (requestsTabs) {
+            requestsTabs.addEventListener('click', (event) => {
+                const tab = event.target.closest('[data-request-queue]');
+                if (!tab) {
+                    return;
+                }
+                if (this.activeSection !== 'requests') {
+                    this.setActiveSection('requests');
+                }
+                if (this.requestsManager) {
+                    this.requestsManager.setQueueTab(tab.dataset.requestQueue);
+                }
             });
         }
         
@@ -240,6 +344,64 @@ class AIController {
                 debugToggle.checked = this.uiDebugMode;
             }
         }
+    }
+
+    async refreshMCPReadiness({ notify = false } = {}) {
+        const readiness = await this.api.getMCPReadiness();
+        this.mcpReadiness = readiness;
+        this.renderMCPReadiness(readiness);
+
+        if (
+            notify
+            && readiness
+            && !readiness.ready
+            && readiness.code !== this.lastMCPAlertCode
+            && window.toast
+        ) {
+            window.toast.error(
+                `${readiness.title}. ${readiness.message}`,
+                { key: 'mcp-readiness', duration: 12000 }
+            );
+        }
+        this.lastMCPAlertCode = readiness && readiness.ready ? null : (readiness && readiness.code);
+        return readiness;
+    }
+
+    renderMCPReadiness(readiness) {
+        const banner = document.getElementById('mcp-readiness-banner');
+        if (!banner) return;
+        const show = Boolean(readiness && !readiness.ready);
+        banner.hidden = !show;
+        banner.classList.toggle('is-error', Boolean(show && readiness.severity === 'error'));
+        if (!show) return;
+
+        const title = document.getElementById('mcp-readiness-title');
+        const message = document.getElementById('mcp-readiness-message');
+        const action = document.getElementById('mcp-readiness-action');
+        if (title) title.textContent = readiness.title || 'AI tools are not connected';
+        if (message) message.textContent = readiness.message || 'Open settings to connect MCP.';
+        if (action) action.textContent = readiness.action_label || 'Open connection setup';
+    }
+
+    openMCPReadinessAction() {
+        const readiness = this.mcpReadiness || {};
+        if (readiness.action_section === 'mcp') {
+            this.setActiveSection('mcp');
+            return;
+        }
+
+        this.activeSettingsPage = readiness.action_page || 'llm';
+        this.setActiveSection('settings');
+        this.setSettingsPage(this.activeSettingsPage);
+        const anchorId = readiness.action_anchor || 'openwebui-mcp-card';
+        window.setTimeout(() => {
+            const target = document.getElementById(anchorId);
+            if (target) {
+                target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                target.classList.add('settings-card-attention');
+                window.setTimeout(() => target.classList.remove('settings-card-attention'), 2500);
+            }
+        }, 100);
     }
     
     async loadSessions(sessionType = 'manual') {
@@ -292,6 +454,7 @@ class AIController {
                 sessionTitle.textContent = session.name;
             }
             this.sessionManager.updateStatus(session.status);
+            this.setClusterPill('session-cluster', session.cluster);
             
             // Render terminal
             this.terminal.render(session);
@@ -304,7 +467,9 @@ class AIController {
     
     async executeCommand() {
         if (!this.activeSessionId) {
-            alert('Please select a session first');
+            if (window.toast) {
+                window.toast.info('Create or select a session first.', { key: 'session' });
+            }
             return;
         }
         
@@ -351,7 +516,7 @@ class AIController {
     }
     
     setActiveSection(section) {
-        if (!['sessions', 'autoruns', 'settings'].includes(section)) {
+        if (!['sessions', 'autoruns', 'requests', 'settings', 'mcp'].includes(section)) {
             console.warn('[AIController] Unknown section:', section);
             return;
         }
@@ -359,7 +524,7 @@ class AIController {
         this.activeSection = section;
 
         // Update sidebar nav active state
-        const sections = ['sessions', 'autoruns', 'settings'];
+        const sections = ['sessions', 'autoruns', 'requests', 'settings', 'mcp'];
         sections.forEach((name) => {
             const el = document.getElementById(`nav-${name}`);
             if (el) {
@@ -374,7 +539,9 @@ class AIController {
         // Tab groups
         const sessionsGroup = document.getElementById('sessions-tab-group');
         const autorunsGroup = document.getElementById('autoruns-tab-group');
+        const requestsGroup = document.getElementById('requests-tab-group');
         const settingsGroup = document.getElementById('settings-tab-group');
+        const mcpGroup = document.getElementById('mcp-tab-group');
 
         if (sessionsGroup) {
             sessionsGroup.style.display = section === 'sessions' ? 'flex' : 'none';
@@ -382,99 +549,182 @@ class AIController {
         if (autorunsGroup) {
             autorunsGroup.style.display = section === 'autoruns' ? 'flex' : 'none';
         }
+        if (requestsGroup) {
+            requestsGroup.style.display = section === 'requests' ? 'flex' : 'none';
+        }
         if (settingsGroup) {
-            // Only show settings tab row when in settings view
             settingsGroup.style.display = section === 'settings' ? 'flex' : 'none';
         }
+        if (mcpGroup) {
+            mcpGroup.style.display = section === 'mcp' ? 'flex' : 'none';
+        }
+
+        this.syncHeaderActions(section);
 
         const sessionContent = document.getElementById('session-content');
-        const autorunContent = document.getElementById('autorun-content');
-        const settingsContent = document.getElementById('settings-content');
+        const mcpContent = document.getElementById('mcp-content');
+        const requestsContent = document.getElementById('requests-content');
         const noSessionMessage = document.getElementById('no-session-message');
-        const autorunEmpty = document.getElementById('autorun-empty-message');
+
+        if (section !== 'settings') {
+            this.hideSettingsPages();
+        }
+
+        if (section !== 'autoruns' && this.autorunManager) {
+            this.autorunManager.setPanelOpen(false);
+            this.autorunManager.setEmptyVisible(false);
+        }
+
+        if (requestsContent) {
+            requestsContent.style.display = section === 'requests' ? 'flex' : 'none';
+        }
 
         if (section === 'sessions') {
             if (sessionContent) sessionContent.style.display = this.activeSessionId ? 'flex' : 'none';
-            if (autorunContent) {
-                autorunContent.style.display = 'none';
-                // Remove class from content-area
-                const contentArea = document.querySelector('.content-area');
-                if (contentArea) {
-                    contentArea.classList.remove('has-autorun');
-                }
-            }
-            if (settingsContent) settingsContent.style.display = 'none';
+            if (mcpContent) mcpContent.style.display = 'none';
             if (noSessionMessage) noSessionMessage.style.display = this.activeSessionId ? 'none' : 'flex';
-            if (autorunEmpty) autorunEmpty.style.display = 'none';
         } else if (section === 'autoruns') {
             if (sessionContent) sessionContent.style.display = 'none';
-            if (settingsContent) settingsContent.style.display = 'none';
+            if (mcpContent) mcpContent.style.display = 'none';
             if (noSessionMessage) noSessionMessage.style.display = 'none';
-
-            const hasAutorunTabs = document.querySelector('button.tab[data-autorun-id]') !== null;
-            if (hasAutorunTabs) {
-                if (autorunContent) {
-                    autorunContent.style.display = 'block';
-                    // Add class to content-area to prevent it from scrolling
-                    const contentArea = document.querySelector('.content-area');
-                    if (contentArea) {
-                        contentArea.classList.add('has-autorun');
-                    }
-                }
-                if (autorunEmpty) autorunEmpty.style.display = 'none';
-            } else {
-                if (autorunContent) {
-                    autorunContent.style.display = 'none';
-                    // Remove class from content-area
-                    const contentArea = document.querySelector('.content-area');
-                    if (contentArea) {
-                        contentArea.classList.remove('has-autorun');
-                    }
-                }
-                if (autorunEmpty) autorunEmpty.style.display = 'flex';
+            this.autorunManager.syncView();
+        } else if (section === 'requests') {
+            if (sessionContent) sessionContent.style.display = 'none';
+            if (mcpContent) mcpContent.style.display = 'none';
+            if (noSessionMessage) noSessionMessage.style.display = 'none';
+            document.querySelectorAll('button.tab[data-session-id]').forEach((tab) => {
+                tab.classList.remove('active');
+            });
+            const requestsTab = document.querySelector('#requests-tabs .tab.active') || document.getElementById('requests-tab');
+            if (requestsTab) {
+                requestsTab.classList.add('active');
+            }
+            this.requestsManager.load();
+            if (this.activeSessionId) {
+                this.wsManager.disconnect(this.activeSessionId);
             }
         } else if (section === 'settings') {
             if (sessionContent) sessionContent.style.display = 'none';
-            if (autorunContent) {
-                autorunContent.style.display = 'none';
-                // Remove class from content-area
-                const contentArea = document.querySelector('.content-area');
-                if (contentArea) {
-                    contentArea.classList.remove('has-autorun');
-                }
-            }
-            if (settingsContent) settingsContent.style.display = 'block';
+            if (mcpContent) mcpContent.style.display = 'none';
             if (noSessionMessage) noSessionMessage.style.display = 'none';
-            if (autorunEmpty) autorunEmpty.style.display = 'none';
 
-            // Deactivate any active session tab and activate settings tab
-            document.querySelectorAll('button.tab[data-session-id]').forEach(tab => {
+            document.querySelectorAll('button.tab[data-session-id]').forEach((tab) => {
                 tab.classList.remove('active');
             });
-            const settingsTab = document.getElementById('settings-tab');
-            if (settingsTab) {
-                settingsTab.classList.add('active');
+            this.setSettingsPage(this.activeSettingsPage);
+            this.settingsManager.load();
+            if (this.elasticClusters) {
+                this.elasticClusters.load();
+            }
+            if (this.netboxSettings) {
+                this.netboxSettings.load();
+            }
+            if (this.integrationsSettings) {
+                this.integrationsSettings.load();
             }
 
-            // Disconnect WebSocket if a session is active
+            if (this.activeSessionId) {
+                this.wsManager.disconnect(this.activeSessionId);
+            }
+        } else if (section === 'mcp') {
+            if (sessionContent) sessionContent.style.display = 'none';
+            if (mcpContent) mcpContent.style.display = 'block';
+            if (noSessionMessage) noSessionMessage.style.display = 'none';
+
+            document.querySelectorAll('button.tab[data-session-id]').forEach((tab) => {
+                tab.classList.remove('active');
+            });
+            const mcpTab = document.getElementById('mcp-tab');
+            if (mcpTab) {
+                mcpTab.classList.add('active');
+            }
+            this.mcpPanel.load();
             if (this.activeSessionId) {
                 this.wsManager.disconnect(this.activeSessionId);
             }
         }
     }
+
+    syncHeaderActions(section) {
+        const newSessionBtn = document.getElementById('new-session-btn');
+        const newAutorunBtn = document.getElementById('new-autorun-btn');
+        if (newSessionBtn) {
+            newSessionBtn.hidden = section !== 'sessions';
+        }
+        if (newAutorunBtn) {
+            newAutorunBtn.hidden = section !== 'autoruns';
+        }
+    }
+
+    hideSettingsPages() {
+        document.querySelectorAll('[data-settings-page-content]').forEach((panel) => {
+            panel.style.display = 'none';
+        });
+        document.querySelectorAll('#settings-tabs [data-settings-page]').forEach((tab) => {
+            tab.classList.remove('active');
+        });
+    }
+
+    setSettingsPage(pageId) {
+        const tabs = Array.from(document.querySelectorAll('#settings-tabs [data-settings-page]'));
+        const pages = tabs.map((tab) => tab.dataset.settingsPage);
+        if (!pageId || !pages.includes(pageId)) {
+            pageId = pages.includes(this.activeSettingsPage) ? this.activeSettingsPage : pages[0];
+        }
+        this.activeSettingsPage = pageId || 'llm';
+        tabs.forEach((tab) => {
+            tab.classList.toggle('active', tab.dataset.settingsPage === this.activeSettingsPage);
+        });
+        document.querySelectorAll('[data-settings-page-content]').forEach((panel) => {
+            panel.style.display = panel.dataset.settingsPageContent === this.activeSettingsPage ? 'flex' : 'none';
+        });
+    }
     
     showSettings() {
-        // Backwards-compatible helper to switch to settings section
         this.setActiveSection('settings');
+    }
+
+    setClusterPill(elementId, cluster) {
+        const el = document.getElementById(elementId);
+        if (!el) return;
+        const name = cluster && cluster.name;
+        if (!name) {
+            el.hidden = true;
+            el.textContent = '';
+            el.removeAttribute('title');
+            return;
+        }
+        el.hidden = false;
+        el.textContent = name;
+        el.title = cluster.base_url ? `${name} — ${cluster.base_url}` : name;
+    }
+
+    updateMCPHealthIndicator(state, running) {
+        const cls = running ? 'health-ok' : (state === 'unhealthy' ? 'health-bad' : 'health-unknown');
+        ['mcp-health-dot', 'nav-mcp-dot'].forEach((id) => {
+            const el = document.getElementById(id);
+            if (!el) return;
+            el.className = `health-dot ${cls}`;
+            el.title = running ? 'MCP server running' : 'MCP server stopped';
+        });
     }
     
     async updateDebugMode(enabled) {
         this.uiDebugMode = enabled;
         
-        // Persist to backend
         const data = await this.api.updateConfig({ ui_debug: enabled });
-        if (!data.success) {
+        if (data.success) {
+            if (window.toast) {
+                window.toast.success(
+                    enabled ? 'Debug mode on — full JSON will be shown.' : 'Debug mode off — replies only.',
+                    { key: 'ui' }
+                );
+            }
+        } else {
             console.error('Failed to update debug mode:', data);
+            if (window.toast) {
+                window.toast.error(data.error || 'Could not save debug mode', { key: 'ui' });
+            }
         }
     }
 }

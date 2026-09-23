@@ -41,6 +41,9 @@ class GitHubHttpClient:
             "Authorization": f"Bearer {self.api_token}",
             "Accept": "application/vnd.github+json",
             "X-GitHub-Api-Version": "2022-11-28",
+            # Avoid intermediary/CDN serving a stale issues list right after create.
+            "Cache-Control": "no-cache",
+            "Pragma": "no-cache",
         }
 
     def _build_url(self, endpoint: str) -> str:
@@ -88,21 +91,11 @@ class GitHubHttpClient:
         endpoint: str,
         json_data: Optional[Dict[str, Any]] = None,
         params: Optional[Dict[str, Any]] = None,
-    ) -> Dict[str, Any]:
+    ) -> Any:
         """
         Make an HTTP request to GitHub API.
-        
-        Args:
-            method: HTTP method (GET, POST, PUT, PATCH, DELETE)
-            endpoint: API endpoint path
-            json_data: JSON payload (for POST, PUT, PATCH)
-            params: Query parameters
-        
-        Returns:
-            Response JSON as dictionary
-        
-        Raises:
-            IntegrationError: If the request fails
+
+        Returns JSON object or array depending on the endpoint.
         """
         url = self._build_url(endpoint)
         headers = self._headers()
@@ -126,7 +119,10 @@ class GitHubHttpClient:
 
             logger.debug(f"GitHub response status: {response.status_code}")
             if response.status_code >= 400:
-                logger.error(f"GitHub API error - Status: {response.status_code}, URL: {url}, Response: {response.text[:500]}")
+                logger.error(
+                    f"GitHub API error - Status: {response.status_code}, URL: {url}, "
+                    f"Response: {response.text[:500]}"
+                )
 
             self._handle_github_error(response)
 
@@ -140,19 +136,23 @@ class GitHubHttpClient:
         except requests.exceptions.RequestException as e:
             raise IntegrationError(f"GitHub API request failed: {e}") from e
 
-    def get(self, endpoint: str, params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    def get(self, endpoint: str, params: Optional[Dict[str, Any]] = None) -> Any:
         """GET request."""
         return self.request("GET", endpoint, params=params)
 
-    def post(self, endpoint: str, json_data: Optional[Dict[str, Any]] = None, params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    def post(self, endpoint: str, json_data: Optional[Dict[str, Any]] = None, params: Optional[Dict[str, Any]] = None) -> Any:
         """POST request."""
         return self.request("POST", endpoint, json_data=json_data, params=params)
 
-    def put(self, endpoint: str, json_data: Optional[Dict[str, Any]] = None, params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    def put(self, endpoint: str, json_data: Optional[Dict[str, Any]] = None, params: Optional[Dict[str, Any]] = None) -> Any:
         """PUT request."""
         return self.request("PUT", endpoint, json_data=json_data, params=params)
 
-    def delete(self, endpoint: str, params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    def patch(self, endpoint: str, json_data: Optional[Dict[str, Any]] = None, params: Optional[Dict[str, Any]] = None) -> Any:
+        """PATCH request."""
+        return self.request("PATCH", endpoint, json_data=json_data, params=params)
+
+    def delete(self, endpoint: str, params: Optional[Dict[str, Any]] = None) -> Any:
         """DELETE request."""
         return self.request("DELETE", endpoint, params=params)
 

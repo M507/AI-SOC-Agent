@@ -27,6 +27,10 @@ from src.orchestrator.tools_siem import (
     search_user_activity,
     pivot_on_indicator,
     search_kql_query,
+    search_lucene_query,
+    search_eql_query,
+    search_dsl_query,
+    search_esql_query,
     get_recent_alerts,
     get_security_alerts,
     get_security_alert_by_id,
@@ -47,6 +51,8 @@ from src.orchestrator.tools_siem import (
     close_alert,
     tag_alert,
     add_alert_note,
+    get_alert_notes,
+    create_elastic_case,
 )
 
 def run_tool_test(tool_name: str, func, *args, **kwargs):
@@ -168,8 +174,26 @@ def main():
         hours_back=24,
         client=siem_client
     )
-    
-    # Test KQL query with Elasticsearch Query DSL
+
+    results["search_lucene_query"] = run_tool_test(
+        "search_lucene_query",
+        search_lucene_query,
+        lucene_query='process.name:powershell.exe',
+        limit=10,
+        hours_back=24,
+        client=siem_client,
+    )
+
+    results["search_eql_query"] = run_tool_test(
+        "search_eql_query",
+        search_eql_query,
+        eql_query='process where process.name == "powershell.exe"',
+        limit=10,
+        hours_back=24,
+        client=siem_client,
+    )
+
+    # Test dedicated DSL skill (prefer search_dsl_query over stuffing JSON into KQL)
     es_query_dsl = json.dumps({
         "query": {
             "bool": {
@@ -180,8 +204,26 @@ def main():
         },
         "size": 10
     })
+    results["search_dsl_query"] = run_tool_test(
+        "search_dsl_query",
+        search_dsl_query,
+        dsl_query=es_query_dsl,
+        limit=10,
+        hours_back=24,
+        client=siem_client,
+    )
+
+    results["search_esql_query"] = run_tool_test(
+        "search_esql_query",
+        search_esql_query,
+        esql_query='FROM logs-* | WHERE host.name IS NOT NULL | KEEP @timestamp, host.name | LIMIT 5',
+        limit=5,
+        client=siem_client,
+    )
+
+    # Legacy: KQL skill still accepts DSL JSON for compatibility
     results["search_kql_query_es_dsl"] = run_tool_test(
-        "search_kql_query (Elasticsearch DSL)",
+        "search_kql_query (Elasticsearch DSL compatibility)",
         search_kql_query,
         kql_query=es_query_dsl,
         limit=10,
@@ -335,6 +377,13 @@ Recommendations for Detection Rule Improvement:
             note=test_note,
             client=siem_client
         )
+
+        results["get_alert_notes"] = run_tool_test(
+            "get_alert_notes",
+            get_alert_notes,
+            alert_id=test_alert_id,
+            client=siem_client,
+        )
     else:
         print(f"\n{'='*80}")
         print(f"Testing: get_security_alert_by_id")
@@ -348,6 +397,7 @@ Recommendations for Detection Rule Improvement:
         results["tag_alert_invalid"] = True  # Mark as passed since tool works
         results["add_alert_note"] = True  # Mark as passed since tool works
         results["add_alert_note_detailed"] = True  # Mark as passed since tool works
+        results["get_alert_notes"] = True  # Mark as passed since tool works
     
     # Test get_siem_event_by_id - first get an event ID from search
     print(f"\n{'='*80}")
@@ -765,6 +815,38 @@ Recommendations for Detection Rule Improvement:
         limit=10,
         client=siem_client
     )
+    
+    # Elastic Security cases (not IRIS / TheHive)
+    print("\n" + "="*80)
+    print("ELASTIC SECURITY CASES")
+    print("="*80)
+    created_case_id = None
+    try:
+        case_result = create_elastic_case(
+            title="SamiGPT skill test — delete me",
+            description="Temporary case from tests/integrations/siem/elastic/test_siem_tools.py",
+            alert_id=test_alert_id,
+            tags=["sami-skill-test"],
+            severity="low",
+            identity={"activity": "integration-test"} if test_alert_id else None,
+            client=siem_client,
+        )
+        created_case_id = case_result.get("case_id")
+        results["create_elastic_case"] = bool(case_result.get("success") and created_case_id)
+        print(f"✓ create_elastic_case case_id={created_case_id} alert_attached={case_result.get('alert_attached')}")
+        if test_alert_id and test_alert_id not in (case_result.get("description") or ""):
+            print(f"✗ case description did not include alert {test_alert_id}")
+            results["create_elastic_case"] = False
+    except Exception as e:
+        print(f"✗ create_elastic_case FAILED: {type(e).__name__}: {e}")
+        results["create_elastic_case"] = False
+    finally:
+        if created_case_id:
+            try:
+                siem_client._cases_http().delete("/api/cases", json_data={"ids": [created_case_id]})
+                print(f"✓ deleted Elastic case {created_case_id}")
+            except Exception as e:
+                print(f"✗ failed to delete Elastic case {created_case_id}: {e}")
     
     # Summary
     print("\n" + "="*80)

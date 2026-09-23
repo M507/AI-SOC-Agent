@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 from .config import (
+    AIControllerConfig,
     CTIConfig,
     ClickUpConfig,
     EDRConfig,
@@ -21,7 +22,10 @@ from .config import (
     EngConfig,
     GitHubConfig,
     IrisConfig,
+    LLMConfig,
     LoggingConfig,
+    MCPRuntimeConfig,
+    NetBoxConfig,
     SamiConfig,
     TheHiveConfig,
     TrelloConfig,
@@ -87,6 +91,14 @@ def _config_to_dict(config: SamiConfig) -> Dict[str, Any]:
             "verify_ssl": config.cti.verify_ssl,
         }
 
+    if config.netbox:
+        result["netbox"] = {
+            "base_url": config.netbox.base_url,
+            "api_token": config.netbox.api_token,
+            "timeout_seconds": config.netbox.timeout_seconds,
+            "verify_ssl": config.netbox.verify_ssl,
+        }
+
     if config.eng:
         eng_dict: Dict[str, Any] = {
             "provider": config.eng.provider,
@@ -113,13 +125,46 @@ def _config_to_dict(config: SamiConfig) -> Dict[str, Any]:
         if config.eng.github:
             eng_dict["github"] = {
                 "api_token": config.eng.github.api_token,
-                "fine_tuning_project_id": config.eng.github.fine_tuning_project_id,
-                "engineering_project_id": config.eng.github.engineering_project_id,
+                "repository": config.eng.github.repository,
+                "fine_tuning_label": config.eng.github.fine_tuning_label,
+                "visibility_label": config.eng.github.visibility_label,
                 "timeout_seconds": config.eng.github.timeout_seconds,
                 "verify_ssl": config.eng.github.verify_ssl,
             }
+            if config.eng.github.fine_tuning_project_id:
+                eng_dict["github"]["fine_tuning_project_id"] = config.eng.github.fine_tuning_project_id
+            if config.eng.github.engineering_project_id:
+                eng_dict["github"]["engineering_project_id"] = config.eng.github.engineering_project_id
         if eng_dict:
             result["eng"] = eng_dict
+
+    if config.ai_controller:
+        result["ai_controller"] = {
+            "storage_dir": config.ai_controller.storage_dir,
+            "web_port": config.ai_controller.web_port,
+            "web_host": config.ai_controller.web_host,
+        }
+
+    if config.llm:
+        llm_dict: Dict[str, Any] = {
+            "provider": config.llm.provider,
+            "max_tool_iterations": config.llm.max_tool_iterations,
+        }
+        if config.llm.system_prompt:
+            llm_dict["system_prompt"] = config.llm.system_prompt
+        for key in ("cursor_agent", "openai", "openrouter", "openwebui", "custom"):
+            value = getattr(config.llm, key)
+            if value:
+                llm_dict[key] = value
+        result["llm"] = llm_dict
+
+    if config.mcp:
+        result["mcp"] = {
+            "enabled": config.mcp.enabled,
+            "auto_start": config.mcp.auto_start,
+            "host": config.mcp.host,
+            "port": config.mcp.port,
+        }
 
     return result
 
@@ -155,16 +200,9 @@ def _dict_to_config(data: Dict[str, Any]) -> SamiConfig:
 
     elastic_cfg: Optional[ElasticConfig] = None
     if "elastic" in data and data["elastic"]:
-        el_data = data["elastic"]
-        if el_data.get("base_url"):
-            elastic_cfg = ElasticConfig(
-                base_url=el_data["base_url"],
-                api_key=el_data.get("api_key"),
-                username=el_data.get("username"),
-                password=el_data.get("password"),
-                timeout_seconds=el_data.get("timeout_seconds", 30),
-                verify_ssl=el_data.get("verify_ssl", True),
-            )
+        from .elastic_clusters import elastic_config_from_section
+
+        elastic_cfg = elastic_config_from_section(data["elastic"])
 
     edr_cfg: Optional[EDRConfig] = None
     if "edr" in data and data["edr"]:
@@ -191,6 +229,18 @@ def _dict_to_config(data: Dict[str, Any]) -> SamiConfig:
                 api_key=api_key,
                 timeout_seconds=cti_data.get("timeout_seconds", 30),
                 verify_ssl=cti_data.get("verify_ssl", True),
+            )
+
+    netbox_cfg: Optional[NetBoxConfig] = None
+    if "netbox" in data and data["netbox"]:
+        nb_data = data["netbox"]
+        token = nb_data.get("api_token") or nb_data.get("token")
+        if nb_data.get("base_url") and token:
+            netbox_cfg = NetBoxConfig(
+                base_url=nb_data["base_url"],
+                api_token=token,
+                timeout_seconds=nb_data.get("timeout_seconds", 30),
+                verify_ssl=nb_data.get("verify_ssl", True),
             )
 
     eng_cfg: Optional[EngConfig] = None
@@ -228,10 +278,19 @@ def _dict_to_config(data: Dict[str, Any]) -> SamiConfig:
         if eng_data.get("github"):
             github_data = eng_data["github"]
             if github_data.get("api_token"):
+                repository = (
+                    github_data.get("repository")
+                    or github_data.get("repo")
+                    or github_data.get("issues_url")
+                    or ""
+                )
                 github_cfg = GitHubConfig(
                     api_token=github_data["api_token"],
-                    fine_tuning_project_id=github_data["fine_tuning_project_id"],
-                    engineering_project_id=github_data["engineering_project_id"],
+                    repository=str(repository or ""),
+                    fine_tuning_label=github_data.get("fine_tuning_label", "fine-tuning"),
+                    visibility_label=github_data.get("visibility_label", "visibility"),
+                    fine_tuning_project_id=github_data.get("fine_tuning_project_id"),
+                    engineering_project_id=github_data.get("engineering_project_id"),
                     timeout_seconds=github_data.get("timeout_seconds", 30),
                     verify_ssl=github_data.get("verify_ssl", True),
                 )
@@ -244,14 +303,51 @@ def _dict_to_config(data: Dict[str, Any]) -> SamiConfig:
                 provider=provider,
             )
 
+    ai_controller_cfg: Optional[AIControllerConfig] = None
+    if data.get("ai_controller"):
+        ac = data["ai_controller"]
+        ai_controller_cfg = AIControllerConfig(
+            storage_dir=ac.get("storage_dir", "data/ai_controller"),
+            web_port=int(ac.get("web_port", 8081)),
+            web_host=ac.get("web_host", "0.0.0.0"),
+        )
+
+    llm_cfg: Optional[LLMConfig] = None
+    if data.get("llm"):
+        llm_data = data["llm"]
+        llm_cfg = LLMConfig(
+            provider=llm_data.get("provider", "cursor_agent"),
+            system_prompt=llm_data.get("system_prompt"),
+            max_tool_iterations=int(llm_data.get("max_tool_iterations", 12)),
+            cursor_agent=llm_data.get("cursor_agent"),
+            openai=llm_data.get("openai"),
+            openrouter=llm_data.get("openrouter"),
+            openwebui=llm_data.get("openwebui"),
+            custom=llm_data.get("custom"),
+        )
+
+    mcp_cfg: Optional[MCPRuntimeConfig] = None
+    if data.get("mcp"):
+        mcp_data = data["mcp"]
+        mcp_cfg = MCPRuntimeConfig(
+            enabled=bool(mcp_data.get("enabled", True)),
+            auto_start=bool(mcp_data.get("auto_start", True)),
+            host=mcp_data.get("host", "127.0.0.1"),
+            port=int(mcp_data.get("port", 8082)),
+        )
+
     return SamiConfig(
         thehive=thehive_cfg,
         iris=iris_cfg,
         elastic=elastic_cfg,
         edr=edr_cfg,
         cti=cti_cfg,
+        netbox=netbox_cfg,
         eng=eng_cfg,
         logging=logging_cfg,
+        ai_controller=ai_controller_cfg,
+        llm=llm_cfg,
+        mcp=mcp_cfg,
     )
 
 
@@ -356,11 +452,33 @@ def _env_dict_to_config(env_dict: Dict[str, Any]) -> SamiConfig:
             verify_ssl=verify_ssl,
         )
 
+    netbox_cfg: Optional[NetBoxConfig] = None
+    netbox_url = env_dict.get("NETBOX_URL") or env_dict.get("SAMIGPT_NETBOX_URL")
+    netbox_token = env_dict.get("NETBOX_TOKEN") or env_dict.get("SAMIGPT_NETBOX_TOKEN")
+    if netbox_url and netbox_token:
+        timeout = int(
+            env_dict.get(
+                "NETBOX_TIMEOUT_SECONDS",
+                env_dict.get("SAMIGPT_NETBOX_TIMEOUT_SECONDS", "30"),
+            )
+        )
+        verify_ssl = env_dict.get(
+            "NETBOX_VERIFY_SSL",
+            env_dict.get("SAMIGPT_NETBOX_VERIFY_SSL", "true"),
+        ).lower() in ("true", "1", "yes")
+        netbox_cfg = NetBoxConfig(
+            base_url=netbox_url,
+            api_token=netbox_token,
+            timeout_seconds=timeout,
+            verify_ssl=verify_ssl,
+        )
+
     return SamiConfig(
         thehive=thehive_cfg,
         iris=iris_cfg,
         elastic=elastic_cfg,
         edr=edr_cfg,
+        netbox=netbox_cfg,
         logging=logging_cfg,
     )
 
@@ -541,6 +659,20 @@ def save_config_to_env_file(config: SamiConfig, env_path: str = ENV_FILE) -> Non
             lines.append("# SAMIGPT_EDR_API_KEY=")
             lines.append("")
 
+        # NetBox
+        if config.netbox:
+            lines.append("# NetBox DCIM/IPAM")
+            lines.append(f"NETBOX_URL={config.netbox.base_url}")
+            lines.append(f'NETBOX_TOKEN="{config.netbox.api_token}"')
+            lines.append(f"NETBOX_TIMEOUT_SECONDS={config.netbox.timeout_seconds}")
+            lines.append(f"NETBOX_VERIFY_SSL={'true' if config.netbox.verify_ssl else 'false'}")
+            lines.append("")
+        else:
+            lines.append("# NetBox DCIM/IPAM (disabled)")
+            lines.append("# NETBOX_URL=")
+            lines.append("# NETBOX_TOKEN=")
+            lines.append("")
+
         with open(env_file, "w") as f:
             f.write("\n".join(lines))
     except Exception as e:
@@ -648,20 +780,15 @@ def update_config_dict(
                 verify_ssl=iris_updates.get("verify_ssl", True),
             )
 
-    # Update Elastic
+    # Update Elastic (typed default cluster only; cluster lists are persisted via update_raw_section)
     if "elastic" in updates:
+        from .elastic_clusters import elastic_config_from_section
+
         el_updates = updates["elastic"]
         if el_updates is None:
             config.elastic = None
-        elif el_updates.get("base_url"):
-            config.elastic = ElasticConfig(
-                base_url=el_updates["base_url"],
-                api_key=el_updates.get("api_key"),
-                username=el_updates.get("username"),
-                password=el_updates.get("password"),
-                timeout_seconds=el_updates.get("timeout_seconds", 30),
-                verify_ssl=el_updates.get("verify_ssl", True),
-            )
+        elif el_updates.get("clusters") or el_updates.get("base_url"):
+            config.elastic = elastic_config_from_section(el_updates)
 
     # Update EDR
     if "edr" in updates:
@@ -678,7 +805,75 @@ def update_config_dict(
                 additional_params=edr_updates.get("additional_params"),
             )
 
+    # Update NetBox
+    if "netbox" in updates:
+        nb_updates = updates["netbox"]
+        if nb_updates is None:
+            config.netbox = None
+        elif nb_updates.get("base_url") and nb_updates.get("api_token"):
+            config.netbox = NetBoxConfig(
+                base_url=nb_updates["base_url"],
+                api_token=nb_updates["api_token"],
+                timeout_seconds=nb_updates.get("timeout_seconds", 30),
+                verify_ssl=nb_updates.get("verify_ssl", True),
+            )
+
     # Save updated config to both files
     save_config_to_file(config, config_path, env_path, save_both=save_both)
     return config
+
+
+def load_raw_config(config_path: Optional[str] = None) -> Dict[str, Any]:
+    """
+    Load the on-disk JSON config without converting to SamiConfig.
+
+    Prefer this when reading/writing sections that must not drop unknown keys
+    (llm, mcp, cti_opencti, ai_controller, comments, etc.).
+    """
+    config_path = config_path or CONFIG_FILE
+    _ensure_starting_config(config_path)
+    config_file = Path(config_path)
+    if not config_file.exists():
+        return {}
+    try:
+        with open(config_file, "r") as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else {}
+    except json.JSONDecodeError as e:
+        raise ConfigError(f"Invalid JSON in config file: {e}") from e
+    except Exception as e:
+        raise ConfigError(f"Failed to load config file: {e}") from e
+
+
+def save_raw_config(data: Dict[str, Any], config_path: Optional[str] = None) -> None:
+    """Write a full JSON config dict to disk, preserving unknown keys."""
+    config_path = config_path or CONFIG_FILE
+    config_file = Path(config_path)
+    try:
+        config_file.parent.mkdir(parents=True, exist_ok=True)
+        with open(config_file, "w") as f:
+            json.dump(data, f, indent=2)
+            f.write("\n")
+    except Exception as e:
+        raise ConfigError(f"Failed to save config file: {e}") from e
+
+
+def update_raw_section(
+    section: str,
+    value: Any,
+    config_path: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Replace a top-level config section and persist the full file."""
+    config_path = config_path or CONFIG_FILE
+    data = load_raw_config(config_path)
+    data[section] = value
+    save_raw_config(data, config_path)
+    return data
+
+
+def get_section(section: str, default: Optional[Dict[str, Any]] = None, config_path: Optional[str] = None) -> Dict[str, Any]:
+    """Return a top-level config section as a dict."""
+    data = load_raw_config(config_path or CONFIG_FILE)
+    value = data.get(section, default if default is not None else {})
+    return value if isinstance(value, dict) else {}
 

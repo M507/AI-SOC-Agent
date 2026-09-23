@@ -107,6 +107,7 @@ class RunbookManager:
                     "IMPLEMENTATION_SUMMARY.md",
                     "RUNBOOK_INTEGRATION_PROPOSAL.md",
                     "AGENT_PROFILES_IMPLEMENTATION.md",
+                    "runbook_guidelines.md",
                     "guidelines.md",  # SOC tier guidelines are not executable runbooks
                 ]:
                     runbook_path = os.path.join(root, file)

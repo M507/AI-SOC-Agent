@@ -11,7 +11,7 @@ function escapeHtml(text) {
 }
 
 /**
- * Format interval in seconds to human-readable string.
+ * Format interval in seconds to a compact string (5s, 5m, 1h).
  */
 function formatInterval(seconds) {
     if (seconds < 60) {
@@ -21,6 +21,58 @@ function formatInterval(seconds) {
     } else {
         return `${Math.floor(seconds / 3600)}h`;
     }
+}
+
+/**
+ * Format interval in seconds as a spoken preview for forms.
+ */
+function formatIntervalPreview(seconds) {
+    const n = Number(seconds);
+    if (!Number.isFinite(n) || n < 5) {
+        return 'Interval must be at least 5 seconds';
+    }
+    if (n < 60) {
+        return `Every ${n} seconds`;
+    }
+    if (n < 3600) {
+        const minutes = Math.floor(n / 60);
+        const rem = n % 60;
+        if (rem) {
+            return `Every ${minutes} min ${rem}s`;
+        }
+        return `Every ${minutes} minute${minutes === 1 ? '' : 's'}`;
+    }
+    const hours = Math.floor(n / 3600);
+    const minutes = Math.floor((n % 3600) / 60);
+    if (minutes) {
+        return `Every ${hours}h ${minutes}m`;
+    }
+    return `Every ${hours} hour${hours === 1 ? '' : 's'}`;
+}
+
+/**
+ * Split a stored condition string such as "get_recent_alerts 1" into its parts.
+ */
+function splitConditionFunction(condition) {
+    const raw = (condition || '').trim();
+    if (!raw) return { name: '', limit: '' };
+    const parts = raw.split(/\s+/);
+    const last = parts[parts.length - 1];
+    if (parts.length > 1 && /^\d+$/.test(last)) {
+        return { name: parts.slice(0, -1).join(' '), limit: last };
+    }
+    return { name: raw, limit: '' };
+}
+
+/**
+ * Compose a condition string from a function name and an optional limit.
+ */
+function joinConditionFunction(name, limit) {
+    const fn = (name || '').trim();
+    if (!fn) return '';
+    const count = Number.parseInt(limit, 10);
+    if (!Number.isFinite(count) || count < 1) return fn;
+    return `${fn} ${count}`;
 }
 
 /**

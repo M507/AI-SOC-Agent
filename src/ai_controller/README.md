@@ -28,9 +28,10 @@ cursor-agent "your prompt"
 
 ## Features
 
-- **Web Interface**: Modern web UI with tabs for managing sessions and autoruns
+- **Web Interface**: Modern web UI with tabs for managing sessions, autoruns, and the Requests approval queue
 - **CLI Interface**: Command-line interface for executing commands directly
 - **Session Management**: Track and manage agent execution sessions
+- **Requests / approvals**: AI-suggested actions wait for analyst approval. See [approval_queue/CHECKLIST.md](approval_queue/CHECKLIST.md).
 - **Autorun Support**: Structure ready for scheduled/recurring agent executions
 - **Real-time Updates**: WebSocket support for live command output
 - **Terminal-like UI**: Terminal-style interface for viewing command results
@@ -89,10 +90,13 @@ python cursor_agent.py --web --port 8081 --host 0.0.0.0
 
 ```bash
 # Start web server (with venv activated)
-python cursor_agent.py --web
+python app.py
 ```
 
-Open browser to `http://localhost:8081` (or configured port).
+Open browser to `https://localhost:8081` (or configured port). Sign in with
+`web.username` / `web.password` from `config.json`. The UI is HTTPS-only.
+
+Configure the LLM provider under **Settings** (Cursor Agent, OpenAI, OpenRouter, Open WebUI, or custom). The **MCP** button shows MCP server health and listener settings.
 
 ### Command Format
 

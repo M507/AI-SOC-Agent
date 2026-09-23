@@ -178,6 +178,14 @@ class EDRConfigUpdate(BaseModel):
     enabled: bool = True
 
 
+class NetBoxConfigUpdate(BaseModel):
+    base_url: Optional[str] = None
+    api_token: Optional[str] = None
+    timeout_seconds: Optional[int] = 30
+    verify_ssl: Optional[bool] = True
+    enabled: bool = True
+
+
 class LoggingConfigUpdate(BaseModel):
     log_dir: Optional[str] = "logs"
     log_level: Optional[str] = "INFO"
@@ -188,6 +196,7 @@ class ConfigUpdate(BaseModel):
     iris: Optional[IrisConfigUpdate] = None
     elastic: Optional[ElasticConfigUpdate] = None
     edr: Optional[EDRConfigUpdate] = None
+    netbox: Optional[NetBoxConfigUpdate] = None
     logging: Optional[LoggingConfigUpdate] = None
 
 
@@ -277,6 +286,8 @@ async def get_config(request: Request):
             config_dict["elastic"]["password"] = "***" if config_dict["elastic"].get("password") else None
         if "edr" in config_dict and config_dict["edr"]:
             config_dict["edr"]["api_key"] = "***" if config_dict["edr"].get("api_key") else None
+        if "netbox" in config_dict and config_dict["netbox"]:
+            config_dict["netbox"]["api_token"] = "***" if config_dict["netbox"].get("api_token") else None
         
         # Add file location information
         from pathlib import Path
@@ -362,6 +373,24 @@ async def update_config(request: Request, config_update: ConfigUpdate):
                 }
             else:
                 updates["edr"] = None
+
+        if config_update.netbox is not None:
+            if config_update.netbox.enabled:
+                if not config_update.netbox.base_url or not config_update.netbox.api_token:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="NetBox base_url and api_token are required when enabled",
+                    )
+                updates["netbox"] = {
+                    "base_url": config_update.netbox.base_url,
+                    "api_token": config_update.netbox.api_token,
+                    "timeout_seconds": config_update.netbox.timeout_seconds or 30,
+                    "verify_ssl": config_update.netbox.verify_ssl
+                    if config_update.netbox.verify_ssl is not None
+                    else True,
+                }
+            else:
+                updates["netbox"] = None
 
         if config_update.logging is not None:
             updates["logging"] = {
@@ -478,6 +507,31 @@ async def test_edr(request: Request):
         )
 
 
+@app.get("/api/config/test/netbox")
+async def test_netbox(request: Request):
+    """Test NetBox connection."""
+    require_auth(request)
+    try:
+        config = load_config_from_file()
+        if not config.netbox:
+            raise HTTPException(status_code=400, detail="NetBox not configured")
+
+        from ..integrations.netbox import NetBoxAPIClient
+
+        client = NetBoxAPIClient.from_config(config)
+        ok = client.ping()
+        return JSONResponse(
+            content={
+                "success": ok,
+                "message": "NetBox API status check passed." if ok else "NetBox API status check failed.",
+            }
+        )
+    except Exception as e:
+        return JSONResponse(
+            content={"success": False, "message": str(e)}, status_code=500
+        )
+
+
 @app.post("/api/config/reload")
 async def reload_config(request: Request):
     """Reload configuration from files (sync from .env or config.json)."""
@@ -502,10 +556,13 @@ async def reload_config(request: Request):
 
 
 if __name__ == "__main__":
-    import uvicorn
+    import sys
 
-    print(f"Starting SamiGPT Configuration Manager...")
-    print(f"Admin secret is set via SAMIGPT_ADMIN_SECRET environment variable")
-    if ADMIN_SECRET == "admin":
-        print("WARNING: Using default admin secret! Set SAMIGPT_ADMIN_SECRET environment variable.")
-    uvicorn.run(app, host="0.0.0.0", port=8080)
+    print(
+        "The standalone config UI is disabled because it served HTTP with a default password.\n"
+        "Start the HTTPS web interface instead:\n"
+        "  python app.py\n"
+        "Then sign in with web.username / web.password from config.json.",
+        file=sys.stderr,
+    )
+    sys.exit(1)

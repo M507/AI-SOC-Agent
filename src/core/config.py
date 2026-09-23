@@ -80,6 +80,20 @@ class CTIConfig:
 
 
 @dataclass
+class NetBoxConfig:
+    """
+    Configuration for NetBox DCIM/IPAM integration.
+
+    Map NETBOX_URL→base_url, NETBOX_TOKEN→api_token.
+    """
+
+    base_url: str
+    api_token: str
+    timeout_seconds: int = 30
+    verify_ssl: bool = True
+
+
+@dataclass
 class TrelloConfig:
     """
     Configuration for Trello integration.
@@ -110,12 +124,19 @@ class ClickUpConfig:
 @dataclass
 class GitHubConfig:
     """
-    Configuration for GitHub integration.
+    Configuration for GitHub Issues engineering integration.
+
+    ``repository`` is ``owner/repo`` (e.g. M507/HomeLab-DaC).
+    Fine-tune vs visibility recommendations are separated by labels.
+    Legacy ``*_project_id`` fields are ignored when ``repository`` is set.
     """
 
     api_token: str
-    fine_tuning_project_id: str
-    engineering_project_id: str
+    repository: str = ""
+    fine_tuning_label: str = "fine-tuning"
+    visibility_label: str = "visibility"
+    fine_tuning_project_id: Optional[str] = None  # legacy Projects API
+    engineering_project_id: Optional[str] = None  # legacy Projects API
     timeout_seconds: int = 30
     verify_ssl: bool = True
 
@@ -145,11 +166,72 @@ class LoggingConfig:
 @dataclass
 class WebConfig:
     """
-    Configuration for the web management interface.
+    Configuration for the HTTPS web UI (username/password live in config.json).
     """
 
-    admin_secret: str  # Secret/password for accessing the management interface
-    session_secret: Optional[str] = None  # Secret for session signing (auto-generated if not provided)
+    username: str = "admin"
+    password: str = ""
+    session_secret: Optional[str] = None
+    session_ttl_seconds: int = 43200
+    tls_cert: str = "certs/server.crt"
+    tls_key: str = "certs/server.key"
+
+
+@dataclass
+class AIControllerConfig:
+    """Web controller storage and bind settings."""
+
+    storage_dir: str = "data/ai_controller"
+    web_port: int = 8081
+    web_host: str = "0.0.0.0"
+
+
+@dataclass
+class LLMProviderEndpointConfig:
+    """
+    Settings for a single LLM backend.
+
+    Used by OpenAI, OpenRouter, Open WebUI, and any OpenAI-compatible API.
+    Extra keys (headers, organization, binary_path, etc.) live in `extra`.
+    """
+
+    api_key: Optional[str] = None
+    model: Optional[str] = None
+    base_url: Optional[str] = None
+    extra: Optional[dict] = None
+
+
+@dataclass
+class LLMConfig:
+    """
+    Which LLM backend the web controller uses for freeform prompts.
+
+    Supported provider ids: cursor_agent, openai, openrouter, openwebui, custom.
+    """
+
+    provider: str = "cursor_agent"
+    system_prompt: Optional[str] = None
+    max_tool_iterations: int = 12
+    cursor_agent: Optional[dict] = None
+    openai: Optional[dict] = None
+    openrouter: Optional[dict] = None
+    openwebui: Optional[dict] = None
+    custom: Optional[dict] = None
+
+
+@dataclass
+class MCPRuntimeConfig:
+    """
+    HTTP MCP server runtime settings.
+
+    The MCP server is a separate process/listener from the web UI. Stdio
+    mode (`python -m src.mcp.mcp_server`) remains available for Cursor/Claude.
+    """
+
+    enabled: bool = True
+    auto_start: bool = True
+    host: str = "127.0.0.1"
+    port: int = 8082
 
 
 @dataclass
@@ -165,9 +247,13 @@ class SamiConfig:
     elastic: Optional[ElasticConfig] = None
     edr: Optional[EDRConfig] = None
     cti: Optional[CTIConfig] = None
+    netbox: Optional[NetBoxConfig] = None
     eng: Optional[EngConfig] = None
     logging: Optional[LoggingConfig] = None
     web: Optional[WebConfig] = None
+    ai_controller: Optional[AIControllerConfig] = None
+    llm: Optional[LLMConfig] = None
+    mcp: Optional[MCPRuntimeConfig] = None
 
 
 def _require_env(name: str) -> str:

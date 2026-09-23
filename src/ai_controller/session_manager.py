@@ -8,8 +8,8 @@ from __future__ import annotations
 
 import json
 import os
-from dataclasses import dataclass, asdict, field
-from datetime import datetime
+from dataclasses import dataclass, asdict, field, fields
+from datetime import datetime, timedelta
 from enum import Enum
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -71,7 +71,8 @@ class Session:
     updated_at: datetime
     entries: List[SessionEntry] = field(default_factory=list)
     autorun_config: Optional[Dict[str, Any]] = None  # For autorun sessions
-    
+    cluster_id: Optional[str] = None  # Elastic cluster this session talks to
+
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary."""
         data = asdict(self)
@@ -81,7 +82,7 @@ class Session:
         data["updated_at"] = self.updated_at.isoformat()
         data["entries"] = [entry.to_dict() for entry in self.entries]
         return data
-    
+
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> Session:
         """Create from dictionary."""
@@ -91,7 +92,9 @@ class Session:
         data["created_at"] = datetime.fromisoformat(data["created_at"])
         data["updated_at"] = datetime.fromisoformat(data["updated_at"])
         data["entries"] = [SessionEntry.from_dict(entry) for entry in data.get("entries", [])]
-        return cls(**data)
+        data["cluster_id"] = data.get("cluster_id")
+        allowed = {item.name for item in fields(cls)}
+        return cls(**{key: value for key, value in data.items() if key in allowed})
 
 
 @dataclass
@@ -106,8 +109,9 @@ class AutorunConfig:
     last_run: Optional[datetime] = None
     next_run: Optional[datetime] = None
     created_at: datetime = field(default_factory=datetime.now)
-    condition_function: Optional[str] = None  # Function/tool name to check before executing (e.g., "get_recent_alerts")
-    
+    condition_function: Optional[str] = None
+    cluster_id: Optional[str] = None
+
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary."""
         data = asdict(self)
@@ -117,7 +121,7 @@ class AutorunConfig:
             data["next_run"] = self.next_run.isoformat()
         data["created_at"] = self.created_at.isoformat()
         return data
-    
+
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> AutorunConfig:
         """Create from dictionary."""
@@ -128,7 +132,9 @@ class AutorunConfig:
             data["next_run"] = datetime.fromisoformat(data["next_run"])
         if data.get("created_at"):
             data["created_at"] = datetime.fromisoformat(data["created_at"])
-        return cls(**data)
+        data["cluster_id"] = data.get("cluster_id")
+        allowed = {item.name for item in fields(cls)}
+        return cls(**{key: value for key, value in data.items() if key in allowed})
 
 
 class SessionManager:
@@ -173,15 +179,26 @@ class SessionManager:
         
         logger.info(f"Loaded {len(self._sessions)} sessions and {len(self._autoruns)} autoruns")
     
-    def create_session(self, name: str, session_type: SessionType = SessionType.MANUAL) -> Session:
-        """Create a new session."""
+    def create_session(
+        self,
+        name: Optional[str] = None,
+        session_type: SessionType = SessionType.MANUAL,
+        cluster_id: Optional[str] = None,
+    ) -> Session:
+        """Create a new session.
+
+        If name is missing or blank, the session id (a random UUID) is used as the name.
+        """
+        session_id = str(uuid4())
+        resolved_name = (name or "").strip() or session_id
         session = Session(
-            id=str(uuid4()),
-            name=name,
+            id=session_id,
+            name=resolved_name,
             session_type=session_type,
             status=SessionStatus.PENDING,
             created_at=datetime.now(),
-            updated_at=datetime.now()
+            updated_at=datetime.now(),
+            cluster_id=cluster_id,
         )
         
         self._sessions[session.id] = session
@@ -312,10 +329,16 @@ class SessionManager:
             json.dump(session.to_dict(), f, indent=2)
     
     # Autorun methods
-    def create_autorun(self, name: str, command: str, interval_seconds: int, condition_function: Optional[str] = None) -> AutorunConfig:
+    def create_autorun(
+        self,
+        name: str,
+        command: str,
+        interval_seconds: int,
+        condition_function: Optional[str] = None,
+        cluster_id: Optional[str] = None,
+    ) -> AutorunConfig:
         """Create a new autorun configuration."""
-        # Create a dedicated AUTORUN session that will be reused for all executions
-        session = self.create_session(name, SessionType.AUTORUN)
+        session = self.create_session(name, SessionType.AUTORUN, cluster_id=cluster_id)
 
         now = datetime.now()
         autorun = AutorunConfig(
@@ -327,7 +350,8 @@ class SessionManager:
             session_id=session.id,
             created_at=now,
             condition_function=condition_function,
-            next_run=now  # Set to now so it runs immediately
+            next_run=now,
+            cluster_id=cluster_id,
         )
         
         self._autoruns[autorun.id] = autorun
@@ -352,11 +376,41 @@ class SessionManager:
         autorun = self.get_autorun(autorun_id)
         if not autorun:
             raise ValueError(f"Autorun {autorun_id} not found")
-        
+
+        was_enabled = autorun.enabled
+        interval_changed = (
+            "interval_seconds" in kwargs
+            and kwargs["interval_seconds"] != autorun.interval_seconds
+        )
         for key, value in kwargs.items():
             if hasattr(autorun, key):
                 setattr(autorun, key, value)
-        
+
+        now = datetime.now()
+        if not was_enabled and autorun.enabled:
+            # Re-enabling behaves like creation: it is immediately eligible
+            # for the scheduler, then starts a fresh interval after that run.
+            autorun.next_run = now
+            logger.info("Re-enabled autorun %s; scheduled immediate run", autorun_id)
+        elif interval_changed and autorun.enabled:
+            # An edited interval starts a new timer from the save operation.
+            autorun.next_run = now + timedelta(seconds=autorun.interval_seconds)
+            logger.info(
+                "Reset autorun %s timer to %ss after interval update",
+                autorun_id,
+                autorun.interval_seconds,
+            )
+        elif not autorun.enabled:
+            autorun.next_run = None
+            if was_enabled:
+                logger.info("Disabled autorun %s; cleared pending timer", autorun_id)
+
+        if "cluster_id" in kwargs and autorun.session_id:
+            session = self.get_session(autorun.session_id)
+            if session:
+                session.cluster_id = kwargs.get("cluster_id")
+                self._save_session(session)
+
         self._save_autorun(autorun)
     
     def delete_autorun(self, autorun_id: str):

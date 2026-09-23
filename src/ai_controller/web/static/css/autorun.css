@@ -2,7 +2,7 @@
 
 /* Autorun details - flex container that fills available space */
 .autorun-content {
-    display: flex !important;
+    display: none;
     flex-direction: column;
     flex: 1 1 auto; /* Fill available space in content-area */
     min-height: 0;
@@ -15,6 +15,10 @@
     box-sizing: border-box;
     /* Make sure it's visible and properly sized */
     width: 100%;
+}
+
+.autorun-content.is-open {
+    display: flex;
 }
 
 /* Note: The .has-autorun class is added to .content-area via JavaScript

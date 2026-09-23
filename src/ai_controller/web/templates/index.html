@@ -6,15 +6,17 @@
         <title>SamiGPT AI Controller</title>
         <!-- CSS Files - Organized by purpose for easier maintenance -->
         <link rel="stylesheet" href="/static/css/base.css?v=2">
-        <link rel="stylesheet" href="/static/css/layout.css?v=4">
-        <link rel="stylesheet" href="/static/css/buttons.css?v=2">
-        <link rel="stylesheet" href="/static/css/tabs.css?v=2">
+        <link rel="stylesheet" href="/static/css/layout.css?v=7">
+        <link rel="stylesheet" href="/static/css/buttons.css?v=3">
+        <link rel="stylesheet" href="/static/css/tabs.css?v=3">
         <link rel="stylesheet" href="/static/css/status.css?v=2">
         <link rel="stylesheet" href="/static/css/terminal.css?v=2">
-        <link rel="stylesheet" href="/static/css/autorun.css?v=4">
-        <link rel="stylesheet" href="/static/css/modal.css?v=2">
-        <link rel="stylesheet" href="/static/css/settings.css?v=2">
+        <link rel="stylesheet" href="/static/css/autorun.css?v=5">
+        <link rel="stylesheet" href="/static/css/modal.css?v=4">
+        <link rel="stylesheet" href="/static/css/settings.css?v=14">
+        <link rel="stylesheet" href="/static/css/toast.css?v=1">
         <link rel="stylesheet" href="/static/css/scrollbar.css?v=2">
+        <link rel="stylesheet" href="/static/css/requests.css?v=2">
     </head>
 <body>
     <div class="container">
@@ -22,10 +24,27 @@
             <h1>SamiGPT – SOC AI Agents Orchestrator</h1>
             <div class="header-actions">
                 <button id="new-session-btn" class="btn btn-primary">+ New Session</button>
-                <button id="new-autorun-btn" class="btn btn-secondary">+ New Autorun</button>
+                <button id="new-autorun-btn" class="btn btn-secondary" hidden>+ New Autorun</button>
                 <button id="settings-btn" class="btn btn-secondary">Settings</button>
+                <button id="mcp-btn" class="btn btn-secondary mcp-header-btn">
+                    MCP
+                    <span id="mcp-health-dot" class="health-dot health-unknown" title="MCP health unknown"></span>
+                </button>
+                <button id="logout-btn" class="btn btn-secondary">Sign out</button>
             </div>
         </header>
+
+        <div id="mcp-readiness-banner" class="readiness-banner" role="alert" aria-live="assertive" hidden>
+            <div class="readiness-banner-copy">
+                <strong id="mcp-readiness-title">AI tools are not connected</strong>
+                <span id="mcp-readiness-message">
+                    Connect the AI provider to MCP before starting an investigation.
+                </span>
+            </div>
+            <button type="button" id="mcp-readiness-action" class="btn btn-primary btn-sm">
+                Open connection setup
+            </button>
+        </div>
 
         <div class="main-layout">
             <aside class="sidebar">
@@ -33,13 +52,21 @@
                     <span class="sidebar-title">Views</span>
                 </div>
                 <button id="nav-sessions" class="nav-item active">
-                    <span class="nav-label">Manual Sessions</span>
+                    <span class="nav-label">Sessions</span>
                 </button>
                 <button id="nav-autoruns" class="nav-item">
                     <span class="nav-label">Autoruns</span>
                 </button>
+                <button id="nav-requests" class="nav-item">
+                    <span class="nav-label">Requests</span>
+                    <span id="nav-requests-count" class="nav-count" hidden>0</span>
+                </button>
                 <button id="nav-settings" class="nav-item">
                     <span class="nav-label">Settings</span>
+                </button>
+                <button id="nav-mcp" class="nav-item">
+                    <span class="nav-label">MCP Server</span>
+                    <span id="nav-mcp-dot" class="health-dot health-unknown"></span>
                 </button>
             </aside>
 
@@ -54,62 +81,376 @@
                             <span class="tab-group-label">Autoruns</span>
                             <div class="tabs" id="autoruns-tabs"></div>
                         </div>
+                        <div class="tab-group" id="requests-tab-group" style="display: none;">
+                            <span class="tab-group-label">Requests</span>
+                            <div class="tabs" id="requests-tabs">
+                                <button class="tab active" type="button" id="requests-tab" data-request-queue="all">Approval queue (ALL)</button>
+                                <button class="tab" type="button" data-request-queue="soc">SOC</button>
+                                <button class="tab" type="button" data-request-queue="engineering">Engineering</button>
+                                <button class="tab" type="button" data-request-queue="detection">Detection engineering</button>
+                            </div>
+                        </div>
                         <div class="tab-group" id="settings-tab-group" style="display: none;">
                             <span class="tab-group-label">Settings</span>
                             <div class="tabs" id="settings-tabs">
-                                <button class="tab" id="settings-tab">Settings</button>
+                                <!-- Add a button here plus a matching data-settings-page-content panel for each new Settings page. -->
+                                <button class="tab active" type="button" data-settings-page="llm">LLM</button>
+                                <button class="tab" type="button" data-settings-page="elastic">Elastic</button>
+                                <button class="tab" type="button" data-settings-page="netbox">NetBox</button>
+                                <button class="tab" type="button" data-settings-page="ui">UI</button>
+                                <button class="tab" type="button" data-settings-page="integrations">Integrations</button>
+                            </div>
+                        </div>
+                        <div class="tab-group" id="mcp-tab-group" style="display: none;">
+                            <span class="tab-group-label">MCP Server</span>
+                            <div class="tabs" id="mcp-tabs">
+                                <button class="tab" id="mcp-tab">Health &amp; Settings</button>
                             </div>
                         </div>
                     </div>
                 </div>
 
                 <div class="content-area">
-                    <div id="no-session-message" class="no-session">
-                        <p>Select a manual session tab or create a new session to start</p>
+                    <div id="no-session-message" class="empty-state">
+                        <div class="empty-state-body">
+                            <h2>Start an investigation</h2>
+                            <p>Create a session and ask the agent about an alert, hash, host, or case. It uses MCP tools against your SIEM, cases, NetBox inventory, and threat intel.</p>
+                            <button type="button" id="empty-new-session-btn" class="btn btn-primary">New Session</button>
+                        </div>
                     </div>
-                    <div id="autorun-empty-message" class="no-session" style="display: none;">
-                        <p>No autoruns configured yet. Create one to get started.</p>
+                    <div id="autorun-empty-message" class="empty-state" style="display: none;">
+                        <div class="empty-state-body">
+                            <h2>Schedule an agent</h2>
+                            <p>Autoruns run the same LLM on a timer. Add a condition if the job should skip when there is nothing to investigate.</p>
+                            <button type="button" id="empty-new-autorun-btn" class="btn btn-primary">New Autorun</button>
+                        </div>
                     </div>
                     <div id="session-content" class="session-content" style="display: none;">
                         <div class="session-header">
                             <h2 id="session-title">Session</h2>
                             <div class="session-actions">
                                 <span id="session-status" class="status-badge">Pending</span>
+                                <span id="session-cluster" class="cluster-pill" hidden></span>
                                 <button id="stop-session-btn" class="btn btn-danger btn-sm">Stop</button>
-                                <button id="close-session-btn" class="btn btn-secondary btn-sm">Close Tab</button>
+                                <button id="close-session-btn" class="btn btn-secondary btn-sm">Delete session</button>
                             </div>
                         </div>
                         <div class="terminal-container">
                             <div class="terminal" id="terminal"></div>
                             <div class="command-input-container">
-                                <input type="text" id="command-input" class="command-input" placeholder="Enter command (e.g., run lookup_hash_ti on &lt;hash&gt;)">
+                                <input type="text" id="command-input" class="command-input" placeholder="Ask about an alert, hash, host, or case…">
                                 <button id="execute-btn" class="btn btn-primary btn-sm">Execute</button>
                             </div>
                         </div>
                     </div>
-                    <div id="settings-content" class="settings-content" style="display: none;">
+                    <div id="settings-llm-content" class="settings-content" data-settings-page-content="llm" style="display: none;">
                         <div class="session-header">
-                            <h2>Settings</h2>
+                            <h2>LLM</h2>
+                            <div class="session-actions">
+                                <button id="llm-test-btn" class="btn btn-secondary btn-sm">Test provider</button>
+                                <button id="llm-test-model-btn" class="btn btn-secondary btn-sm">Test model</button>
+                                <button id="llm-save-btn" class="btn btn-primary btn-sm">Save</button>
+                            </div>
                         </div>
                         <div class="settings-body">
-                            <label class="settings-toggle">
-                                <input type="checkbox" id="debug-toggle">
-                                <span class="toggle-label">Enable debug mode (show full JSON results)</span>
-                            </label>
-                            <p class="settings-help">
-                                When debug mode is disabled, only the agent's reply text is shown.
-                                When enabled, the full JSON result object is rendered in the terminal.
-                            </p>
+                            <section class="settings-card">
+                                <h3>Provider</h3>
+                                <p class="settings-help">
+                                    Freeform prompts in sessions and autoruns are sent to this backend.
+                                    Cursor Agent uses the local <code>cursor-agent</code> binary.
+                                    OpenAI, OpenRouter, Open WebUI, and Custom use an OpenAI-compatible Chat Completions API
+                                    and can call SamiGPT MCP tools when the MCP server is running.
+                                </p>
+                                <label for="llm-provider">Provider</label>
+                                <select id="llm-provider"></select>
+                                <div id="llm-provider-fields" class="settings-fields"></div>
+                                <label for="llm-system-prompt">System prompt (optional)</label>
+                                <textarea id="llm-system-prompt" rows="4" placeholder="Leave blank to use the default SOC assistant prompt"></textarea>
+                                <label for="llm-max-iterations">Max MCP tool iterations</label>
+                                <input type="number" id="llm-max-iterations" min="1" max="50" value="12">
+                            </section>
+                            <section class="settings-card" id="openwebui-mcp-card">
+                                <h3>Open WebUI MCP connection</h3>
+                                <p class="settings-help">
+                                    Registers SamiGPT as a bearer-authenticated MCP Streamable HTTP
+                                    server in the configured Open WebUI instance. The URL must be
+                                    reachable from the Open WebUI host.
+                                </p>
+                                <label for="openwebui-mcp-url">Public MCP URL</label>
+                                <input type="text" id="openwebui-mcp-url" placeholder="https://10.10.10.33:8082/mcp">
+                                <div class="settings-inline-row">
+                                    <button type="button" id="openwebui-mcp-connect-btn" class="btn btn-primary">Connect and verify</button>
+                                    <button type="button" id="openwebui-mcp-test-btn" class="btn btn-secondary">Test</button>
+                                    <button type="button" id="openwebui-mcp-disconnect-btn" class="btn btn-secondary">Disconnect</button>
+                                    <span id="openwebui-mcp-status-badge" class="status-badge">Unknown</span>
+                                </div>
+                                <dl class="health-details">
+                                    <div><dt>Registered</dt><dd id="openwebui-mcp-registered">—</dd></div>
+                                    <div><dt>Verified tools</dt><dd id="openwebui-mcp-tools">—</dd></div>
+                                    <div><dt>Open WebUI</dt><dd id="openwebui-mcp-origin">—</dd></div>
+                                </dl>
+                                <p id="openwebui-mcp-error" class="settings-status is-error" hidden></p>
+                                <h4>Connection activity</h4>
+                                <div id="openwebui-mcp-log" class="elastic-log" role="log" aria-live="polite"></div>
+                                <div class="settings-inline-row">
+                                    <button type="button" id="openwebui-mcp-clear-log-btn" class="btn btn-secondary btn-sm">Clear log</button>
+                                </div>
+                            </section>
+                        </div>
+                    </div>
+                    <div id="settings-elastic-content" class="settings-content" data-settings-page-content="elastic" style="display: none;">
+                        <div class="session-header">
+                            <h2>Elastic clusters</h2>
+                        </div>
+                        <div class="settings-body">
+                            <section class="settings-card">
+                                <h3>Default MCP skill vector</h3>
+                                <p class="settings-help">
+                                    CVSS-style string copied onto every new cluster.
+                                    Each cluster can then override it. Sessions use the vector of the cluster they are bound to.
+                                    Example: <code>MSV:1/IRIS:N/SIEM:Y/EDR:N/SK:create_case=N</code>
+                                </p>
+                                <label for="elastic-default-skill-vector">Default vector</label>
+                                <input type="text" id="elastic-default-skill-vector" class="skill-vector-input" readonly>
+                                <div class="settings-inline-row">
+                                    <button type="button" id="elastic-edit-default-skills" class="btn btn-secondary">Edit default skills</button>
+                                </div>
+                            </section>
+                            <section class="settings-card">
+                                <h3>Configured clusters</h3>
+                                <p class="settings-help">
+                                    Each session and autorun binds to one Elastic cluster.
+                                    MCP SIEM tools use that cluster’s URL and credentials.
+                                </p>
+                                <div id="elastic-clusters-list" class="cluster-list"></div>
+                            </section>
+                            <section class="settings-card">
+                                <h3>Add cluster</h3>
+                                <label for="elastic-name">Name</label>
+                                <input type="text" id="elastic-name" placeholder="Lab ELK">
+                                <label for="elastic-url">URL</label>
+                                <input type="text" id="elastic-url" placeholder="https://elastic.example.com:9200">
+                                <p class="settings-help">
+                                    Use the Elasticsearch API URL when possible (usually port 9200).
+                                    Kibana (5601) can be saved and tested, but search tools expect Elasticsearch.
+                                    SIEM query skills include KQL, Lucene, EQL, Query DSL, and ES|QL
+                                    (<code>search_kql_query</code>, <code>search_lucene_query</code>,
+                                    <code>search_eql_query</code>, <code>search_dsl_query</code>,
+                                    <code>search_esql_query</code>) — toggle them under Edit skills.
+                                </p>
+                                <label for="elastic-auth-type">Authentication</label>
+                                <select id="elastic-auth-type">
+                                    <option value="api_key">API key</option>
+                                    <option value="basic">Username and password</option>
+                                </select>
+                                <div id="elastic-api-key-row">
+                                    <label for="elastic-api-key">API key</label>
+                                    <input type="password" id="elastic-api-key" autocomplete="off">
+                                </div>
+                                <div id="elastic-basic-row" hidden>
+                                    <label for="elastic-username">Username</label>
+                                    <input type="text" id="elastic-username" autocomplete="off">
+                                    <label for="elastic-password">Password</label>
+                                    <input type="password" id="elastic-password" autocomplete="off">
+                                </div>
+                                <label for="elastic-timeout">Timeout (seconds)</label>
+                                <input type="number" id="elastic-timeout" min="5" max="120" value="30">
+                                <label class="settings-toggle">
+                                    <input type="checkbox" id="elastic-verify-ssl" checked>
+                                    <span class="toggle-label">Verify TLS certificates</span>
+                                </label>
+                                <div class="settings-inline-row">
+                                    <button type="button" id="elastic-test-btn" class="btn btn-secondary">Test connection</button>
+                                    <button type="button" id="elastic-add-btn" class="btn btn-primary">Add cluster</button>
+                                </div>
+                            </section>
+                            <section class="settings-card">
+                                <h3>Activity log</h3>
+                                <p class="settings-help">
+                                    Every button on this page writes here and to the browser console as <code>[Elastic]</code>.
+                                    Server logs are in <code>logs/debug.log</code> under <code>sami.web.elastic</code>.
+                                </p>
+                                <div id="elastic-activity-log" class="elastic-log" role="log" aria-live="polite"></div>
+                                <div class="settings-inline-row">
+                                    <button type="button" id="elastic-clear-log-btn" class="btn btn-secondary btn-sm">Clear log</button>
+                                </div>
+                            </section>
+                        </div>
+                    </div>
+                    <div id="settings-netbox-content" class="settings-content" data-settings-page-content="netbox" style="display: none;">
+                        <div class="session-header">
+                            <div>
+                                <h2>NetBox</h2>
+                                <p class="settings-header-copy">DCIM/IPAM enrichment for hosts, IPs, and prefixes during investigations.</p>
+                            </div>
+                            <div class="session-actions">
+                                <button type="button" id="netbox-test-btn" class="btn btn-secondary btn-sm">Test connection</button>
+                                <button type="button" id="netbox-save-btn" class="btn btn-primary btn-sm">Save</button>
+                            </div>
+                        </div>
+                        <div class="settings-body">
+                            <section class="settings-card">
+                                <h3>Connection</h3>
+                                <p class="settings-help">
+                                    Map <code>NETBOX_URL</code> → Base URL and <code>NETBOX_TOKEN</code> → API token.
+                                    Skills: <code>netbox_lookup_ip</code>, <code>netbox_lookup_host</code>,
+                                    <code>netbox_lookup_prefix</code>, <code>netbox_search</code>.
+                                    Enable them on Elastic clusters with the <code>NB</code> skill-vector metric.
+                                </p>
+                                <label for="netbox-url">Base URL</label>
+                                <input type="url" id="netbox-url" placeholder="http://10.10.10.79:8851">
+                                <label for="netbox-token">API token</label>
+                                <input type="password" id="netbox-token" placeholder="nbt_…" autocomplete="off">
+                                <label for="netbox-timeout">Timeout (seconds)</label>
+                                <input type="number" id="netbox-timeout" min="1" max="300" value="30">
+                                <label class="settings-toggle">
+                                    <input type="checkbox" id="netbox-verify-ssl" checked>
+                                    <span class="toggle-label">Verify TLS certificates</span>
+                                </label>
+                                <p id="netbox-settings-status" class="settings-status" role="status" aria-live="polite" hidden></p>
+                            </section>
+                        </div>
+                    </div>
+                    <div id="settings-ui-content" class="settings-content" data-settings-page-content="ui" style="display: none;">
+                        <div class="session-header">
+                            <h2>UI</h2>
+                        </div>
+                        <div class="settings-body">
+                            <section class="settings-card">
+                                <h3>Display</h3>
+                                <label class="settings-toggle">
+                                    <input type="checkbox" id="debug-toggle">
+                                    <span class="toggle-label">Enable debug mode (show full JSON results)</span>
+                                </label>
+                                <p class="settings-help">
+                                    When debug mode is disabled, only the agent's reply text is shown.
+                                    When enabled, the full JSON result object is rendered in the terminal.
+                                </p>
+                            </section>
+                        </div>
+                    </div>
+                    <div id="settings-integrations-content" class="settings-content" data-settings-page-content="integrations" style="display: none;">
+                        <div class="session-header">
+                            <div>
+                                <h2>Integrations</h2>
+                                <p class="settings-header-copy">Check configuration and connectivity across the services SamiGPT depends on.</p>
+                            </div>
+                            <div class="session-actions">
+                                <span id="integrations-summary-value" class="integration-summary">— configured</span>
+                                <button type="button" id="integrations-refresh-btn" class="btn btn-secondary btn-sm">Refresh</button>
+                            </div>
+                        </div>
+                        <div class="settings-body">
+                            <section class="integration-overview" aria-labelledby="integrations-overview-title">
+                                <div>
+                                    <h3 id="integrations-overview-title">Connection center</h3>
+                                    <p>Run connection checks or per-skill smoke tests. Critical actions are skipped, temporary records are deleted, and credentials stay on the server.</p>
+                                </div>
+                                <div class="integration-legend" aria-label="Status legend">
+                                    <span><i class="legend-dot is-configured"></i>Configured</span>
+                                    <span><i class="legend-dot is-unconfigured"></i>Needs setup</span>
+                                </div>
+                            </section>
+                            <p id="integrations-page-status" class="settings-status" role="status" aria-live="polite" hidden></p>
+                            <div id="integrations-grid" class="integrations-grid" aria-live="polite"></div>
+                        </div>
+                    </div>
+                    <div id="requests-content" class="requests-content" style="display: none;">
+                        <div class="session-header">
+                            <h2>Requests</h2>
+                            <div class="session-actions">
+                                <span id="requests-pending-label" class="cluster-pill">Open items</span>
+                                <button type="button" class="btn btn-secondary btn-sm" data-request-select-all="actionable" title="Select all open approvals and informational notes">Select open</button>
+                            </div>
+                        </div>
+                        <div class="requests-layout">
+                            <aside class="requests-list-pane">
+                                <div class="requests-filters">
+                                    <button type="button" class="requests-filter active" data-request-filter="open">Open</button>
+                                    <button type="button" class="requests-filter" data-request-filter="archived">Archived</button>
+                                    <button type="button" class="requests-filter" data-request-filter="all">All</button>
+                                </div>
+                                <div id="requests-bulk-bar" class="requests-bulk-bar" hidden></div>
+                                <div id="requests-list" class="requests-list" role="list"></div>
+                            </aside>
+                            <section id="requests-detail" class="requests-detail" aria-live="polite">
+                                <div class="requests-detail-empty">Select a request to review it.</div>
+                            </section>
+                        </div>
+                    </div>
+                    <div id="mcp-content" class="settings-content" style="display: none;">
+                        <div class="session-header">
+                            <h2>MCP Server</h2>
+                            <div class="session-actions">
+                                <span id="mcp-status-badge" class="status-badge">Unknown</span>
+                                <button id="mcp-refresh-btn" class="btn btn-secondary btn-sm">Refresh</button>
+                                <button id="mcp-start-btn" class="btn btn-primary btn-sm">Start</button>
+                                <button id="mcp-stop-btn" class="btn btn-secondary btn-sm">Stop</button>
+                                <button id="mcp-restart-btn" class="btn btn-secondary btn-sm">Restart</button>
+                                <button id="mcp-save-btn" class="btn btn-primary btn-sm">Save</button>
+                            </div>
+                        </div>
+                        <div class="settings-body">
+                            <section class="settings-card">
+                                <h3>Health</h3>
+                                <p class="settings-help">
+                                    The MCP server is a separate HTTP listener from this web UI.
+                                    Open WebUI and other MCP clients connect here; Cursor/Claude can still use stdio.
+                                </p>
+                                <dl id="mcp-health-details" class="health-details">
+                                    <div><dt>Status</dt><dd id="mcp-health-status">—</dd></div>
+                                    <div><dt>Bind</dt><dd id="mcp-health-bind">—</dd></div>
+                                    <div><dt>Tools</dt><dd id="mcp-health-tools">—</dd></div>
+                                    <div><dt>Started</dt><dd id="mcp-health-started">—</dd></div>
+                                </dl>
+                                <div id="mcp-integrations" class="integration-pills"></div>
+                                <p id="mcp-last-error" class="settings-status is-error" hidden></p>
+                            </section>
+                            <section class="settings-card">
+                                <h3>Listener</h3>
+                                <label class="settings-toggle">
+                                    <input type="checkbox" id="mcp-enabled">
+                                    <span class="toggle-label">MCP HTTP server enabled</span>
+                                </label>
+                                <label class="settings-toggle">
+                                    <input type="checkbox" id="mcp-auto-start">
+                                    <span class="toggle-label">Auto-start with the web interface</span>
+                                </label>
+                                <label for="mcp-host">Host</label>
+                                <input type="text" id="mcp-host" placeholder="127.0.0.1">
+                                <label for="mcp-port">Port</label>
+                                <input type="number" id="mcp-port" min="1" max="65535" value="8082">
+                                <label for="mcp-public-url">Public URL</label>
+                                <input type="text" id="mcp-public-url" placeholder="https://10.10.10.33:8082/mcp">
+                                <label class="settings-toggle">
+                                    <input type="checkbox" id="mcp-tls" checked>
+                                    <span class="toggle-label">Use TLS (recommended)</span>
+                                </label>
+                                <p class="settings-help">
+                                    Use <code>0.0.0.0</code> as the bind host for remote clients,
+                                    and a concrete host or IP in the public URL. Disable TLS only on
+                                    a trusted private network when the client cannot trust the local certificate.
+                                </p>
+                            </section>
+                            <section class="settings-card">
+                                <h3>How to connect</h3>
+                                <p class="settings-help"><strong>MCP Streamable HTTP</strong> (Open WebUI and standard MCP clients)</p>
+                                <pre id="mcp-http-snippet" class="autorun-prompt"></pre>
+                                <p class="settings-help"><strong>Stdio</strong> (Cursor IDE, Claude Desktop)</p>
+                                <pre class="autorun-prompt">python -m src.mcp.mcp_server</pre>
+                            </section>
                         </div>
                     </div>
                     <!-- Autorun Details Panel (shown when Autoruns view is active) -->
-                    <div id="autorun-content" class="autorun-content" style="display: none;">
+                    <div id="autorun-content" class="autorun-content" hidden>
                         <div class="session-header">
                             <h2 id="autorun-title">Autorun</h2>
                             <div class="session-actions">
                                 <span id="autorun-status" class="status-badge">Enabled</span>
+                                <span id="autorun-cluster" class="cluster-pill" hidden></span>
+                                <button id="autorun-edit-btn" class="btn btn-secondary btn-sm">Edit settings</button>
                                 <button id="autorun-toggle-btn" class="btn btn-secondary btn-sm">Disable</button>
-                                <button id="autorun-clear-btn" class="btn btn-secondary btn-sm">Clear</button>
+                                <button id="autorun-clear-btn" class="btn btn-secondary btn-sm">Clear history</button>
                                 <button id="autorun-export-btn" class="btn btn-secondary btn-sm">Export</button>
                                 <button id="autorun-delete-btn" class="btn btn-danger btn-sm">Delete</button>
                             </div>
@@ -143,6 +484,8 @@
         </div>
     </div>
 
+    <div id="toast-region" class="toast-region" aria-live="polite" aria-relevant="additions text"></div>
+
     <!-- New Session Modal -->
     <div id="new-session-modal" class="modal" style="display: none;">
         <div class="modal-content">
@@ -151,8 +494,18 @@
                 <span class="close" id="close-session-modal">&times;</span>
             </div>
             <div class="modal-body">
-                <label for="session-name">Session Name:</label>
-                <input type="text" id="session-name" placeholder="My Session">
+                <label for="session-name">Session Name (optional):</label>
+                <input type="text" id="session-name" placeholder="Leave blank for a random ID">
+                <label for="session-cluster-select">Elastic cluster:</label>
+                <select id="session-cluster-select">
+                    <option value="">No Elastic clusters configured</option>
+                </select>
+                <small>The agent in this tab will use this cluster’s credentials for SIEM tools.</small>
+                <label for="session-alert-select">Alert (optional):</label>
+                <select id="session-alert-select">
+                    <option value="">None</option>
+                </select>
+                <small>Pick a recent alert to paste “investigate this alert _id: …” into the prompt after the session opens. Nothing is sent automatically.</small>
             </div>
             <div class="modal-footer">
                 <button id="create-session-btn" class="btn btn-primary">Create</button>
@@ -171,18 +524,23 @@
             <div class="modal-body">
                 <label for="autorun-name">Name:</label>
                 <input type="text" id="autorun-name" placeholder="Check Recent Alerts">
+                <label for="autorun-cluster-select">Elastic cluster:</label>
+                <select id="autorun-cluster-select">
+                    <option value="">No Elastic clusters configured</option>
+                </select>
+                <small>Scheduled runs use this cluster for SIEM tools and alert conditions.</small>
                 
                 <label for="autorun-command">Starting prompt:</label>
-                <input
-                    type="text"
+                <textarea
                     id="autorun-command"
-                    placeholder="e.g. run lookup_hash_ti on &lt;hash&gt; or ask a question"
-                >
+                    rows="4"
+                    placeholder="What should the agent do on each run? Example: triage new uninvestigated alerts."
+                ></textarea>
                 
-                <label for="autorun-condition">
-                    Condition function (optional):
-                    <a href="#" id="condition-help-link" class="help-link" title="Click for help">ℹ️</a>
-                </label>
+                <div class="modal-label-row">
+                    <label for="autorun-condition">Condition function (optional)</label>
+                    <button type="button" id="condition-help-link" class="help-link">Help</button>
+                </div>
                 <div id="condition-help-tooltip" class="help-tooltip help-tooltip-hidden">
                     <strong>Supported condition functions:</strong>
                     <ul style="margin: 8px 0; padding-left: 20px;">
@@ -203,13 +561,84 @@
                     Choose a condition function to control when the autorun runs. 
                     If you leave this as \"No condition\", the autorun will always execute on schedule.
                 </small>
+
+                <label for="autorun-condition-limit">Items per run (optional):</label>
+                <input type="number" id="autorun-condition-limit" min="1" step="1" placeholder="All (default)">
+                <small style="color: #666; display: block; margin-top: 4px;">
+                    Set to 1 to triage a single alert per run. The condition results are passed
+                    into the prompt, so the agent starts with the alert already loaded.
+                </small>
                 
                 <label for="autorun-interval">Interval (seconds):</label>
-                <input type="number" id="autorun-interval" value="60" min="5">
+                <input type="number" id="autorun-interval" value="300" min="5" step="5">
+                <small id="autorun-interval-preview">Every 5 minutes</small>
             </div>
             <div class="modal-footer">
                 <button id="create-autorun-btn" class="btn btn-primary">Create</button>
                 <button id="cancel-autorun-btn" class="btn btn-secondary">Cancel</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Edit Autorun Modal -->
+    <div id="edit-autorun-modal" class="modal" style="display: none;">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>Edit Autorun Settings</h3>
+                <span class="close" id="close-edit-autorun-modal">&times;</span>
+            </div>
+            <div class="modal-body">
+                <label for="edit-autorun-name">Name:</label>
+                <input type="text" id="edit-autorun-name">
+
+                <label for="edit-autorun-cluster-select">Elastic cluster:</label>
+                <select id="edit-autorun-cluster-select">
+                    <option value="">No Elastic clusters configured</option>
+                </select>
+
+                <label for="edit-autorun-command">Starting prompt:</label>
+                <textarea id="edit-autorun-command" rows="4"></textarea>
+
+                <label for="edit-autorun-condition">Condition function:</label>
+                <select id="edit-autorun-condition">
+                    <option value="">No condition (always execute)</option>
+                    <option value="get_recent_alerts">get_recent_alerts</option>
+                    <option value="list_cases">list_cases</option>
+                </select>
+
+                <label for="edit-autorun-condition-limit">Items per run (optional):</label>
+                <input type="number" id="edit-autorun-condition-limit" min="1" step="1" placeholder="All (default)">
+                <small>Set to 1 to triage a single alert per run.</small>
+
+                <label for="edit-autorun-interval">Interval (seconds):</label>
+                <input type="number" id="edit-autorun-interval" min="5" step="5">
+                <small id="edit-autorun-interval-preview"></small>
+            </div>
+            <div class="modal-footer">
+                <button id="save-autorun-settings-btn" class="btn btn-primary">Save settings</button>
+                <button id="cancel-edit-autorun-btn" class="btn btn-secondary">Cancel</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- MCP skill vector editor -->
+    <div id="skill-vector-modal" class="modal" style="display: none;">
+        <div class="modal-content modal-wide">
+            <div class="modal-header">
+                <h3 id="skill-vector-title">MCP skills</h3>
+                <span class="close" id="close-skill-vector-modal">&times;</span>
+            </div>
+            <div class="modal-body">
+                <p class="settings-help" id="skill-vector-help"></p>
+                <label for="skill-vector-string">Skill vector</label>
+                <textarea id="skill-vector-string" class="skill-vector-input" rows="3" spellcheck="false"></textarea>
+                <p id="skill-vector-error" class="settings-help skill-vector-error" hidden></p>
+                <div id="skill-vector-groups" class="skill-groups"></div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" id="skill-vector-reset-btn" class="btn btn-secondary">Reset to all on</button>
+                <button type="button" id="cancel-skill-vector-btn" class="btn btn-secondary">Cancel</button>
+                <button type="button" id="save-skill-vector-btn" class="btn btn-primary">Save</button>
             </div>
         </div>
     </div>
@@ -221,24 +650,27 @@
     <script src="https://cdn.jsdelivr.net/npm/marked@12.0.0/marked.min.js"></script>
     
     <!-- Core utilities (no dependencies) -->
-    <script src="/static/utils.js?v=1"></script>
+    <script src="/static/utils.js?v=3"></script>
+    <script src="/static/toast.js?v=1"></script>
     
     <!-- API client (no dependencies) -->
-    <script src="/static/api.js?v=2"></script>
+    <script src="/static/api.js?v=14"></script>
     
     <!-- Component modules (depend on utils) -->
     <script src="/static/websocket.js?v=1"></script>
     <script src="/static/terminal.js?v=1"></script>
-    <script src="/static/sessions.js?v=2"></script>
-    <script src="/static/pdf_export.js?v=1"></script>
-    <script src="/static/autoruns.js?v=7"></script>
-    <script src="/static/modals.js?v=2"></script>
+    <script src="/static/sessions.js?v=5"></script>
+    <script src="/static/pdf_export.js?v=2"></script>
+    <script src="/static/autoruns.js?v=12"></script>
+    <script src="/static/modals.js?v=6"></script>
+    <script src="/static/requests.js?v=2"></script>
     
     <!-- Main application (depends on all modules) -->
-    <script src="/static/app.js?v=4"></script>
-    
-    <!-- Settings (depends on app) -->
-    <script src="/static/settings.js?v=1"></script>
+    <script src="/static/settings.js?v=6"></script>
+    <script src="/static/elastic_settings.js?v=8"></script>
+    <script src="/static/netbox_settings.js?v=1"></script>
+    <script src="/static/integrations_settings.js?v=4"></script>
+    <script src="/static/app.js?v=14"></script>
 </body>
 </html>
 

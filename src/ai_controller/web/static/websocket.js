@@ -23,8 +23,7 @@ class WebSocketManager {
         }
 
         // Create new WebSocket connection
-        const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-        const wsUrl = `${protocol}//${window.location.host}/ws/sessions/${sessionId}`;
+        const wsUrl = `wss://${window.location.host}/ws/sessions/${sessionId}`;
         const ws = new WebSocket(wsUrl);
 
         ws.onopen = () => {

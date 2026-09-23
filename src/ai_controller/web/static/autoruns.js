@@ -19,54 +19,62 @@ class AutorunManager {
             console.error('[AutorunManager] autoruns-tabs container not found');
             return;
         }
-        
-        const autorunContent = document.getElementById('autorun-content');
-        const autorunEmpty = document.getElementById('autorun-empty-message');
 
-        // Clear existing tabs and cache
         autorunsTabs.innerHTML = '';
         this.autoruns.clear();
 
-        // Filter out deleted autoruns
         const activeAutoruns = autoruns.filter(a => !this.deletedAutorunIds.has(a.id));
-        
-        // Update cache and create tabs
         activeAutoruns.forEach(autorun => {
             this.autoruns.set(autorun.id, autorun);
-            const tab = this.createTab(autorun);
-            autorunsTabs.appendChild(tab);
+            autorunsTabs.appendChild(this.createTab(autorun));
         });
 
-        // No autoruns available: show empty state when in Autoruns view
-        if (activeAutoruns.length === 0) {
-            this.currentAutorunId = null;
-            if (autorunContent) {
-                autorunContent.style.display = 'none';
-                // Remove class from content-area
-                const contentArea = document.querySelector('.content-area');
-                if (contentArea) {
-                    contentArea.classList.remove('has-autorun');
-                }
-            }
-            if (autorunEmpty && this.controller.activeSection === 'autoruns') {
-                autorunEmpty.style.display = 'flex';
-            }
+        if (this.controller.activeSection === 'autoruns') {
+            this.syncView();
+        }
+    }
+
+    /**
+     * Show either the empty state or the selected job. Never leave the
+     * details chrome visible without a selected autorun.
+     */
+    syncView() {
+        if (this.controller.activeSection !== 'autoruns') {
+            this.setPanelOpen(false);
+            this.setEmptyVisible(false);
             return;
         }
 
-        // We have autoruns: hide empty state, ensure one is selected and visible
+        if (this.autoruns.size === 0) {
+            this.currentAutorunId = null;
+            this.setPanelOpen(false);
+            this.setEmptyVisible(true);
+            return;
+        }
+
+        const selected = (this.currentAutorunId && this.autoruns.has(this.currentAutorunId))
+            ? this.currentAutorunId
+            : this.autoruns.keys().next().value;
+        this.showAutorunDetails(selected);
+    }
+
+    setPanelOpen(open) {
+        const autorunContent = document.getElementById('autorun-content');
+        const contentArea = document.querySelector('.content-area');
+        if (autorunContent) {
+            autorunContent.classList.toggle('is-open', Boolean(open));
+            autorunContent.hidden = !open;
+        }
+        if (contentArea) {
+            contentArea.classList.toggle('has-autorun', Boolean(open));
+        }
+    }
+
+    setEmptyVisible(visible) {
+        const autorunEmpty = document.getElementById('autorun-empty-message');
         if (autorunEmpty) {
-            autorunEmpty.style.display = 'none';
+            autorunEmpty.style.display = visible ? 'flex' : 'none';
         }
-
-        let autorunToShowId = null;
-        if (this.currentAutorunId && this.autoruns.has(this.currentAutorunId)) {
-            autorunToShowId = this.currentAutorunId;
-        } else {
-            autorunToShowId = activeAutoruns[0].id;
-        }
-
-        this.showAutorunDetails(autorunToShowId);
     }
 
     /**
@@ -82,6 +90,7 @@ class AutorunManager {
         
         tab.innerHTML = `
             <span>${escapeHtml(autorun.name)}</span>
+            ${autorun.cluster && autorun.cluster.name ? `<span class="tab-cluster" title="${escapeHtml(autorun.cluster.base_url || '')}">${escapeHtml(autorun.cluster.name)}</span>` : ''}
             <span class="tab-badge ${statusBadge}">${intervalText}</span>
             <span class="tab-close" data-autorun-id="${autorun.id}">&times;</span>
         `;
@@ -111,10 +120,22 @@ class AutorunManager {
      * Attach event listeners for autorun action buttons.
      */
     attachEventListeners() {
+        const editBtn = document.getElementById('autorun-edit-btn');
         const toggleBtn = document.getElementById('autorun-toggle-btn');
         const clearBtn = document.getElementById('autorun-clear-btn');
         const exportBtn = document.getElementById('autorun-export-btn');
         const deleteBtn = document.getElementById('autorun-delete-btn');
+        const closeEditBtn = document.getElementById('close-edit-autorun-modal');
+        const cancelEditBtn = document.getElementById('cancel-edit-autorun-btn');
+        const saveEditBtn = document.getElementById('save-autorun-settings-btn');
+        const editInterval = document.getElementById('edit-autorun-interval');
+
+        if (editBtn) {
+            editBtn.addEventListener('click', () => {
+                if (!this.currentAutorunId) return;
+                this.showEditModal(this.currentAutorunId);
+            });
+        }
 
         if (toggleBtn) {
             toggleBtn.addEventListener('click', () => {
@@ -143,6 +164,16 @@ class AutorunManager {
                 this.deleteAutorun(this.currentAutorunId);
             });
         }
+        if (closeEditBtn) closeEditBtn.addEventListener('click', () => this.hideEditModal());
+        if (cancelEditBtn) cancelEditBtn.addEventListener('click', () => this.hideEditModal());
+        if (saveEditBtn) saveEditBtn.addEventListener('click', () => this.saveAutorunSettings());
+        if (editInterval) {
+            editInterval.addEventListener('input', () => this.updateEditIntervalPreview());
+        }
+        window.addEventListener('click', (event) => {
+            const modal = document.getElementById('edit-autorun-modal');
+            if (event.target === modal) this.hideEditModal();
+        });
     }
 
     /**
@@ -155,14 +186,12 @@ class AutorunManager {
             return;
         }
 
-        // Ensure the main view is in "Autoruns" mode
-        if (this.controller && typeof this.controller.setActiveSection === 'function') {
+        this.currentAutorunId = autorunId;
+        if (this.controller.activeSection !== 'autoruns') {
             this.controller.setActiveSection('autoruns');
+            return;
         }
 
-        this.currentAutorunId = autorunId;
-
-        // Deactivate all autorun tabs, then activate this one
         document.querySelectorAll('button.tab[data-autorun-id]').forEach(tab => {
             tab.classList.remove('active');
         });
@@ -171,27 +200,15 @@ class AutorunManager {
             activeTab.classList.add('active');
         }
 
-        // Hide other views
         const sessionContent = document.getElementById('session-content');
-        const settingsContent = document.getElementById('settings-content');
         const noSessionMessage = document.getElementById('no-session-message');
-        const autorunContent = document.getElementById('autorun-content');
-        const autorunEmpty = document.getElementById('autorun-empty-message');
-
         if (sessionContent) sessionContent.style.display = 'none';
-        if (settingsContent) settingsContent.style.display = 'none';
+        document.querySelectorAll('[data-settings-page-content]').forEach((panel) => {
+            panel.style.display = 'none';
+        });
         if (noSessionMessage) noSessionMessage.style.display = 'none';
-        if (autorunEmpty) autorunEmpty.style.display = 'none';
-
-        // Show autorun details panel
-        if (autorunContent) {
-            autorunContent.style.display = 'block';
-            // Add class to content-area to prevent it from scrolling
-            const contentArea = document.querySelector('.content-area');
-            if (contentArea) {
-                contentArea.classList.add('has-autorun');
-            }
-        }
+        this.setEmptyVisible(false);
+        this.setPanelOpen(true);
 
         // Populate details
         const titleEl = document.getElementById('autorun-title');
@@ -226,7 +243,7 @@ class AutorunManager {
         }
 
         if (intervalEl) {
-            intervalEl.textContent = `${autorun.interval_seconds}s (${formatInterval(autorun.interval_seconds)})`;
+            intervalEl.textContent = formatIntervalPreview(autorun.interval_seconds);
         }
 
         if (metaEl) {
@@ -243,10 +260,99 @@ class AutorunManager {
         if (toggleBtn) {
             toggleBtn.textContent = autorun.enabled ? 'Disable' : 'Enable';
         }
+        if (this.controller.setClusterPill) {
+            this.controller.setClusterPill('autorun-cluster', autorun.cluster);
+        }
 
         // Load and render the backing session as a long-running chat in the autorun terminal
         if (this.controller && this.controller.loadAutorunSession) {
             this.controller.loadAutorunSession(autorun);
+        }
+    }
+
+    showEditModal(autorunId) {
+        const autorun = this.autoruns.get(autorunId);
+        const modal = document.getElementById('edit-autorun-modal');
+        if (!autorun || !modal) return;
+
+        const condition = splitConditionFunction(autorun.condition_function);
+        document.getElementById('edit-autorun-name').value = autorun.name || '';
+        document.getElementById('edit-autorun-command').value = autorun.command || '';
+        document.getElementById('edit-autorun-condition').value = condition.name;
+        document.getElementById('edit-autorun-condition-limit').value = condition.limit;
+        document.getElementById('edit-autorun-interval').value = autorun.interval_seconds || 300;
+        if (this.controller.elasticClusters) {
+            this.controller.elasticClusters.fillSelect(
+                document.getElementById('edit-autorun-cluster-select'),
+                autorun.cluster_id
+            );
+        }
+        this.updateEditIntervalPreview();
+        modal.style.display = 'flex';
+        document.getElementById('edit-autorun-name').focus();
+    }
+
+    hideEditModal() {
+        const modal = document.getElementById('edit-autorun-modal');
+        if (modal) modal.style.display = 'none';
+    }
+
+    updateEditIntervalPreview() {
+        const interval = document.getElementById('edit-autorun-interval');
+        const preview = document.getElementById('edit-autorun-interval-preview');
+        if (interval && preview) preview.textContent = formatIntervalPreview(interval.value);
+    }
+
+    async saveAutorunSettings() {
+        const autorunId = this.currentAutorunId;
+        const autorun = autorunId ? this.autoruns.get(autorunId) : null;
+        if (!autorun) return;
+
+        const name = document.getElementById('edit-autorun-name').value.trim();
+        const command = document.getElementById('edit-autorun-command').value.trim();
+        const condition = joinConditionFunction(
+            document.getElementById('edit-autorun-condition').value,
+            document.getElementById('edit-autorun-condition-limit').value
+        ) || null;
+        const intervalSeconds = Number.parseInt(
+            document.getElementById('edit-autorun-interval').value,
+            10
+        );
+        if (!name || !command) {
+            if (window.toast) {
+                window.toast.info('Name and starting prompt are required.', { key: 'autorun-edit' });
+            }
+            return;
+        }
+        if (!Number.isFinite(intervalSeconds) || intervalSeconds < 5) {
+            if (window.toast) {
+                window.toast.info('Interval must be at least 5 seconds.', { key: 'autorun-edit' });
+            }
+            return;
+        }
+
+        const clusterId = this.controller.elasticClusters
+            ? this.controller.elasticClusters.selectedClusterId('edit-autorun-cluster-select')
+            : autorun.cluster_id;
+        const result = await this.controller.api.updateAutorun(autorunId, {
+            name,
+            command,
+            condition_function: condition,
+            interval_seconds: intervalSeconds,
+            cluster_id: clusterId,
+        });
+        if (!result || !result.success) {
+            if (window.toast) {
+                window.toast.error(result.error || 'Could not save autorun settings.', { key: 'autorun-edit' });
+            }
+            return;
+        }
+
+        this.hideEditModal();
+        await this.controller.loadAutoruns();
+        this.showAutorunDetails(autorunId);
+        if (window.toast) {
+            window.toast.success('Autorun settings saved.', { key: 'autorun-edit' });
         }
     }
 
@@ -262,15 +368,26 @@ class AutorunManager {
         try {
             const result = await this.controller.api.updateAutorun(autorunId, { enabled: newEnabled });
             if (result && result.success) {
-                // Refresh autorun list and details
+                if (window.toast) {
+                    window.toast.success(
+                        newEnabled
+                            ? 'Autorun enabled; an immediate run has been scheduled.'
+                            : 'Autorun disabled; its timer has been stopped.',
+                        { key: 'autorun' }
+                    );
+                }
                 await this.controller.loadAutoruns();
                 this.showAutorunDetails(autorunId);
             } else {
-                alert(`Error updating autorun: ${result.error || 'Unknown error'}`);
+                if (window.toast) {
+                    window.toast.error(result.error || 'Could not update autorun', { key: 'autorun' });
+                }
             }
         } catch (error) {
             console.error('[AutorunManager] Error updating autorun:', error);
-            alert('Error updating autorun. See console for details.');
+            if (window.toast) {
+                window.toast.error('Could not update autorun.', { key: 'autorun' });
+            }
         }
     }
 
@@ -291,19 +408,24 @@ class AutorunManager {
         try {
             const result = await this.controller.api.clearAutorunSession(autorunId);
             if (result && result.success) {
-                console.log(`[AutorunManager] Successfully cleared autorun session ${autorunId}`);
-                // Reload the autorun session to show the cleared terminal
+                if (window.toast) {
+                    window.toast.success('Autorun history cleared.', { key: 'autorun' });
+                }
                 const autorun = this.autoruns.get(autorunId);
                 if (autorun && this.controller.loadAutorunSession) {
                     await this.controller.loadAutorunSession(autorun);
                 }
             } else {
                 console.error('[AutorunManager] Backend clear failed:', result);
-                alert(`Error clearing autorun session: ${result.error || 'Unknown error'}`);
+                if (window.toast) {
+                    window.toast.error(result.error || 'Could not clear autorun history', { key: 'autorun' });
+                }
             }
         } catch (error) {
             console.error('[AutorunManager] Error clearing autorun session:', error);
-            alert('Error clearing autorun session. See console for details.');
+            if (window.toast) {
+                window.toast.error('Could not clear autorun history.', { key: 'autorun' });
+            }
         }
     }
 
@@ -359,31 +481,32 @@ class AutorunManager {
         // If this was the currently selected autorun, clear details panel
         if (this.currentAutorunId === autorunId) {
             this.currentAutorunId = null;
-            const autorunContent = document.getElementById('autorun-content');
-            const noSessionMessage = document.getElementById('no-session-message');
-            if (autorunContent) {
-                autorunContent.style.display = 'none';
-                // Remove class from content-area
-                const contentArea = document.querySelector('.content-area');
-                if (contentArea) {
-                    contentArea.classList.remove('has-autorun');
-                }
-            }
-            if (noSessionMessage) noSessionMessage.style.display = 'flex';
+            this.setPanelOpen(false);
         }
 
-        // Delete autorun from backend
         try {
             const deleteResult = await this.controller.api.deleteAutorun(autorunId);
             if (deleteResult && deleteResult.success) {
-                console.log(`[AutorunManager] Successfully deleted autorun ${autorunId} from backend`);
+                if (window.toast) {
+                    window.toast.success('Autorun deleted.', { key: 'autorun' });
+                }
             } else {
                 console.error('[AutorunManager] Backend delete failed:', deleteResult);
-                alert(`Error deleting autorun: ${deleteResult.error || 'Unknown error'}`);
+                this.deletedAutorunIds.delete(autorunId);
+                if (window.toast) {
+                    window.toast.error(deleteResult.error || 'Could not delete autorun', { key: 'autorun' });
+                }
             }
         } catch (error) {
             console.error('[AutorunManager] Error deleting autorun from backend:', error);
-            alert('Error deleting autorun. See console for details.');
+            this.deletedAutorunIds.delete(autorunId);
+            if (window.toast) {
+                window.toast.error('Could not delete autorun.', { key: 'autorun' });
+            }
+        }
+
+        if (this.controller.activeSection === 'autoruns') {
+            this.syncView();
         }
     }
 }

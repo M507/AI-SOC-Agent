@@ -6,12 +6,14 @@ dataclasses>=0.8; python_version < '3.7'
 
 # HTTP client for integrations
 requests>=2.31.0
+httpx>=0.27.0
 
 # Web server for configuration management
 fastapi>=0.104.0
 uvicorn[standard]>=0.24.0
 python-multipart>=0.0.6
 websockets>=12.0
+cryptography>=42.0.0
 
 # Optional: For async support in the future
 # aiohttp>=3.9.0

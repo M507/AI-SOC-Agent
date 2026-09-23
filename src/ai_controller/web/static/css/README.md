@@ -81,7 +81,8 @@ The CSS files are loaded in the following order in `index.html`:
 7. `autorun.css` - Autorun-specific overrides
 8. `modal.css` - Modal components
 9. `settings.css` - Settings page
-10. `scrollbar.css` - Scrollbar styling
+10. `toast.css` - Bottom-right status toasts
+11. `scrollbar.css` - Scrollbar styling
 
 This order ensures that more specific styles (like `autorun.css`) can override base styles when needed.
 
@@ -94,6 +95,7 @@ When updating styles:
 - **Autorun scrolling/layout:** Edit `autorun.css`
 - **Modal dialogs:** Edit `modal.css`
 - **Settings page:** Edit `settings.css`
+- **Status toasts:** Edit `toast.css`
 - **Global changes:** Edit `base.css` or `scrollbar.css`
 
 ## Versioning

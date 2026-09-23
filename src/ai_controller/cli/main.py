@@ -202,7 +202,7 @@ def main():
         parser.add_argument(
             "--debug",
             action="store_true",
-            help="Enable UI debug mode (show full JSON results in web UI)"
+            help="Debug mode: verbose UI JSON, and auto-reload when Python files under src/ change",
         )
         
         args = parser.parse_args()
@@ -213,9 +213,6 @@ def main():
         
         # Start web server
         import uvicorn
-        from ..web.server import app, initialize
-        
-        # Get config settings for web server from config.json
         from ...core.config_storage import get_config_dict
         
         config_dict = get_config_dict()
@@ -225,13 +222,46 @@ def main():
         web_host = args.host or ai_controller_config.get("web_host", "0.0.0.0")
         storage_dir = args.storage_dir or ai_controller_config.get("storage_dir", "data/ai_controller")
         
-        # Initialize server
-        initialize(config_storage_dir=storage_dir, debug_ui=args.debug)
-        
-        print(f"Starting SamiGPT AI Controller on http://{web_host}:{web_port}")
+        from ...core.tls import uvicorn_ssl_kwargs
+        from ..web.auth import load_web_auth_config
+
+        try:
+            load_web_auth_config(cookie_secure=True)
+        except RuntimeError as exc:
+            print(str(exc), file=sys.stderr)
+            sys.exit(1)
+
+        os.environ["SAMI_STORAGE_DIR"] = str(storage_dir)
+        os.environ["SAMI_DEBUG_UI"] = "1" if args.debug else "0"
+        os.environ["SAMI_MCP_AUTO_START"] = "1"
+        os.environ["SAMI_COOKIE_SECURE"] = "1"
+
+        print(f"Starting SamiGPT AI Controller on https://{web_host}:{web_port}")
+        print("Sign-in uses web.username / web.password from config.json")
+        if args.debug:
+            print("Debug mode: auto-reloading when Python files under src/ change")
         print("Press Ctrl+C to stop")
-        
-        uvicorn.run(app, host=web_host, port=web_port, log_level="info")
+
+        run_kwargs = {
+            "host": web_host,
+            "port": web_port,
+            "log_level": "info",
+            **uvicorn_ssl_kwargs(),
+        }
+        if args.debug:
+            from pathlib import Path as _Path
+            from ..web.server import uvicorn_reload_kwargs
+
+            uvicorn.run(
+                "src.ai_controller.web.server:create_app",
+                factory=True,
+                **uvicorn_reload_kwargs(_Path.cwd()),
+                **run_kwargs,
+            )
+        else:
+            from ..web.server import create_app
+
+            uvicorn.run(create_app(), **run_kwargs)
         return
     
     # Not --web mode: pass through to Cursor IDE cursor-agent
