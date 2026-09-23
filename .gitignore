@@ -94,3 +94,5 @@ simulation/
 execution_flow/*.dot
 stats/
 .tmp/*
+gitleaks
+gitleaks.toml
