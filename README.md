@@ -22,22 +22,47 @@ with its own settings and health check.
 
 **Steps:**
 
-1. **Activate virtual environment:**
+1. **Clone the repository and create a virtual environment** (skip if you already have one):
    ```bash
+   git clone <repository-url>
+   cd SamiGPT
+   python3 -m venv venv
    source venv/bin/activate  # On Windows: venv\Scripts\activate
+   pip install --upgrade pip
+   pip install -r requirements.txt
    ```
 
-2. **Set the UI password** in `config.json` (copied from `config.json.example` on first run):
+2. **Set the UI password** in `config.json` (copied from `config.json.example` automatically on first run):
    ```json
    "web": {
      "username": "admin",
      "password": "choose-a-strong-password",
-     "session_secret": ""
+     "session_secret": "",
+     "session_ttl_seconds": 43200
    }
    ```
    `session_secret` is generated automatically if left empty.
 
-3. **Start the application:**
+3. **Add tokens/URLs for the integrations you want to enable** in `config.json`.
+   You only need to fill in the sections for the tools you actually use
+   (case management, SIEM, EDR, CTI, LLM provider, etc.) — everything else can
+   be left at its placeholder values. For example, to use **Open WebUI** as
+   the LLM provider:
+   ```json
+   "llm": {
+     "provider": "openwebui",
+     "openwebui": {
+       "api_key": "your-openwebui-api-key",
+       "base_url": "https://your-openwebui-host:8080",
+       "model": "auto"
+     }
+   }
+   ```
+   The same pattern applies to other sections, e.g. `thehive.api_key`,
+   `iris.api_key`, `elastic.clusters[].api_key`, `edr.api_key`, `cti.base_url`,
+   and `netbox.api_token`. See the Configuration section below for the full list.
+
+4. **Start the application:**
    ```bash
    python app.py
    ```
@@ -50,32 +75,33 @@ with its own settings and health check.
    python app.py --debug     # auto-reload when files under src/ change
    ```
 
-4. **Open your browser:**
+5. **Open your browser:**
    Navigate to `https://<host>:8081` and sign in. Nothing in the UI, APIs, or static files is reachable without a valid session.
 
-5. **Choose an LLM provider:**
-   Open **Settings** and select Cursor Agent, OpenAI, OpenRouter, Open WebUI,
-   or any OpenAI-compatible endpoint. Save, then use **Test provider**.
+6. **Verify the LLM provider:**
+   Open **Settings** to confirm the provider you configured in step 3 (Cursor
+   Agent, OpenAI, OpenRouter, Open WebUI, or any OpenAI-compatible endpoint),
+   or switch providers here instead. Save, then use **Test provider**.
 
-6. **Check the MCP server:**
+7. **Check the MCP server:**
    Use the **MCP** button in the header. It shows health, bound host/port,
    registered tools, and start/stop/restart controls. MCP HTTPS routes require
    `Authorization: Bearer <mcp.api_token>` from `config.json`.
 
-#### MCP Server (stdio, for Cursor / Claude Desktop)
+8. **Confirm Open WebUI is connected:**
+   In SamiGPT, the **MCP** button should show the server as healthy with its
+   registered tools listed:
 
-The HTTP MCP listener started by `app.py` is what the web UI health-checks.
-Cursor IDE and Claude Desktop still connect over stdio if you prefer:
+   ![MCP connected on SamiGPT](images/mcp_connected_on_samigpt.png)
 
-```bash
-python -m src.mcp.mcp_server
-```
+   In Open WebUI, add SamiGPT as a tool server under **Settings → Tools**,
+   pointing it at the MCP HTTPS listener (`https://<host>:<mcp.port>`, e.g.
+   `https://<host>:8082`) with `Authorization: Bearer <mcp.api_token>` from
+   `config.json`, then verify the SamiGPT tools appear in the tool list there
+   too. Note this is separate from the `llm.openwebui` config in step 3, which
+   instead points SamiGPT at Open WebUI as its LLM backend:
 
-See "Connect MCP Server to AI Tools" below.
-
-**Note:** Cursor Agent is one optional LLM backend. OpenAI, OpenRouter, Open WebUI,
-and custom OpenAI-compatible APIs work without the Cursor IDE `cursor-agent` binary.
-Those providers call SamiGPT tools through the MCP server when it is running.
+   ![MCP connected on Open WebUI](images/mcp_connected_on_openwebui.png)
 
 #### Install as a systemd service (`servee`)
 
@@ -116,6 +142,7 @@ SamiGPT acts as an MCP server that exposes security investigation and response c
 - **SIEM Platforms** (Elastic)
 - **EDR Solutions** (Elastic Defend)
 - **Threat Intelligence** (OpenCTI, Local TIP)
+- **DCIM/IPAM** (NetBox)
 
 The platform enables automated triage, investigation, correlation, and response workflows through intelligent agent profiles organized by SOC tier (SOC1, SOC2).
 
@@ -128,6 +155,7 @@ The platform enables automated triage, investigation, correlation, and response 
 - **SIEM Integration**: Search security events, pivot on indicators, and correlate activities across environments
 - **EDR Response**: Endpoint isolation, process termination, and forensic artifact collection
 - **Threat Intelligence**: IOC enrichment and reputation analysis
+- **Infrastructure Lookup**: Resolve IPs, hosts, and prefixes against NetBox DCIM/IPAM for asset context
 - **Multi-Tier SOC Workflows**: Structured workflows for SOC1 (triage) and SOC2 (investigation)
 
 ### Agent Profiles & Runbooks
@@ -145,91 +173,48 @@ SamiGPT uses structured workflows organized by SOC tier. The following diagrams 
 
 This diagram shows how agent profiles are organized and how routing rules direct cases to the appropriate SOC tier agents.
 
-![Agent Profiles Flow](execution_flow/agent_profiles_flow.svg)
+![Agent Profiles Flow](images/execution_flow/agent_profiles_flow.svg)
 
 ### Initial Alert Triage (SOC1)
 
 The initial alert triage workflow handles new security alerts, performs quick assessment, enrichment, and determines whether to create a case or close as false positive.
 
-![Initial Alert Triage](execution_flow/initial_alert_triage.svg)
+![Initial Alert Triage](images/execution_flow/initial_alert_triage.svg)
 
 ### Case Analysis (SOC2)
 
 The SOC2 case analysis workflow performs deep investigation, SIEM analysis, CTI enrichment, correlation, and prepares cases for SOC3 escalation.
 
-![Case Analysis](execution_flow/case_analysis.svg)
+![Case Analysis](images/execution_flow/case_analysis.svg)
 
 ## Installation
 
 ### Prerequisites
 
-- Python 3.9 or higher
+- Python 3.9 or higher (3.10+ if installing as a systemd service via `servee/`)
 - pip package manager
 
 ### Setup
 
-1. **Clone the repository**:
-   ```bash
-   git clone <repository-url>
-   cd SamiGPT
-   ```
+See "Quick Start" above for cloning the repository, creating the virtual
+environment, and installing dependencies. Once `python app.py` is running:
 
-2. **Create and activate virtual environment**:
-   ```bash
-   python3 -m venv venv
-   source venv/bin/activate  # On Windows: venv\Scripts\activate
-   ```
-
-3. **Install dependencies**:
-   ```bash
-   pip install --upgrade pip
-   pip install -r requirements.txt
-   ```
-
-4. **Configure integrations** (see Configuration section below)
+1. **Configure integrations** (see Configuration section below)
 
 ### Connect MCP Server to AI Tools
 
-If you're using **Method 2: MCP Server** (see Quick Start above), configure your AI tool to connect to the MCP server:
+The **official, supported way** to use SamiGPT's tools is to connect them to
+**Open WebUI** via the MCP HTTPS listener (see "Confirm Open WebUI is
+connected" in Quick Start above). Once SamiGPT is registered as a tool server
+in Open WebUI, you can drive it from **any LLM provider Open WebUI
+supports** (OpenAI, OpenRouter, local/self-hosted models, etc.) without any
+further per-client setup.
 
-#### Cursor Integration
-
-1. Open Cursor Settings → Features → Model Context Protocol
-2. Add SamiGPT server configuration:
-   ```json
-   {
-     "mcpServers": {
-       "sami-gpt": {
-         "command": "python",
-         "args": ["-m", "src.mcp.mcp_server"],
-         "cwd": "/absolute/path/to/SamiGPT"
-       }
-     }
-   }
-   ```
-3. Restart Cursor and start using SamiGPT tools in chat
-
-#### Claude Desktop Integration
-
-Edit `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS) or `%APPDATA%\Claude\claude_desktop_config.json` (Windows):
-
-```json
-{
-  "mcpServers": {
-    "sami-gpt": {
-      "command": "python",
-      "args": ["-m", "src.mcp.mcp_server"],
-      "cwd": "/absolute/path/to/SamiGPT"
-    }
-  }
-}
-```
-
-#### Other MCP-Compatible Tools
-
-The MCP server can also be connected to:
-- **Open WebUI** via the HTTPS listener (`https://127.0.0.1:8082/rpc`) or stdio
-- **Other LLM tools** that support the Model Context Protocol
+Other MCP-compatible clients that speak stdio or HTTPS — such as Cursor or
+Claude Desktop — are also supported and can connect directly to
+`python -m src.mcp.mcp_server` (stdio) or the HTTPS listener below, but they
+are not the primary/tested integration path and are not documented in
+detail here.
 
 HTTPS endpoints when `app.py` is running (defaults). Send `Authorization: Bearer <mcp.api_token>`:
 
@@ -241,7 +226,7 @@ HTTPS endpoints when `app.py` is running (defaults). Send `Authorization: Bearer
 
 ### Infrastructure Overview
 
-![Infrastructure Diagram](execution_flow/infrastructure_diagram.png)
+![Infrastructure Diagram](images/execution_flow/infrastructure_diagram.png)
 
 ### Directory Structure
 
@@ -255,6 +240,7 @@ SamiGPT/
 │   │   ├── siem/             # Elastic integration
 │   │   ├── edr/              # EDR platform integrations
 │   │   ├── cti/              # Threat intelligence integrations
+│   │   ├── netbox/           # NetBox DCIM/IPAM integration
 │   │   └── eng/              # Engineering board integrations
 │   ├── llm/              # Pluggable LLM providers (Cursor, OpenAI, OpenRouter, Open WebUI, custom)
 │   ├── mcp/              # MCP server, HTTP transport, supervisor, runbooks
@@ -285,80 +271,12 @@ See `config.json.example` for the complete configuration schema. Key sections:
 - `elastic`: SIEM configuration
 - `edr`: EDR platform configuration
 - `cti`: Threat intelligence configuration
+- `netbox`: NetBox DCIM/IPAM configuration
 - `eng`: Engineering board configuration (ClickUp, Trello, GitHub)
 - `ai_controller`: Web interface bind address and session storage
 - `llm`: LLM provider used by the web UI (Cursor Agent, OpenAI, OpenRouter, Open WebUI, custom)
 - `mcp`: HTTP MCP listener host/port and auto-start
 - `logging`: Logging configuration
-
-## Usage Examples
-
-### Basic Case Operations
-
-```python
-# List all open cases
-cases = list_cases(status="open")
-
-# Review a specific case
-case = review_case(case_id="123")
-
-# Add an observable to a case
-attach_observable_to_case(
-    case_id="123",
-    observable_type="ip",
-    observable_value="192.168.1.100",
-    description="Suspicious source IP"
-)
-```
-
-### SIEM Investigation
-
-```python
-# Search for security events
-events = search_security_events(
-    query="source.ip: 192.168.1.100",
-    hours_back=24
-)
-
-# Get file report
-report = get_file_report(file_hash="abc123...")
-
-# Pivot on an indicator
-related_events = pivot_on_indicator("192.168.1.100")
-```
-
-### EDR Response
-
-```python
-# Get endpoint summary
-endpoint = get_endpoint_summary(endpoint_id="host-123")
-
-# Isolate an endpoint
-isolate_endpoint(endpoint_id="host-123")
-
-# Collect forensic artifacts
-collect_forensic_artifacts(
-    endpoint_id="host-123",
-    artifact_types=["processes", "network", "filesystem"]
-)
-```
-
-### Agent Profile Execution
-
-```python
-# Execute as SOC1 triage agent
-execute_as_agent(
-    agent_id="soc1_triage_agent",
-    alert_id="alert-123"
-)
-
-# Execute specific runbook
-execute_runbook(
-    runbook_name="initial_alert_triage",
-    alert_id="alert-123",
-    case_id="case-456"
-)
-```
 
 ## Logging
 
@@ -421,6 +339,21 @@ The following projects helped and inspired us during the literature review:
 - [ADK Runbooks](https://github.com/dandye/adk_runbooks/tree/main) - Security investigation runbooks and workflows
 
 ## Changelog
+
+### v0.2
+
+- **Single entry point (`app.py`)** serving an authenticated, HTTPS-only web UI (session login, auto-generated self-signed cert)
+- **MCP server as a separate HTTPS listener** with its own health check, supervisor, and start/stop/restart controls from the UI
+- **Pluggable LLM providers**: Cursor Agent, OpenAI, OpenRouter, Open WebUI, and custom OpenAI-compatible endpoints, selectable and testable from Settings
+- **Open WebUI integration path**: SamiGPT registers as an MCP tool server in Open WebUI, so it can be driven from any LLM provider Open WebUI supports
+- **Approval queue**: human-in-the-loop review/approval workflow for agent actions before they execute
+- **Multi-cluster Elastic support** with per-cluster skill vectors (MSV) controlling which capabilities are enabled per cluster
+- **Skill toggles in Settings**: enable/disable individual skills per integration directly from the web UI, instead of editing the skill vector by hand
+- **NetBox integration** (DCIM/IPAM) as a new data source for investigations
+- **Engineering board integration** (GitHub Issues, Trello) for filing follow-up work from investigations
+- **Requests view** in the UI for tracking in-flight and historical tool calls. A request, such as a detection or runbook gap, can be filed directly as a GitHub issue in a repository you configure, for example a Detection-as-Code repository, and its status stays synchronized when that issue is closed
+- **systemd service installer** (`servee/`) for running SamiGPT as a boot-persistent service
+- Secret-handling and TLS hardening (`core/secrets.py`, `core/tls.py`), plus gitleaks-based secret scanning in CI
 
 ### v0.1 — Black Hat version
 
