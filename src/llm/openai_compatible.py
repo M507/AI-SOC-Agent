@@ -139,6 +139,73 @@ def _parse_tool_call_payload(raw: str) -> Optional[Dict[str, Any]]:
     return {"name": name, "arguments": arguments}
 
 
+def _completion_is_blank(data: Any) -> bool:
+    """True when a chat completion has no text, reasoning, or tool call to act on."""
+    if not isinstance(data, dict):
+        return True
+    choice = (data.get("choices") or [{}])[0] or {}
+    message = choice.get("message") or {}
+    if not isinstance(message, dict):
+        return True
+    content = message.get("content") or ""
+    if isinstance(content, str) and content.strip():
+        return False
+    if message.get("tool_calls"):
+        return False
+    for key in ("reasoning_content", "reasoning"):
+        piece = message.get(key)
+        if isinstance(piece, str) and piece.strip():
+            return False
+    return True
+
+
+def _completion_summary(data: Any) -> str:
+    """Lengths and names only, so logs can show a bad reply without the full body."""
+    if not isinstance(data, dict):
+        return f"body={type(data).__name__}"
+    choice = (data.get("choices") or [{}])[0] or {}
+    message = choice.get("message") or {}
+    if not isinstance(message, dict):
+        message = {}
+    content = message.get("content") or ""
+    text_chars = len(content) if isinstance(content, str) else 0
+    reasoning = ""
+    for key in ("reasoning_content", "reasoning"):
+        piece = message.get(key)
+        if isinstance(piece, str) and piece.strip():
+            reasoning = piece
+            break
+    tools = []
+    for call in message.get("tool_calls") or []:
+        if isinstance(call, dict):
+            tools.append(((call.get("function") or {}).get("name")) or "?")
+    return (
+        f"text_chars={text_chars} reasoning_chars={len(reasoning)} "
+        f"tools={tools} finish={choice.get('finish_reason')} "
+        f"message_keys={sorted(message)} top_keys={sorted(data)}"
+    )
+
+
+def _stream_chunk_label(chunk: Dict[str, Any]) -> str:
+    event_type = str(chunk.get("type") or "")
+    if event_type:
+        return event_type
+    choice = (chunk.get("choices") or [{}])[0] or {}
+    delta = choice.get("delta") or {}
+    if not isinstance(delta, dict) or not delta:
+        if chunk.get("choices"):
+            return "chat.delta.empty"
+        return "unparsed:" + ",".join(sorted(chunk)[:8])
+    if delta.get("tool_calls"):
+        return "chat.delta.tool_calls"
+    if isinstance(delta.get("content"), str) and delta.get("content"):
+        return "chat.delta.content"
+    for key in ("reasoning_content", "reasoning"):
+        if isinstance(delta.get(key), str) and delta.get(key):
+            return "chat.delta.reasoning"
+    return "chat.delta.empty"
+
+
 def visible_agent_text(text: str) -> str:
     """Drop <tool_call> markup so the thinking view shows the prose around it."""
     if not text:
@@ -452,6 +519,15 @@ class OpenAICompatibleProvider(LLMProvider):
                     payload["tool_choice"] = "auto"
 
                 round_label = f"Asking the model · round {_iteration + 1} of {max_iterations}"
+                logger.info(
+                    "LLM request round %s/%s provider=%s model=%s url=%s messages=%s",
+                    _iteration + 1,
+                    max_iterations,
+                    self.provider_id,
+                    model,
+                    chat_url,
+                    len(messages),
+                )
                 status = {"kind": "status", "text": round_label}
                 trace.append(status)
                 await self._emit_trace(on_trace, trace)
@@ -504,6 +580,32 @@ class OpenAICompatibleProvider(LLMProvider):
                 text_calls = [] if native_calls else parse_text_tool_calls(content or last_text)
                 tool_calls = native_calls or text_calls
                 text_tool_loop = bool(text_calls) or prompt_tool_fallback
+                if not tool_calls and not (content or "").strip():
+                    self._drop_live_thoughts(trace)
+                    trace.append(
+                        {
+                            "kind": "status",
+                            "text": "The model returned an empty reply.",
+                        }
+                    )
+                    logger.warning(
+                        "LLM returned an empty reply provider=%s model=%s %s",
+                        self.provider_id,
+                        model,
+                        _completion_summary(last_raw),
+                    )
+                    return LLMResult(
+                        success=False,
+                        text="",
+                        error="The model returned an empty reply.",
+                        raw=last_raw,
+                        provider=self.provider_id,
+                        model=model,
+                        tool_calls=tool_calls_made,
+                        tools_advertised=tools_advertised,
+                        tools_supported=tools_supported,
+                        trace=list(trace),
+                    )
                 self._drop_live_thoughts(trace)
                 self._record_thought(
                     trace,
@@ -670,7 +772,18 @@ class OpenAICompatibleProvider(LLMProvider):
                     json=payload,
                 )
                 response.raise_for_status()
-                return response.json()
+                data = response.json()
+                logger.info(
+                    "LLM completion response status=%s %s",
+                    response.status_code,
+                    _completion_summary(data),
+                )
+                if _completion_is_blank(data):
+                    logger.warning(
+                        "LLM completion body had no text, reasoning, or tool call. sample=%s",
+                        clip_trace_text(json.dumps(data), 500),
+                    )
+                return data
             except Exception as exc:
                 last_error = exc
                 if attempt == 0 and "Timeout" in type(exc).__name__:
@@ -696,11 +809,21 @@ class OpenAICompatibleProvider(LLMProvider):
         """Prefer a streaming reply so the thinking view can grow while the model writes."""
         if hasattr(client, "stream"):
             try:
-                return await self._stream_with_retry(
+                data = await self._stream_with_retry(
                     client, chat_url, payload, timeout, on_partial, on_note
                 )
             except _StreamUnsupported:
                 logger.info("LLM endpoint rejected streaming; waiting for the full reply")
+                data = None
+            if data is not None and not _completion_is_blank(data):
+                return data
+            if data is not None:
+                logger.warning(
+                    "Streamed model reply was empty; requesting the completion again without streaming. %s",
+                    _completion_summary(data),
+                )
+                if on_note is not None:
+                    await on_note("The streamed reply was empty. Asking the model again.")
         return await self._post_chat(client, chat_url, payload, timeout, on_note)
 
     async def _stream_with_retry(
@@ -735,17 +858,33 @@ class OpenAICompatibleProvider(LLMProvider):
 
     async def _stream_once(self, client: Any, chat_url: str, body: Dict[str, Any], on_partial: Any) -> Any:
         async with client.stream("POST", chat_url, headers=self._headers(), json=body) as response:
-            if response.status_code == 400:
-                await response.aread()
-                raise _StreamUnsupported()
             content_type = ""
             headers = getattr(response, "headers", None)
             if headers is not None and hasattr(headers, "get"):
                 content_type = headers.get("content-type", "") or ""
+            logger.info(
+                "LLM stream response status=%s content_type=%s url=%s",
+                response.status_code,
+                content_type or "missing",
+                chat_url,
+            )
+            if response.status_code == 400:
+                await response.aread()
+                logger.warning(
+                    "LLM endpoint rejected streaming. body=%s",
+                    clip_trace_text(getattr(response, "text", ""), 300),
+                )
+                raise _StreamUnsupported()
             if "text/event-stream" not in content_type:
                 await response.aread()
                 response.raise_for_status()
-                return response.json()
+                data = response.json()
+                logger.info(
+                    "LLM stream body was JSON content_type=%s %s",
+                    content_type or "missing",
+                    _completion_summary(data),
+                )
+                return data
             response.raise_for_status()
             return await self._read_sse(response, on_partial)
 
@@ -755,6 +894,11 @@ class OpenAICompatibleProvider(LLMProvider):
         reasoning_parts: List[str] = []
         tool_acc: Dict[int, Dict[str, Any]] = {}
         last_emit = 0.0
+        type_counts: Dict[str, int] = {}
+        skipped_lines = 0
+        bad_json = 0
+        first_sample = ""
+        last_sample = ""
 
         async def publish(force: bool = False) -> None:
             nonlocal last_emit
@@ -774,18 +918,140 @@ class OpenAICompatibleProvider(LLMProvider):
 
         async for raw_line in response.aiter_lines():
             line = (raw_line or "").strip()
+            if not line:
+                continue
             if not line.startswith("data:"):
+                label = line.split(":", 1)[0][:40]
+                type_counts[f"sse:{label}"] = type_counts.get(f"sse:{label}", 0) + 1
+                skipped_lines += 1
                 continue
             data = line[5:].strip()
             if not data or data == "[DONE]":
                 if data == "[DONE]":
+                    type_counts["[DONE]"] = type_counts.get("[DONE]", 0) + 1
                     break
                 continue
             try:
                 chunk = json.loads(data)
             except json.JSONDecodeError:
+                bad_json += 1
+                if not first_sample:
+                    first_sample = clip_trace_text(data, 400)
+                last_sample = clip_trace_text(data, 400)
                 continue
-            delta = ((chunk.get("choices") or [{}])[0].get("delta") or {})
+            if not isinstance(chunk, dict):
+                bad_json += 1
+                continue
+            label = _stream_chunk_label(chunk)
+            type_counts[label] = type_counts.get(label, 0) + 1
+            sample = clip_trace_text(json.dumps(chunk), 400)
+            if not first_sample:
+                first_sample = sample
+            last_sample = sample
+            self._absorb_stream_chunk(chunk, content_parts, reasoning_parts, tool_acc)
+            await publish()
+
+        await publish(force=True)
+        message = {"role": "assistant", "content": "".join(content_parts)}
+        reasoning = "".join(reasoning_parts).strip()
+        if reasoning:
+            message["reasoning_content"] = reasoning
+        if tool_acc:
+            named_calls = [
+                tool_acc[index]
+                for index in sorted(tool_acc)
+                if ((tool_acc[index].get("function") or {}).get("name"))
+            ]
+            if named_calls:
+                message["tool_calls"] = named_calls
+        result = {"choices": [{"message": message}]}
+        type_list = ", ".join(f"{name}:{count}" for name, count in sorted(type_counts.items()))
+        logger.info(
+            "LLM stream finished events=%s skipped_lines=%s bad_json=%s types=[%s] %s",
+            sum(type_counts.values()),
+            skipped_lines,
+            bad_json,
+            type_list,
+            _completion_summary(result),
+        )
+        if _completion_is_blank(result):
+            logger.warning(
+                "LLM stream had no text, reasoning, or tool call. first=%s last=%s",
+                first_sample or "<none>",
+                last_sample or "<none>",
+            )
+        return result
+
+    @staticmethod
+    def _absorb_stream_chunk(
+        chunk: Dict[str, Any],
+        content_parts: List[str],
+        reasoning_parts: List[str],
+        tool_acc: Dict[int, Dict[str, Any]],
+    ) -> None:
+        """Accept chat-completion deltas and Open WebUI's Responses-style events."""
+        event_type = str(chunk.get("type") or "")
+
+        def slot_for(item_id: str) -> Dict[str, Any]:
+            for existing in tool_acc.values():
+                if item_id and existing.get("id") == item_id:
+                    return existing
+            index = len(tool_acc)
+            created = {"id": item_id or f"call-{index}", "function": {"name": "", "arguments": ""}}
+            tool_acc[index] = created
+            return created
+
+        def use_text(text: str, replace: bool) -> None:
+            if not text:
+                return
+            current = "".join(content_parts)
+            if not replace:
+                content_parts.append(text)
+                return
+            if text == current or (current and current.startswith(text) and len(current) >= len(text)):
+                return
+            content_parts.clear()
+            content_parts.append(text)
+
+        if event_type == "response.output_text.delta" and isinstance(chunk.get("delta"), str):
+            use_text(chunk["delta"], replace=False)
+        elif event_type == "response.output_text.done" and isinstance(chunk.get("text"), str):
+            use_text(chunk["text"], replace=True)
+        elif "reasoning" in event_type and isinstance(chunk.get("delta"), str):
+            reasoning_parts.append(chunk["delta"])
+        elif event_type == "response.function_call_arguments.delta" and isinstance(chunk.get("delta"), str):
+            slot = slot_for(str(chunk.get("item_id") or chunk.get("output_index") or ""))
+            slot["function"]["arguments"] += chunk["delta"]
+        elif event_type in ("response.output_item.added", "response.output_item.done"):
+            item = chunk.get("item") or {}
+            if item.get("type") == "function_call":
+                slot = slot_for(str(item.get("call_id") or item.get("id") or ""))
+                if item.get("name"):
+                    slot["function"]["name"] = item["name"]
+                if isinstance(item.get("arguments"), str) and item["arguments"]:
+                    slot["function"]["arguments"] = item["arguments"]
+        elif event_type == "response.completed":
+            response = chunk.get("response") or {}
+            pieces: List[str] = []
+            for item in response.get("output") or []:
+                if not isinstance(item, dict):
+                    continue
+                if item.get("type") == "function_call":
+                    slot = slot_for(str(item.get("call_id") or item.get("id") or ""))
+                    if item.get("name"):
+                        slot["function"]["name"] = item["name"]
+                    if isinstance(item.get("arguments"), str) and item["arguments"]:
+                        slot["function"]["arguments"] = item["arguments"]
+                    continue
+                for block in item.get("content") or []:
+                    if isinstance(block, str):
+                        pieces.append(block)
+                    elif isinstance(block, dict) and isinstance(block.get("text"), str):
+                        pieces.append(block["text"])
+            use_text("".join(pieces), replace=True)
+        else:
+            choice = (chunk.get("choices") or [{}])[0] or {}
+            delta = choice.get("delta") or {}
             piece = delta.get("content")
             if isinstance(piece, str) and piece:
                 content_parts.append(piece)
@@ -808,16 +1074,6 @@ class OpenAICompatibleProvider(LLMProvider):
                     slot["function"]["name"] += function["name"]
                 if function.get("arguments"):
                     slot["function"]["arguments"] += function["arguments"]
-            await publish()
-
-        await publish(force=True)
-        message = {"role": "assistant", "content": "".join(content_parts)}
-        reasoning = "".join(reasoning_parts).strip()
-        if reasoning:
-            message["reasoning_content"] = reasoning
-        if tool_acc:
-            message["tool_calls"] = [tool_acc[index] for index in sorted(tool_acc)]
-        return {"choices": [{"message": message}]}
 
     async def _run_with_status(self, status, label, action, on_trace, trace, on_note):
         """Keep one status line moving while a model request or retry is in flight."""

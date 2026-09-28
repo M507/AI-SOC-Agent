@@ -481,3 +481,88 @@ def test_streaming_reply_appears_in_thinking_before_the_tool(monkeypatch):
     assert any(texts and "Checking the IP." in texts[-1] and "<tool_call>" not in texts[-1] for texts in seen)
     assert any(json_body.get("stream") is True for json_body in (call.get("json") or {} for call in client.calls))
 
+
+class _ResponsesStream:
+    status_code = 200
+    headers = {"content-type": "text/event-stream"}
+
+    def __init__(self, lines):
+        self.lines = lines
+
+    def raise_for_status(self):
+        return None
+
+    async def aiter_lines(self):
+        for line in self.lines:
+            yield line
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *_args):
+        return None
+
+
+class _ResponsesClient(_RecordingClient):
+    def __init__(self, lines, chat_payloads=None):
+        super().__init__(passthrough_status=403, chat_payloads=chat_payloads)
+        self.lines = lines
+
+    def stream(self, method, url, headers=None, json=None):
+        self.calls.append({"url": url, "json": json, "stream": True})
+        return _ResponsesStream(self.lines)
+
+
+def test_openwebui_responses_stream_becomes_the_reply(monkeypatch, caplog):
+    caplog.set_level("INFO", logger="sami.llm.openai_compatible")
+    lines = [
+        "event: response.output_text.delta",
+        'data: {"type":"response.output_text.delta","delta":"pon"}',
+        'data: {"type":"response.output_text.delta","delta":"g"}',
+        'data: {"type":"response.completed","response":{"output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"pong"}]}]}}',
+        "data: [DONE]",
+    ]
+    client = _ResponsesClient(lines)
+    monkeypatch.setattr(httpx, "AsyncClient", lambda **_kwargs: _AsyncCM(client))
+    seen = []
+
+    async def on_trace(trace):
+        seen.append([step.get("text", "") for step in trace if step.get("kind") == "think"])
+
+    provider = OpenAICompatibleProvider(
+        "openwebui",
+        "Open WebUI",
+        {"base_url": "http://webui:8080/", "model": "m"},
+    )
+    result = asyncio.run(provider.complete("ping", on_trace=on_trace))
+
+    assert result.success
+    assert result.text == "pong"
+    assert any(texts and texts[-1] == "pon" for texts in seen)
+    assert "LLM stream finished" in caplog.text
+    assert "response.output_text.delta" in caplog.text
+    assert "text_chars=4" in caplog.text
+
+
+def test_empty_stream_retries_without_streaming(monkeypatch, caplog):
+    caplog.set_level("INFO", logger="sami.llm.openai_compatible")
+    client = _ResponsesClient(
+        ["data: [DONE]"],
+        chat_payloads=[{"choices": [{"message": {"content": "recovered"}}]}],
+    )
+    monkeypatch.setattr(httpx, "AsyncClient", lambda **_kwargs: _AsyncCM(client))
+    provider = OpenAICompatibleProvider(
+        "openwebui",
+        "Open WebUI",
+        {"base_url": "http://webui:8080/", "model": "m"},
+    )
+    result = asyncio.run(provider.complete("ping"))
+
+    assert result.success
+    assert result.text == "recovered"
+    assert any(not call.get("stream") for call in client.calls)
+    assert "LLM stream had no text" in caplog.text
+    assert "LLM completion response" in caplog.text
+    assert "text_chars=9" in caplog.text
+
+

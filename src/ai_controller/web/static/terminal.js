@@ -103,8 +103,12 @@ class TerminalRenderer {
 
         if (text === null && !isDebug) {
             const pre = document.createElement('pre');
-            pre.textContent = 'An error occurred (no output received)';
-            resultLine.className = 'terminal-line error';
+            pre.textContent = isError
+                ? 'An error occurred (no output received)'
+                : 'The model returned an empty reply.';
+            if (isError) {
+                resultLine.className = 'terminal-line error';
+            }
             resultLine.appendChild(pre);
             return;
         }
