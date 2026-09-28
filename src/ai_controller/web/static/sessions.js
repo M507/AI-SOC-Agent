@@ -144,27 +144,11 @@ class SessionManager {
             <span>${escapeHtml(session.name)}</span>
             ${session.cluster && session.cluster.name ? `<span class="tab-cluster" title="${escapeHtml(session.cluster.base_url || '')}">${escapeHtml(session.cluster.name)}</span>` : ''}
             <span class="tab-badge">${session.entries?.length || 0}</span>
-            <span class="tab-close" data-session-id="${session.id}">&times;</span>
         `;
         
-        // Handle tab click (switch to session)
-        tab.addEventListener('click', (e) => {
-            // Don't switch if clicking the close button
-            if (e.target.classList.contains('tab-close') || e.target.closest('.tab-close')) {
-                return;
-            }
+        tab.addEventListener('click', () => {
             this.controller.switchToSession(session.id);
         });
-        
-        // Handle close button click
-        const closeBtn = tab.querySelector('.tab-close');
-        if (closeBtn) {
-            closeBtn.addEventListener('click', (e) => {
-                e.stopPropagation();
-                e.preventDefault();
-                this.controller.closeSession(session.id);
-            });
-        }
         
         return tab;
     }
@@ -217,81 +201,15 @@ class SessionManager {
     }
 
     /**
-     * Close current session UI and delete it (same as clicking X).
+     * Session JSON files are kept on disk. Closing the browser or leaving
+     * this view must not delete them.
      */
     async closeCurrent() {
-        if (!this.controller.activeSessionId) {
-            return;
-        }
-        
-        const sessionId = this.controller.activeSessionId;
-        await this.closeSession(sessionId);
+        return;
     }
 
-    /**
-     * Close and delete a session.
-     */
-    async closeSession(sessionId) {
-        if (!sessionId) {
-            console.error('[SessionManager] closeSession called with null/undefined sessionId');
-            return;
-        }
-        
-        if (!confirm('Delete this session and its chat history? This cannot be undone.')) {
-            return;
-        }
-
-        console.log(`[SessionManager] Closing and deleting session ${sessionId}`);
-        
-        // Mark as deleted immediately to prevent any recreation
-        this.deletedSessionIds.add(sessionId);
-        
-        // Remove from local cache
-        this.sessions.delete(sessionId);
-        
-        // Remove tab from DOM immediately
-        this.removeTab(sessionId);
-        
-        // Close WebSocket connection
-        this.controller.wsManager.disconnect(sessionId);
-        
-        // If this was the active session, clear UI
-        if (this.controller.activeSessionId === sessionId) {
-            this.controller.activeSessionId = null;
-            const noSessionMessage = document.getElementById('no-session-message');
-            const sessionContent = document.getElementById('session-content');
-            if (noSessionMessage) noSessionMessage.style.display = 'flex';
-            if (sessionContent) sessionContent.style.display = 'none';
-        }
-        
-        // Stop the session if it's running
-        try {
-            await this.controller.api.stopSession(sessionId);
-        } catch (error) {
-            console.warn('[SessionManager] Error stopping session:', error);
-        }
-        
-        // Delete session from backend
-        try {
-            const deleteResult = await this.controller.api.deleteSession(sessionId);
-            if (deleteResult && deleteResult.success) {
-                if (window.toast) {
-                    window.toast.success('Session deleted.', { key: 'session' });
-                }
-            } else {
-                console.error('[SessionManager] Backend delete failed:', deleteResult);
-                this.deletedSessionIds.delete(sessionId);
-                if (window.toast) {
-                    window.toast.error(deleteResult.error || 'Could not delete session', { key: 'session' });
-                }
-            }
-        } catch (error) {
-            console.error('[SessionManager] Error deleting session from backend:', error);
-            this.deletedSessionIds.delete(sessionId);
-            if (window.toast) {
-                window.toast.error('Could not delete session.', { key: 'session' });
-            }
-        }
+    async closeSession(_sessionId) {
+        return;
     }
 
     /**

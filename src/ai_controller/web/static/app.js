@@ -219,16 +219,6 @@ class AIController {
             });
         }
         
-        // Close session button (deletes the session)
-        const closeSessionBtn = document.getElementById('close-session-btn');
-        if (closeSessionBtn) {
-            closeSessionBtn.addEventListener('click', async () => {
-                if (this.activeSessionId) {
-                    await this.sessionManager.closeCurrent();
-                }
-            });
-        }
-        
         // Modal handlers
         const closeSessionModal = document.getElementById('close-session-modal');
         if (closeSessionModal) {

@@ -11,9 +11,20 @@ Default storage is `data/ai_controller/sessions/` under the process working dire
 | systemd `servee` | `/opt/servee/data/ai_controller/sessions/<session-id>.json` |
 | `python app.py` from the repo | `<repo>/data/ai_controller/sessions/<session-id>.json` |
 
-`config.json` can change that path with `ai_controller.storage_dir`. The process also honors `SAMI_STORAGE_DIR`. Restart and reinstall keep `data/` (the installer restores it into `/opt/servee`).
+`config.json` can change that path with `ai_controller.storage_dir`. The process also honors `SAMI_STORAGE_DIR`.
 
-Autorun configs live next to sessions, in `autoruns/`. The autorun **chat** is still a session file in `sessions/`; the autorun JSON only stores schedule, command, and the linked `session_id`.
+These files are **kept** across:
+
+- Closing the browser
+- **Stop** on a running prompt
+- `systemctl restart servee` / `stop` / `start` (sync excludes `data/`)
+- `sudo ./servee/install.sh` (it copies `data/` aside and restores it)
+
+The UI no longer deletes a session JSON. There is no X on the session tab and no Delete session button. To drop a chat you would have to remove the file on disk yourself.
+
+Autorun **schedules** live in `autoruns/`. Removing an autorun from the UI deletes that schedule file only; the chat in `sessions/` stays.
+
+Token spend for a chat stays in `/var/lib/servee/usage.jsonl` (Cost) even if you later remove the session JSON by hand.
 
 ## How to find a specific session
 
@@ -32,8 +43,6 @@ jq '{id, name, session_type, status, n: (.entries|length)}' \
 ```text
 GET https://<host>:8081/api/sessions/<session-id>
 ```
-
-Deleting a session in the UI deletes that JSON file. Token spend for that chat stays in `/var/lib/servee/usage.jsonl` (see Cost).
 
 ## What is inside the file
 

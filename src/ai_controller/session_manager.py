@@ -414,32 +414,17 @@ class SessionManager:
         self._save_autorun(autorun)
     
     def delete_autorun(self, autorun_id: str):
-        """Delete an autorun and its dedicated session if present."""
+        """Delete an autorun schedule. The linked session chat file is kept."""
         autorun = self.get_autorun(autorun_id)
         if not autorun:
             raise ValueError(f"Autorun {autorun_id} not found")
 
         logger.info(
-            "Deleting autorun config %s (%s) with session_id=%s",
+            "Deleting autorun config %s (%s); keeping session file %s",
             autorun_id,
             autorun.name,
             autorun.session_id,
         )
-
-        # Best-effort: also delete the associated AUTORUN session so it no longer appears in the UI
-        if autorun.session_id:
-            try:
-                logger.info("Deleting associated autorun session %s for autorun %s", autorun.session_id, autorun_id)
-                self.delete_session(autorun.session_id)
-            except Exception as e:
-                logger.error(
-                    "Failed to delete associated autorun session %s for autorun %s: %s",
-                    autorun.session_id,
-                    autorun_id,
-                    e,
-                )
-
-        # Delete autorun file
         autorun_file = self.autoruns_dir / f"{autorun_id}.json"
         if autorun_file.exists():
             try:
