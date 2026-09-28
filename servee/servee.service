@@ -33,7 +33,7 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=full
 ProtectHome=false
-ReadWritePaths=/opt/servee
+ReadWritePaths=/opt/servee /var/lib/servee
 
 [Install]
 WantedBy=multi-user.target

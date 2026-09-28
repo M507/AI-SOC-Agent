@@ -13,7 +13,7 @@ class AIController {
             trace_chars: 6000,
             request_timeout_seconds: 180,
         };
-        this.activeSection = 'sessions'; // 'sessions' | 'autoruns' | 'requests' | 'settings' | 'mcp'
+        this.activeSection = 'sessions'; // 'sessions' | 'autoruns' | 'cost' | 'requests' | 'settings' | 'mcp'
         this.activeSettingsPage = 'llm';
         this.mcpReadiness = null;
         this.lastMCPAlertCode = null;
@@ -31,6 +31,7 @@ class AIController {
         this.integrationsSettings = new IntegrationsSettingsManager(this);
         this.mcpPanel = new MCPPanel(this);
         this.requestsManager = new RequestsManager(this);
+        this.costManager = new CostManager(this);
         
         this.init();
     }
@@ -72,6 +73,10 @@ class AIController {
                 }
             }
 
+            if (this.activeSection === 'cost' && this.costManager && this.costManager.activePage !== 'rates') {
+                this.costManager.load();
+            }
+
             if (this.activeSection === 'requests') {
                 this.requestsManager.load();
             } else {
@@ -92,6 +97,7 @@ class AIController {
         const navSessions = document.getElementById('nav-sessions');
         const navAutoruns = document.getElementById('nav-autoruns');
         const navRequests = document.getElementById('nav-requests');
+        const navCost = document.getElementById('nav-cost');
         const navSettings = document.getElementById('nav-settings');
         const navMcp = document.getElementById('nav-mcp');
 
@@ -103,6 +109,11 @@ class AIController {
         if (navAutoruns) {
             navAutoruns.addEventListener('click', () => {
                 this.setActiveSection('autoruns');
+            });
+        }
+        if (navCost) {
+            navCost.addEventListener('click', () => {
+                this.setActiveSection('cost');
             });
         }
         if (navRequests) {
@@ -571,7 +582,7 @@ class AIController {
     }
     
     setActiveSection(section) {
-        if (!['sessions', 'autoruns', 'requests', 'settings', 'mcp'].includes(section)) {
+        if (!['sessions', 'autoruns', 'cost', 'requests', 'settings', 'mcp'].includes(section)) {
             console.warn('[AIController] Unknown section:', section);
             return;
         }
@@ -579,7 +590,7 @@ class AIController {
         this.activeSection = section;
 
         // Update sidebar nav active state
-        const sections = ['sessions', 'autoruns', 'requests', 'settings', 'mcp'];
+        const sections = ['sessions', 'autoruns', 'cost', 'requests', 'settings', 'mcp'];
         sections.forEach((name) => {
             const el = document.getElementById(`nav-${name}`);
             if (el) {
@@ -594,6 +605,7 @@ class AIController {
         // Tab groups
         const sessionsGroup = document.getElementById('sessions-tab-group');
         const autorunsGroup = document.getElementById('autoruns-tab-group');
+        const costGroup = document.getElementById('cost-tab-group');
         const requestsGroup = document.getElementById('requests-tab-group');
         const settingsGroup = document.getElementById('settings-tab-group');
         const mcpGroup = document.getElementById('mcp-tab-group');
@@ -603,6 +615,9 @@ class AIController {
         }
         if (autorunsGroup) {
             autorunsGroup.style.display = section === 'autoruns' ? 'flex' : 'none';
+        }
+        if (costGroup) {
+            costGroup.style.display = section === 'cost' ? 'flex' : 'none';
         }
         if (requestsGroup) {
             requestsGroup.style.display = section === 'requests' ? 'flex' : 'none';
@@ -619,6 +634,7 @@ class AIController {
         const sessionContent = document.getElementById('session-content');
         const mcpContent = document.getElementById('mcp-content');
         const requestsContent = document.getElementById('requests-content');
+        const costContent = document.getElementById('cost-content');
         const noSessionMessage = document.getElementById('no-session-message');
 
         if (section !== 'settings') {
@@ -633,6 +649,9 @@ class AIController {
         if (requestsContent) {
             requestsContent.style.display = section === 'requests' ? 'flex' : 'none';
         }
+        if (costContent) {
+            costContent.style.display = section === 'cost' ? 'flex' : 'none';
+        }
 
         if (section === 'sessions') {
             if (sessionContent) sessionContent.style.display = this.activeSessionId ? 'flex' : 'none';
@@ -643,6 +662,20 @@ class AIController {
             if (mcpContent) mcpContent.style.display = 'none';
             if (noSessionMessage) noSessionMessage.style.display = 'none';
             this.autorunManager.syncView();
+        } else if (section === 'cost') {
+            if (sessionContent) sessionContent.style.display = 'none';
+            if (mcpContent) mcpContent.style.display = 'none';
+            if (noSessionMessage) noSessionMessage.style.display = 'none';
+            document.querySelectorAll('button.tab[data-session-id]').forEach((tab) => {
+                tab.classList.remove('active');
+            });
+            if (this.costManager) {
+                this.costManager.setPage(this.costManager.activePage || 'overview');
+                this.costManager.load();
+            }
+            if (this.activeSessionId) {
+                this.wsManager.disconnect(this.activeSessionId);
+            }
         } else if (section === 'requests') {
             if (sessionContent) sessionContent.style.display = 'none';
             if (mcpContent) mcpContent.style.display = 'none';

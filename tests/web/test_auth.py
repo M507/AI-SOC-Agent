@@ -1,5 +1,6 @@
 """Web UI authentication: unauthenticated requests must not reach the app."""
 
+import pytest
 from fastapi.testclient import TestClient
 
 from src.ai_controller.web.auth import (
@@ -13,6 +14,11 @@ from src.ai_controller.web.server import app, initialize
 from src.ai_controller.web import auth as auth_mod
 
 TEST_PASSWORD = "test-password"
+
+
+@pytest.fixture(autouse=True)
+def _isolate_usage_dir(tmp_path, monkeypatch):
+    monkeypatch.setenv("SAMIGPT_USAGE_DIR", str(tmp_path / "servee-usage"))
 
 
 def _client():
@@ -46,6 +52,12 @@ def test_root_redirects_to_login_when_anonymous():
 def test_api_sessions_rejected_without_session():
     client = _client()
     response = client.get("/api/sessions")
+    assert response.status_code == 401
+
+
+def test_api_usage_rejected_without_session():
+    client = _client()
+    response = client.get("/api/usage")
     assert response.status_code == 401
 
 
@@ -96,6 +108,26 @@ def test_login_then_ui_is_reachable():
     sessions = client.get("/api/sessions")
     assert sessions.status_code == 200
     assert sessions.json()["success"] is True
+
+    usage = client.get("/api/usage")
+    assert usage.status_code == 200
+    body = usage.json()
+    assert body["success"] is True
+    assert "overview" in body
+    assert "sessions" in body
+    assert "models" in body
+    assert "calls" in body
+    assert "rates" in body
+    rates = client.get("/api/usage/pricing")
+    assert rates.status_code == 200
+    assert rates.json()["success"] is True
+    saved = client.put(
+        "/api/usage/pricing",
+        json={"auto": {"input": 2.75, "cache_write": 2.75, "cache_read": 0.4, "output": 11}},
+    )
+    assert saved.status_code == 200
+    assert saved.json()["success"] is True
+    assert saved.json()["pricing"]["models"]["auto"]["input"] == 2.75
 
     set_cookie = response.headers.get("set-cookie", "")
     assert "HttpOnly" in set_cookie

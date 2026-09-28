@@ -80,6 +80,12 @@
     color: #9cdcfe;
 }
 
+.usage-footer {
+    margin-top: 8px;
+    color: #858585;
+    font-size: 12px;
+}
+
 .thinking-status {
     color: #9cdcfe;
 }

@@ -254,6 +254,12 @@ class AgentExecutor:
         cluster_id: Optional[str] = None,
         context: Optional[str] = None,
         on_progress: Optional[Callable] = None,
+        session_id: Optional[str] = None,
+        entry_id: Optional[str] = None,
+        session_type: Optional[str] = None,
+        session_name: Optional[str] = None,
+        autorun_id: Optional[str] = None,
+        autorun_name: Optional[str] = None,
     ) -> ExecutionResult:
         """
         Execute a parsed command and return the result.
@@ -278,6 +284,12 @@ class AgentExecutor:
                     command.raw,
                     context=context,
                     on_progress=on_progress,
+                    session_id=session_id,
+                    entry_id=entry_id,
+                    session_type=session_type,
+                    session_name=session_name,
+                    autorun_id=autorun_id,
+                    autorun_name=autorun_name,
                 )
             else:
                 return ExecutionResult(
@@ -429,6 +441,12 @@ class AgentExecutor:
         prompt: str,
         context: Optional[str] = None,
         on_progress: Optional[Callable] = None,
+        session_id: Optional[str] = None,
+        entry_id: Optional[str] = None,
+        session_type: Optional[str] = None,
+        session_name: Optional[str] = None,
+        autorun_id: Optional[str] = None,
+        autorun_name: Optional[str] = None,
     ) -> ExecutionResult:
         """
         Execute a freeform prompt via the configured LLM provider.
@@ -467,9 +485,41 @@ class AgentExecutor:
                 ),
                 on_trace=on_progress,
             )
+            saved = self._record_usage(
+                result,
+                command=prompt,
+                session_id=session_id,
+                entry_id=entry_id,
+                session_type=session_type,
+                session_name=session_name,
+                autorun_id=autorun_id,
+                autorun_name=autorun_name,
+            )
+            from .usage import format_cost, price_tokens, usage_footer
+            usage = dict(result.usage or {})
+            priced = price_tokens(
+                usage,
+                usage.get("reported_model"),
+                usage.get("configured_model") or result.model,
+            )
+            usage.update({
+                "cost_usd": priced.get("cost_usd"),
+                "priced": priced.get("priced"),
+                "rates": priced.get("rates"),
+                "model_key": priced.get("model_key"),
+                "pricing_ok": priced.get("pricing_ok"),
+                "pricing_error": priced.get("pricing_error"),
+                "cost_label": format_cost(priced.get("cost_usd")) if priced.get("priced") else None,
+            })
+            result.usage = usage
+            result.usage_saved = saved
+            output = result.to_output_dict()
+            output["usage"] = usage
+            output["usage_saved"] = saved
+            output["usage_footer"] = usage_footer(usage, priced, saved=saved)
             return ExecutionResult(
                 success=result.success,
-                output=result.to_output_dict(),
+                output=output,
                 error=result.error,
                 timestamp=datetime.now(),
             )
@@ -483,6 +533,48 @@ class AgentExecutor:
             )
         finally:
             self._current_provider = None
+
+    def _record_usage(
+        self,
+        result,
+        *,
+        command: str,
+        session_id: Optional[str],
+        entry_id: Optional[str],
+        session_type: Optional[str],
+        session_name: Optional[str],
+        autorun_id: Optional[str],
+        autorun_name: Optional[str],
+    ) -> bool:
+        """Write one ledger line per model round. Failures never fail the prompt."""
+        from .usage import record_model_round
+
+        usage = result.usage or {}
+        rounds = usage.get("rounds") or []
+        if not rounds:
+            rounds = [usage] if usage else [{"usage_reported": False}]
+        saved_any = False
+        failed = False
+        for round_usage in rounds:
+            row = record_model_round(
+                tokens=round_usage,
+                provider=result.provider,
+                configured_model=usage.get("configured_model") or result.model,
+                session_id=session_id,
+                entry_id=entry_id,
+                session_type=session_type,
+                session_name=session_name,
+                autorun_id=autorun_id,
+                autorun_name=autorun_name,
+                command=command,
+            )
+            if row is None:
+                failed = True
+            else:
+                saved_any = True
+        if failed:
+            logger.warning("One or more usage rows were not saved for session %s entry %s", session_id, entry_id)
+        return saved_any and not failed
 
     def cancel_current_execution(self):
         """

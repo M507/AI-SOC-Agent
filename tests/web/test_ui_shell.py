@@ -53,6 +53,25 @@ def test_requests_view_is_in_the_shell():
     assert "RequestsManager" in app_js
 
 
+def test_cost_view_is_in_the_shell():
+    html = INDEX.read_text(encoding="utf-8")
+    app_js = APP_JS.read_text(encoding="utf-8")
+    cost_js = (WEB / "static" / "cost.js").read_text(encoding="utf-8")
+    assert 'id="nav-cost"' in html
+    assert 'id="cost-content"' in html
+    assert 'data-cost-page="overview"' in html
+    assert 'data-cost-page="sessions"' in html
+    assert 'data-cost-page="models"' in html
+    assert 'data-cost-page="calls"' in html
+    assert 'data-cost-page="rates"' in html
+    assert "cost.js" in html
+    assert "cost.css" in html
+    assert "setActiveSection('cost')" in app_js
+    assert "CostManager" in app_js
+    assert "class CostManager" in cost_js
+    assert "/api/usage" in (WEB / "static" / "api.js").read_text(encoding="utf-8")
+
+
 def test_new_session_modal_seeds_selected_alert_uuid_into_prompt():
     modals = (WEB / "static" / "modals.js").read_text(encoding="utf-8")
     api = (WEB / "static" / "api.js").read_text(encoding="utf-8")

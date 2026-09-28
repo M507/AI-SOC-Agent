@@ -741,6 +741,26 @@ class APIClient {
         });
     }
 
+    async loadUsage() {
+        try {
+            return await this.request('/api/usage');
+        } catch (error) {
+            return { success: false, error: error.message };
+        }
+    }
+
+    async updateUsagePricing(payload) {
+        try {
+            return await this.request('/api/usage/pricing', {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload),
+            });
+        } catch (error) {
+            return { success: false, error: error.message };
+        }
+    }
+
     async _requestDecision(url, body) {
         try {
             return await this.request(url, {

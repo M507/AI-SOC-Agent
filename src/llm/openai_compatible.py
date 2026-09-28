@@ -22,6 +22,7 @@ from ..core.config import (
 )
 from ..core.logging import get_logger
 from .base import HealthStatus, LLMProvider, LLMResult
+from ..ai_controller.usage import merge_usage, parse_usage_payload
 
 logger = get_logger("sami.llm.openai_compatible")
 
@@ -448,6 +449,7 @@ class OpenAICompatibleProvider(LLMProvider):
         last_raw: Any = None
         trace: List[Dict[str, Any]] = []
         on_trace = kwargs.get("on_trace")
+        usage_rounds: List[Dict[str, Any]] = []
 
         try:
             import httpx
@@ -498,7 +500,7 @@ class OpenAICompatibleProvider(LLMProvider):
 
             for _iteration in range(max_iterations):
                 if self._cancelled:
-                    return LLMResult(
+                    return self._result(
                         success=False,
                         text=last_text,
                         error="Cancelled",
@@ -508,6 +510,7 @@ class OpenAICompatibleProvider(LLMProvider):
                         tools_advertised=tools_advertised,
                         tools_supported=tools_supported,
                         trace=list(trace),
+                        usage_rounds=usage_rounds,
                     )
 
                 payload: Dict[str, Any] = {
@@ -559,7 +562,7 @@ class OpenAICompatibleProvider(LLMProvider):
                             f"Investigation stopped after {tool_calls_made} tool calls. "
                             "The model did not return a final answer."
                         )
-                    return LLMResult(
+                    return self._result(
                         success=False,
                         text=visible or last_text,
                         error=llm_error_message(e, timeout),
@@ -569,9 +572,11 @@ class OpenAICompatibleProvider(LLMProvider):
                         tools_advertised=tools_advertised,
                         tools_supported=tools_supported,
                         trace=list(trace),
+                        usage_rounds=usage_rounds,
                     )
 
                 last_raw = data
+                usage_rounds.append(parse_usage_payload(data))
                 choice = (data.get("choices") or [{}])[0]
                 message = choice.get("message") or {}
                 content = message.get("content") or ""
@@ -594,7 +599,7 @@ class OpenAICompatibleProvider(LLMProvider):
                         model,
                         _completion_summary(last_raw),
                     )
-                    return LLMResult(
+                    return self._result(
                         success=False,
                         text="",
                         error="The model returned an empty reply.",
@@ -605,6 +610,7 @@ class OpenAICompatibleProvider(LLMProvider):
                         tools_advertised=tools_advertised,
                         tools_supported=tools_supported,
                         trace=list(trace),
+                        usage_rounds=usage_rounds,
                     )
                 self._drop_live_thoughts(trace)
                 self._record_thought(
@@ -617,7 +623,7 @@ class OpenAICompatibleProvider(LLMProvider):
                 await self._emit_trace(on_trace, trace)
 
                 if not tool_calls:
-                    return LLMResult(
+                    return self._result(
                         success=True,
                         text=last_text or "",
                         raw=last_raw,
@@ -627,6 +633,7 @@ class OpenAICompatibleProvider(LLMProvider):
                         tools_advertised=tools_advertised,
                         tools_supported=tools_supported,
                         trace=list(trace),
+                        usage_rounds=usage_rounds,
                     )
 
                 if text_tool_loop:
@@ -634,7 +641,7 @@ class OpenAICompatibleProvider(LLMProvider):
                 else:
                     messages.append(message)
                 if mcp_client is None:
-                    return LLMResult(
+                    return self._result(
                         success=True,
                         text=last_text or json.dumps(tool_calls),
                         raw=last_raw,
@@ -644,6 +651,7 @@ class OpenAICompatibleProvider(LLMProvider):
                         tools_advertised=tools_advertised,
                         tools_supported=tools_supported,
                         trace=list(trace),
+                        usage_rounds=usage_rounds,
                     )
 
                 result_blocks = []
@@ -716,7 +724,7 @@ class OpenAICompatibleProvider(LLMProvider):
                         }
                     )
 
-            return LLMResult(
+            return self._result(
                 success=True,
                 text=last_text or "Reached the maximum number of tool iterations.",
                 raw=last_raw,
@@ -726,7 +734,22 @@ class OpenAICompatibleProvider(LLMProvider):
                 tools_advertised=tools_advertised,
                 tools_supported=tools_supported,
                 trace=list(trace),
+                usage_rounds=usage_rounds,
             )
+
+    @staticmethod
+    def _result(*, usage_rounds: List[Dict[str, Any]], **kwargs: Any) -> LLMResult:
+        usage = merge_usage(usage_rounds)
+        configured = kwargs.get("model")
+        reported = next(
+            (item.get("reported_model") for item in reversed(usage_rounds) if item.get("reported_model")),
+            "",
+        ) or usage.get("reported_model") or ""
+        usage["configured_model"] = configured or ""
+        if reported:
+            usage["reported_model"] = reported
+            kwargs["model"] = reported
+        return LLMResult(usage=usage, **kwargs)
 
     @staticmethod
     def _record_thought(
@@ -899,6 +922,7 @@ class OpenAICompatibleProvider(LLMProvider):
         bad_json = 0
         first_sample = ""
         last_sample = ""
+        completed_payload: Optional[Dict[str, Any]] = None
 
         async def publish(force: bool = False) -> None:
             nonlocal last_emit
@@ -948,6 +972,8 @@ class OpenAICompatibleProvider(LLMProvider):
             if not first_sample:
                 first_sample = sample
             last_sample = sample
+            if chunk.get("type") == "response.completed" or chunk.get("usage"):
+                completed_payload = chunk
             self._absorb_stream_chunk(chunk, content_parts, reasoning_parts, tool_acc)
             await publish()
 
@@ -965,6 +991,18 @@ class OpenAICompatibleProvider(LLMProvider):
             if named_calls:
                 message["tool_calls"] = named_calls
         result = {"choices": [{"message": message}]}
+        parsed = parse_usage_payload(completed_payload or result)
+        if parsed.get("usage_reported"):
+            result["usage"] = {
+                "input_tokens": parsed["input_tokens"],
+                "output_tokens": parsed["output_tokens"],
+                "input_tokens_details": {
+                    "cached_tokens": parsed["cached_input_tokens"],
+                    "cache_write_tokens": parsed["cache_write_tokens"],
+                },
+            }
+            if parsed.get("reported_model"):
+                result["model"] = parsed["reported_model"]
         type_list = ", ".join(f"{name}:{count}" for name, count in sorted(type_counts.items()))
         logger.info(
             "LLM stream finished events=%s skipped_lines=%s bad_json=%s types=[%s] %s",

@@ -33,6 +33,7 @@ from .routes_elastic import router as elastic_router
 from .routes_integrations import router as integrations_router
 from .routes_netbox import router as netbox_router
 from .routes_requests import router as requests_router
+from .routes_usage import router as usage_router
 
 logger = get_logger("sami.ai_controller.web.server")
 
@@ -121,6 +122,7 @@ app.include_router(elastic_router)
 app.include_router(integrations_router)
 app.include_router(netbox_router)
 app.include_router(requests_router)
+app.include_router(usage_router)
 
 # Initialize components
 executor: Optional[AgentExecutor] = None
@@ -273,6 +275,12 @@ def initialize(
         config = load_config_from_file()
         executor = AgentExecutor(config)
 
+        from ..usage import ensure_pricing_file
+        try:
+            ensure_pricing_file()
+        except Exception as exc:
+            logger.warning("Could not prepare usage pricing file: %s", exc)
+
         from ...core.config_storage import get_section
         _ensure_general_defaults()
         stored_general = get_section("general", {})
@@ -337,6 +345,10 @@ async def _run_autorun(autorun: AutorunConfig):
                 condition_function,
                 executor,
                 cluster_id=fresh_autorun.cluster_id,
+                session_id=session_id,
+                session_name=session_name,
+                autorun_id=fresh_autorun.id,
+                autorun_name=fresh_autorun.name,
             )
             
             # Add condition check entry to session
@@ -454,6 +466,12 @@ async def _run_autorun(autorun: AutorunConfig):
             cluster_id=fresh_autorun.cluster_id or (session.cluster_id if session else None),
             context=condition_context,
             on_progress=_live_progress(session_id, entry.id),
+            session_id=session_id,
+            entry_id=entry.id,
+            session_type="autorun",
+            session_name=session.name if session else f"Autorun: {fresh_autorun.name}",
+            autorun_id=fresh_autorun.id,
+            autorun_name=fresh_autorun.name,
         )
 
         # Update entry and session status
@@ -511,6 +529,10 @@ async def _check_autorun_condition(
     condition_function: str,
     executor: AgentExecutor,
     cluster_id: Optional[str] = None,
+    session_id: Optional[str] = None,
+    session_name: Optional[str] = None,
+    autorun_id: Optional[str] = None,
+    autorun_name: Optional[str] = None,
 ) -> Tuple[bool, Dict[str, Any]]:
     """
     Check if an autorun condition function returns content.
@@ -635,7 +657,15 @@ async def _check_autorun_condition(
             
             # Execute the condition function
             logger.debug("Executing condition function via AgentExecutor: %s", condition_function)
-            result = await executor.execute_command(condition_command)
+            result = await executor.execute_command(
+                condition_command,
+                cluster_id=cluster_id,
+                session_id=session_id,
+                session_type="autorun",
+                session_name=session_name,
+                autorun_id=autorun_id,
+                autorun_name=autorun_name,
+            )
             
             details["execution_success"] = result is not None and result.success
             
@@ -1303,6 +1333,7 @@ async def kickoff_session_command(session_id: str, command_text: str) -> Dict[st
     # Capture before the nested task: assigning to `session` in except
     # blocks below would otherwise make it a local and break cluster_id lookup.
     cluster_id = session.cluster_id
+    session_name = session.name
     command = executor.parse_command(command_text)
     entry = session_manager.add_entry(session_id, command_text)
 
@@ -1320,6 +1351,10 @@ async def kickoff_session_command(session_id: str, command_text: str) -> Dict[st
                 command,
                 cluster_id=cluster_id,
                 on_progress=_live_progress(session_id, entry.id),
+                session_id=session_id,
+                entry_id=entry.id,
+                session_type="manual",
+                session_name=session_name,
             )
 
             session_manager.update_entry(

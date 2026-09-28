@@ -110,6 +110,7 @@ class TerminalRenderer {
                 resultLine.className = 'terminal-line error';
             }
             resultLine.appendChild(pre);
+            this._appendUsage(resultLine, result, partial);
             return;
         }
         if (text) {
@@ -121,14 +122,31 @@ class TerminalRenderer {
                 pre.textContent = text;
                 resultLine.appendChild(pre);
             }
+            this._appendUsage(resultLine, result, partial);
             return;
         }
         if (trace.length) {
+            this._appendUsage(resultLine, result, partial);
             return;
         }
         const pre = document.createElement('pre');
         pre.textContent = isError ? 'Error (no details returned)' : 'Command completed';
         resultLine.appendChild(pre);
+        this._appendUsage(resultLine, result, false);
+    }
+
+    _appendUsage(resultLine, result, live) {
+        if (live) {
+            return;
+        }
+        const note = formatUsageFooter(result);
+        if (!note) {
+            return;
+        }
+        const line = document.createElement('div');
+        line.className = 'usage-footer';
+        line.textContent = note;
+        resultLine.appendChild(line);
     }
 
     /**

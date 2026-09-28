@@ -35,6 +35,9 @@ class LLMResult:
     tools_supported: Optional[bool] = None
     # Ordered thoughts and MCP tool calls from this completion.
     trace: List[Dict[str, Any]] = field(default_factory=list)
+    # One usage object per model round, plus the summed counts for this prompt.
+    usage: Dict[str, Any] = field(default_factory=dict)
+    usage_saved: bool = True
 
     def to_output_dict(self) -> Dict[str, Any]:
         return {
@@ -46,6 +49,8 @@ class LLMResult:
             "tools_advertised": self.tools_advertised,
             "tools_supported": self.tools_supported,
             "trace": list(self.trace),
+            "usage": dict(self.usage) if self.usage else {},
+            "usage_saved": self.usage_saved,
         }
 
 
