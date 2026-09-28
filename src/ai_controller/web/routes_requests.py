@@ -106,6 +106,36 @@ async def create_request(body: CreateRequestPayload):
     return {"success": True, "request": _payload(request)}
 
 
+@router.post("/sync")
+async def sync_requests(cluster_id: Optional[str] = None):
+    """Pull linked GitHub issues and archive notes already closed there."""
+    queue = get_queue()
+    result = queue.sync_external_closed(cluster_id=cluster_id)
+    closed = int(result.get("closed") or 0)
+    checked = int(result.get("checked") or 0)
+    errors = int(result.get("errors") or 0)
+    if closed:
+        message = f"Archived {closed} request{'s' if closed != 1 else ''} whose tickets are already closed."
+    elif checked:
+        message = f"Synced {checked} linked ticket{'s' if checked != 1 else ''}. None were closed externally."
+    else:
+        message = "No linked tickets to sync."
+    if errors:
+        message = f"{message} {errors} ticket{'s' if errors != 1 else ''} could not be checked."
+    logger.info(
+        "Synced external tickets: checked=%s closed=%s errors=%s",
+        checked,
+        closed,
+        errors,
+    )
+    return {
+        "success": True,
+        "message": message.strip(),
+        "counts": queue.counts(),
+        **result,
+    }
+
+
 @router.get("/{request_id}")
 async def get_request(request_id: str):
     request = get_queue().get(request_id)

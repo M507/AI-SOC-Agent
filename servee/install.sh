@@ -57,19 +57,9 @@ fi
 mkdir -p "${INSTALL_DIR}"
 
 echo "==> Syncing application files"
-rsync -a \
-  --delete \
-  --exclude '.git/' \
-  --exclude 'venv/' \
-  --exclude '__pycache__/' \
-  --exclude '.pytest_cache/' \
-  --exclude '.cursor/' \
-  --exclude 'logs/' \
-  --exclude 'data/' \
-  --exclude 'certs/' \
-  --exclude 'servee/' \
-  --exclude '*.pyc' \
-  "${REPO_ROOT}/" "${INSTALL_DIR}/"
+export SERVEE_SOURCE="${REPO_ROOT}"
+export SERVEE_INSTALL_DIR="${INSTALL_DIR}"
+"${REPO_ROOT}/servee/sync-on-start.sh"
 
 # Restore preserved state (wins over anything synced)
 for item in config.json certs data logs; do
@@ -162,6 +152,15 @@ fi
 "${PYTHON_CMD}" -m venv "${INSTALL_DIR}/venv"
 "${INSTALL_DIR}/venv/bin/pip" install --upgrade pip
 "${INSTALL_DIR}/venv/bin/pip" install -r "${INSTALL_DIR}/requirements.txt"
+if [[ -f "${INSTALL_DIR}/requirements.txt" ]]; then
+  sha256sum "${INSTALL_DIR}/requirements.txt" | awk '{print $1}' > "${INSTALL_DIR}/.requirements.sha256"
+fi
+
+echo "==> Recording source tree for restart-time sync"
+mkdir -p /etc/servee
+printf 'SERVEE_SOURCE=%s\n' "${REPO_ROOT}" > /etc/servee/source.env
+chmod 0644 /etc/servee/source.env
+install -m 0755 "${REPO_ROOT}/servee/launch-sync.sh" /etc/servee/sync-on-start.sh
 
 echo "==> Installing systemd unit"
 install -m 0644 "${UNIT_SRC}" "${UNIT_DST}"

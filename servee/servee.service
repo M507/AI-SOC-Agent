@@ -6,9 +6,14 @@ Wants=network-online.target
 [Service]
 Type=simple
 WorkingDirectory=/opt/servee
+# Source path is written by servee/install.sh. Every start syncs that tree
+# into /opt/servee before launching, so `systemctl restart servee` reinstalls code.
+EnvironmentFile=-/etc/servee/source.env
+ExecStartPre=/etc/servee/sync-on-start.sh
 ExecStart=/opt/servee/venv/bin/python /opt/servee/app.py
 Restart=always
 RestartSec=5
+TimeoutStartSec=600
 TimeoutStopSec=30
 KillMode=mixed
 

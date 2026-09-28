@@ -460,7 +460,11 @@ def test_github_closed_sync_archives_open_note(tmp_path, monkeypatch):
         payload={"title": "Missing DNS telemetry", "description": "Need DNS logs"},
     )
     queue.attach_engineering(note.id, _engineering_payload())
-    archived = queue.list(status="open", queue="detection")
+    synced = queue.sync_external_closed()
+    assert synced["checked"] == 1
+    assert synced["closed"] == 1
+    assert synced["errors"] == 0
+    archived = queue.list(status="open", queue="detection", sync_github=False)
     assert archived == []
     stored = queue.get(note.id)
     assert stored.status is RequestStatus.ACKNOWLEDGED

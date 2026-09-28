@@ -666,6 +666,19 @@ class APIClient {
         }
     }
 
+    async syncRequests(clusterId = null) {
+        try {
+            const params = new URLSearchParams();
+            if (clusterId) {
+                params.set('cluster_id', clusterId);
+            }
+            const query = params.toString() ? `?${params.toString()}` : '';
+            return await this.request(`/api/requests/sync${query}`, { method: 'POST' });
+        } catch (error) {
+            return { success: false, error: error.message, checked: 0, closed: 0, errors: 1 };
+        }
+    }
+
     async listRequests(status = null, queue = 'all') {
         try {
             const params = new URLSearchParams();

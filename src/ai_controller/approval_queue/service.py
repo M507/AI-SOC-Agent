@@ -261,18 +261,29 @@ class ApprovalQueue:
         request.updated_at = datetime.now()
         return self.store.put(request)
 
-    def sync_github_closed(self, cluster_id: Optional[str] = None) -> int:
+    def sync_external_closed(self, cluster_id: Optional[str] = None) -> Dict[str, Any]:
+        """Archive open notes whose linked engineering ticket is already closed."""
+        return self.sync_github_closed(cluster_id=cluster_id)
+
+    def sync_github_closed(self, cluster_id: Optional[str] = None) -> Dict[str, Any]:
         """Archive open mirrored notes whose GitHub issue is already closed."""
+        checked = 0
         closed = 0
+        errors = 0
         for item in list(self.store.list(cluster_id=cluster_id)):
             if item.status != RequestStatus.INFORMATIONAL or is_archived(item):
                 continue
             link = github_issue_link(item.payload)
             if not link:
                 continue
+            provider = str(link.get("provider") or "github").lower()
+            if provider not in {"github", ""}:
+                continue
+            checked += 1
             try:
                 issue = self._github_get_issue(item, str(link["number"]))
             except Exception as exc:
+                errors += 1
                 logger.warning("GitHub sync skipped for request %s: %s", item.id, exc)
                 continue
             state = str((issue or {}).get("state") or "").lower()
@@ -287,8 +298,14 @@ class ApprovalQueue:
                 )
                 closed += 1
             except Exception as exc:
+                errors += 1
                 logger.warning("Could not archive request %s after GitHub close: %s", item.id, exc)
-        return closed
+        return {
+            "checked": checked,
+            "closed": closed,
+            "errors": errors,
+            "providers": ["github"],
+        }
 
     def ignore(
         self,

@@ -361,6 +361,7 @@
                             <div class="session-actions">
                                 <span id="requests-pending-label" class="cluster-pill">Open items</span>
                                 <button type="button" class="btn btn-secondary btn-sm" data-request-select-all="actionable" title="Select all open approvals and informational notes">Select open</button>
+                                <button type="button" class="btn btn-secondary btn-sm" id="requests-refresh-btn" data-request-refresh title="Check linked GitHub issues and archive notes whose issues are already closed">Refresh</button>
                             </div>
                         </div>
                         <div class="requests-layout">
@@ -654,7 +655,7 @@
     <script src="/static/toast.js?v=1"></script>
     
     <!-- API client (no dependencies) -->
-    <script src="/static/api.js?v=14"></script>
+    <script src="/static/api.js?v=15"></script>
     
     <!-- Component modules (depend on utils) -->
     <script src="/static/websocket.js?v=1"></script>
@@ -663,7 +664,7 @@
     <script src="/static/pdf_export.js?v=2"></script>
     <script src="/static/autoruns.js?v=12"></script>
     <script src="/static/modals.js?v=6"></script>
-    <script src="/static/requests.js?v=2"></script>
+    <script src="/static/requests.js?v=3"></script>
     
     <!-- Main application (depends on all modules) -->
     <script src="/static/settings.js?v=6"></script>

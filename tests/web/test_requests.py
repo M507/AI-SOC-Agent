@@ -22,6 +22,8 @@ def test_requests_view_is_in_the_shell():
     assert 'id="requests-content"' in html
     assert 'id="requests-bulk-bar"' in html
     assert 'data-request-select-all' in html
+    assert 'data-request-refresh' in html
+    assert 'requests-refresh-btn' in html
     assert 'data-request-filter="archived"' in html
     assert 'data-request-filter="open"' in html
     assert 'data-request-queue="all"' in html
@@ -39,6 +41,7 @@ def test_requests_view_is_in_the_shell():
     assert "bulk-approve" in requests_js
     assert "bulk-ignore" in requests_js
     assert "handleBulk" in requests_js
+    assert "refreshFromTickets" in requests_js
     assert "archived" in requests_js
     assert "Waiting on integration" in requests_js
     assert 'data-request-action="ignore"' in requests_js
@@ -71,6 +74,17 @@ def _client(tmp_path):
     assert login.status_code == 200
     assert COOKIE_NAME in client.cookies
     return client
+
+
+def test_requests_sync_reports_linked_tickets(tmp_path):
+    client = _client(tmp_path)
+    synced = client.post("/api/requests/sync")
+    assert synced.status_code == 200, synced.text
+    body = synced.json()
+    assert body["success"] is True
+    assert body["checked"] == 0
+    assert body["closed"] == 0
+    assert "No linked tickets" in body["message"]
 
 
 def test_requests_api_create_list_deny(tmp_path):

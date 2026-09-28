@@ -111,11 +111,17 @@ dependencies, and enables + starts the `servee` unit (`Restart=always`).
 Re-running the script reinstalls cleanly and preserves `config.json`, `certs/`,
 `data/`, and `logs/`.
 
+`systemctl restart servee` (and every start) syncs this source tree into
+`/opt/servee` before launching. `config.json`, `certs/`, `data/`, `logs/`, and
+the virtualenv stay in place. Dependencies are reinstalled only when
+`requirements.txt` changes. A full wipe, including a new virtualenv, is still
+`sudo ./servee/install.sh`.
+
 ```bash
 # Install or reinstall (requires root; stop any manual `python app.py` first)
 sudo ./servee/install.sh
 
-# Service control
+# Service control. Restart syncs code from the tree install.sh was run from.
 sudo systemctl status servee
 sudo systemctl restart servee
 sudo systemctl stop servee

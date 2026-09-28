@@ -55,6 +55,11 @@ class RequestsManager {
                 this.toggleSelectAll(selectAll.dataset.requestSelectAll === 'actionable');
                 return;
             }
+            const refreshBtn = event.target.closest('[data-request-refresh]');
+            if (refreshBtn) {
+                this.refreshFromTickets();
+                return;
+            }
             const clearSel = event.target.closest('[data-request-clear-selection]');
             if (clearSel) {
                 this.selectedIds.clear();
@@ -160,6 +165,46 @@ class RequestsManager {
         const detail = document.getElementById('request-comment');
         if (detail && this._savedDetailComment) {
             detail.value = this._savedDetailComment;
+        }
+    }
+
+    async refreshFromTickets() {
+        if (this._syncing) {
+            return;
+        }
+        this._syncing = true;
+        const button = document.getElementById('requests-refresh-btn');
+        if (button) {
+            button.disabled = true;
+            button.textContent = 'Refreshing…';
+        }
+        if (window.toast) {
+            window.toast.info('Checking linked tickets…', { key: 'requests-sync', duration: 0 });
+        }
+        let result = null;
+        try {
+            result = await this.controller.api.syncRequests();
+            await this.load();
+        } finally {
+            this._syncing = false;
+            if (button) {
+                button.disabled = false;
+                button.textContent = 'Refresh';
+            }
+        }
+        const message = (result && result.message) || 'Could not sync linked tickets.';
+        if (window.toast) {
+            const closed = Number((result && result.closed) || 0);
+            const errors = Number((result && result.errors) || 0);
+            if (!result || !result.success) {
+                window.toast.error(message, { key: 'requests-sync' });
+            } else if (closed > 0) {
+                window.toast.success(message, { key: 'requests-sync' });
+            } else if (errors > 0) {
+                window.toast.error(message, { key: 'requests-sync' });
+            } else {
+                window.toast.info(message, { key: 'requests-sync' });
+            }
         }
     }
 
