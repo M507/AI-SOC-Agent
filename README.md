@@ -288,6 +288,7 @@ See `config.json.example` for the complete configuration schema. Key sections:
 
 SamiGPT provides comprehensive logging:
 
+- **Session chat transcripts**: one JSON file per session. On the `servee` unit that is `/opt/servee/data/ai_controller/sessions/<session-id>.json`. See [documentation/session-chat-logs.md](documentation/session-chat-logs.md).
 - **MCP Server Logs**: `logs/mcp/mcp_all.log`, `mcp_requests.log`, `mcp_responses.log`, `mcp_errors.log`
 - **Application Logs**: `logs/debug.log`, `logs/error.log`, `logs/warning.log`
 
