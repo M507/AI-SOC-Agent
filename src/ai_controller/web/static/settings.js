@@ -64,8 +64,6 @@ class SettingsManager {
         this.renderProviderFields();
         const prompt = document.getElementById('llm-system-prompt');
         if (prompt) prompt.value = this.settings.system_prompt || '';
-        const iterations = document.getElementById('llm-max-iterations');
-        if (iterations) iterations.value = this.settings.max_tool_iterations || 12;
         const mcpSettings = await this.api.getMCPSettings();
         const publicUrl = document.getElementById('openwebui-mcp-url');
         if (publicUrl && mcpSettings && mcpSettings.settings) {
@@ -174,7 +172,6 @@ class SettingsManager {
         const payload = {
             provider,
             system_prompt: (document.getElementById('llm-system-prompt') || {}).value || '',
-            max_tool_iterations: Number((document.getElementById('llm-max-iterations') || {}).value || 12),
         };
         payload[provider] = this.collectProviderSettings();
         return payload;

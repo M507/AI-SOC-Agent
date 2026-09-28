@@ -106,6 +106,12 @@ class WebSocketManager {
                     this.controller.terminal.handleExecutionStarted(message);
                 }
                 break;
+
+            case 'execution_progress':
+                if (this.controller.terminal) {
+                    this.controller.terminal.handleExecutionProgress(message);
+                }
+                break;
                 
             case 'execution_completed': {
                 // Command execution completed

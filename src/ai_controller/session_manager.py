@@ -247,7 +247,7 @@ class SessionManager:
         self._save_session(session)
         
         return entry
-    
+
     def update_entry(self, session_id: str, entry_id: str, result: Optional[Dict[str, Any]] = None, status: Optional[SessionStatus] = None):
         """Update an entry in a session."""
         session = self.get_session(session_id)

@@ -10,7 +10,7 @@
         <link rel="stylesheet" href="/static/css/buttons.css?v=3">
         <link rel="stylesheet" href="/static/css/tabs.css?v=3">
         <link rel="stylesheet" href="/static/css/status.css?v=2">
-        <link rel="stylesheet" href="/static/css/terminal.css?v=2">
+        <link rel="stylesheet" href="/static/css/terminal.css?v=5">
         <link rel="stylesheet" href="/static/css/autorun.css?v=5">
         <link rel="stylesheet" href="/static/css/modal.css?v=4">
         <link rel="stylesheet" href="/static/css/settings.css?v=14">
@@ -97,7 +97,7 @@
                                 <button class="tab active" type="button" data-settings-page="llm">LLM</button>
                                 <button class="tab" type="button" data-settings-page="elastic">Elastic</button>
                                 <button class="tab" type="button" data-settings-page="netbox">NetBox</button>
-                                <button class="tab" type="button" data-settings-page="ui">UI</button>
+                                <button class="tab" type="button" data-settings-page="general">General</button>
                                 <button class="tab" type="button" data-settings-page="integrations">Integrations</button>
                             </div>
                         </div>
@@ -166,8 +166,6 @@
                                 <div id="llm-provider-fields" class="settings-fields"></div>
                                 <label for="llm-system-prompt">System prompt (optional)</label>
                                 <textarea id="llm-system-prompt" rows="4" placeholder="Leave blank to use the default SOC assistant prompt"></textarea>
-                                <label for="llm-max-iterations">Max MCP tool iterations</label>
-                                <input type="number" id="llm-max-iterations" min="1" max="50" value="12">
                             </section>
                             <section class="settings-card" id="openwebui-mcp-card">
                                 <h3>Open WebUI MCP connection</h3>
@@ -311,9 +309,13 @@
                             </section>
                         </div>
                     </div>
-                    <div id="settings-ui-content" class="settings-content" data-settings-page-content="ui" style="display: none;">
+                    <div id="settings-general-content" class="settings-content" data-settings-page-content="general" style="display: none;">
                         <div class="session-header">
-                            <h2>UI</h2>
+                            <h2>General</h2>
+                            <div class="session-actions">
+                                <button type="button" id="general-reset-btn" class="btn btn-secondary btn-sm">Reset to defaults</button>
+                                <button type="button" id="general-save-btn" class="btn btn-primary btn-sm">Save limits</button>
+                            </div>
                         </div>
                         <div class="settings-body">
                             <section class="settings-card">
@@ -326,6 +328,33 @@
                                     When debug mode is disabled, only the agent's reply text is shown.
                                     When enabled, the full JSON result object is rendered in the terminal.
                                 </p>
+                                <label class="settings-toggle">
+                                    <input type="checkbox" id="thinking-toggle">
+                                    <span class="toggle-label">Show thinking (decisions and MCP tools)</span>
+                                </label>
+                                <p class="settings-help">
+                                    Shows the investigation as it happens: the current model round and how long it has been waiting,
+                                    the reasoning as the model writes it, and each MCP tool from the moment it starts
+                                    until the result comes back. This stays above the reply and is separate from the JSON dump.
+                                </p>
+                            </section>
+                            <section class="settings-card">
+                                <h3>Investigation limits</h3>
+                                <p class="settings-help">
+                                    These are the starting caps. Change any of them and save; the next session or autorun prompt uses what you saved in <code>config.json</code>.
+                                </p>
+                                <label for="general-max-rounds">Model rounds per prompt</label>
+                                <input type="number" id="general-max-rounds" min="1" max="200" value="12">
+                                <p class="settings-help">Default 12. How many times the model may answer and call tools before it must stop. One round can include several tool calls.</p>
+                                <label for="general-tool-result-chars">Tool result characters sent back to the model</label>
+                                <input type="number" id="general-tool-result-chars" min="500" max="200000" value="8000">
+                                <p class="settings-help">Default 8000. Longer tool output is cut off before the next model round so the prompt does not grow until the request times out.</p>
+                                <label for="general-trace-chars">Thinking trace characters kept per step</label>
+                                <input type="number" id="general-trace-chars" min="200" max="100000" value="6000">
+                                <p class="settings-help">Default 6000. How much of each thought or tool result is kept in the live thinking view.</p>
+                                <label for="general-request-timeout">Model request timeout (seconds)</label>
+                                <input type="number" id="general-request-timeout" min="15" max="3600" value="180">
+                                <p class="settings-help">Default 180. How long to wait for one model reply. A timeout is retried once, then the run stops with the steps already completed.</p>
                             </section>
                         </div>
                     </div>
@@ -658,8 +687,8 @@
     <script src="/static/api.js?v=15"></script>
     
     <!-- Component modules (depend on utils) -->
-    <script src="/static/websocket.js?v=1"></script>
-    <script src="/static/terminal.js?v=1"></script>
+    <script src="/static/websocket.js?v=2"></script>
+    <script src="/static/terminal.js?v=4"></script>
     <script src="/static/sessions.js?v=5"></script>
     <script src="/static/pdf_export.js?v=2"></script>
     <script src="/static/autoruns.js?v=12"></script>
@@ -667,11 +696,11 @@
     <script src="/static/requests.js?v=3"></script>
     
     <!-- Main application (depends on all modules) -->
-    <script src="/static/settings.js?v=6"></script>
+    <script src="/static/settings.js?v=7"></script>
     <script src="/static/elastic_settings.js?v=8"></script>
     <script src="/static/netbox_settings.js?v=1"></script>
     <script src="/static/integrations_settings.js?v=4"></script>
-    <script src="/static/app.js?v=14"></script>
+    <script src="/static/app.js?v=17"></script>
 </body>
 </html>
 

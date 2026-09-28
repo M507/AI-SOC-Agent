@@ -128,6 +128,7 @@ session_manager: Optional[SessionManager] = None
 
 # UI behavior flags (e.g., controlled by CLI flags like --debug)
 UI_DEBUG_MODE: bool = False
+UI_THINKING_MODE: bool = False
 MCP_AUTO_START: bool = True
 
 # WebSocket connections by session ID
@@ -169,8 +170,13 @@ class AutorunUpdateRequest(BaseModel):
 
 
 class UIConfigUpdate(BaseModel):
-    """Request to update UI configuration flags."""
+    """Request to update General settings: display flags and investigation limits."""
     ui_debug: Optional[bool] = None
+    ui_thinking: Optional[bool] = None
+    max_tool_iterations: Optional[int] = Field(default=None, ge=1, le=200)
+    tool_result_chars: Optional[int] = Field(default=None, ge=500, le=200000)
+    trace_chars: Optional[int] = Field(default=None, ge=200, le=100000)
+    request_timeout_seconds: Optional[int] = Field(default=None, ge=15, le=3600)
 
 
 def _session_payload(session: Session) -> Dict[str, Any]:
@@ -252,7 +258,7 @@ def initialize(
     cookie_secure: bool = True,
 ):
     """Initialize the web server components."""
-    global executor, session_manager, UI_DEBUG_MODE, MCP_AUTO_START
+    global executor, session_manager, UI_DEBUG_MODE, UI_THINKING_MODE, MCP_AUTO_START
     
     try:
         init_auth(cookie_secure=cookie_secure)
@@ -266,8 +272,12 @@ def initialize(
         from ...core.config_storage import load_config_from_file
         config = load_config_from_file()
         executor = AgentExecutor(config)
-        
-        UI_DEBUG_MODE = debug_ui
+
+        from ...core.config_storage import get_section
+        _ensure_general_defaults()
+        stored_general = get_section("general", {})
+        UI_DEBUG_MODE = bool(stored_general["debug"]) if "debug" in stored_general else debug_ui
+        UI_THINKING_MODE = bool(stored_general.get("thinking", False))
         MCP_AUTO_START = mcp_auto_start
         logger.info(
             "AI Controller web server initialized (ui_debug_mode=%s, storage_dir=%s, mcp_auto_start=%s)",
@@ -443,6 +453,7 @@ async def _run_autorun(autorun: AutorunConfig):
             command,
             cluster_id=fresh_autorun.cluster_id or (session.cluster_id if session else None),
             context=condition_context,
+            on_progress=_live_progress(session_id, entry.id),
         )
 
         # Update entry and session status
@@ -953,6 +964,34 @@ async def broadcast_to_session(session_id: str, message: dict):
             active_connections[session_id].remove(conn)
 
 
+def _live_progress(session_id: str, entry_id: str):
+    """Persist and broadcast the trace gathered so far, before the final reply."""
+
+    async def on_progress(trace):
+        payload = {
+            "success": True,
+            "output": {"text": "", "trace": trace, "partial": True},
+            "error": None,
+        }
+        if session_manager:
+            try:
+                session_manager.update_entry(
+                    session_id,
+                    entry_id,
+                    result=payload,
+                    status=SessionStatus.RUNNING,
+                )
+            except Exception as exc:
+                logger.debug("Could not store partial trace for %s: %s", entry_id, exc)
+        await broadcast_to_session(session_id, {
+            "type": "execution_progress",
+            "entry_id": entry_id,
+            "result": payload,
+        })
+
+    return on_progress
+
+
 @app.get("/login", response_class=HTMLResponse)
 async def login_page(request: Request):
     """Serve the sign-in page. Authenticated users go straight to the UI."""
@@ -976,30 +1015,113 @@ async def root():
     return HTMLResponse(content="<h1>AI Controller</h1><p>index.html not found</p>")
 
 
+def _limit_defaults() -> Dict[str, int]:
+    from ...core.config import (
+        DEFAULT_MAX_TOOL_ITERATIONS,
+        DEFAULT_REQUEST_TIMEOUT_SECONDS,
+        DEFAULT_TOOL_RESULT_CHARS,
+        DEFAULT_TRACE_CHARS,
+    )
+
+    return {
+        "max_tool_iterations": DEFAULT_MAX_TOOL_ITERATIONS,
+        "tool_result_chars": DEFAULT_TOOL_RESULT_CHARS,
+        "trace_chars": DEFAULT_TRACE_CHARS,
+        "request_timeout_seconds": DEFAULT_REQUEST_TIMEOUT_SECONDS,
+    }
+
+
+def _ensure_general_defaults() -> None:
+    """Write built-in limits into config.json only for keys that are not set yet."""
+    from ...core.config_storage import get_section, update_raw_section
+
+    stored = get_section("general", {})
+    missing = {key: value for key, value in _limit_defaults().items() if key not in stored}
+    if not missing:
+        return
+    stored.update(missing)
+    update_raw_section("general", stored)
+    logger.info("Saved default investigation limits: %s", missing)
+
+
+def _general_settings() -> Dict[str, Any]:
+    """Display flags and investigation caps. Missing limits use the built-in defaults."""
+    from ...core.config_storage import get_section
+
+    stored = get_section("general", {})
+    llm = get_section("llm", {})
+    defaults = _limit_defaults()
+    rounds = stored.get("max_tool_iterations")
+    if rounds in (None, ""):
+        rounds = llm.get("max_tool_iterations") or defaults["max_tool_iterations"]
+    return {
+        "debug": bool(stored.get("debug", False)),
+        "thinking": bool(stored.get("thinking", False)),
+        "max_tool_iterations": int(rounds),
+        "tool_result_chars": int(stored.get("tool_result_chars") or defaults["tool_result_chars"]),
+        "trace_chars": int(stored.get("trace_chars") or defaults["trace_chars"]),
+        "request_timeout_seconds": int(
+            stored.get("request_timeout_seconds") or defaults["request_timeout_seconds"]
+        ),
+        "defaults": defaults,
+    }
+
+
+def _save_general(updates: Dict[str, Any]) -> Dict[str, Any]:
+    from ...core.config_storage import get_section, update_raw_section
+
+    stored = get_section("general", {})
+    stored.update(updates)
+    update_raw_section("general", stored)
+    if "max_tool_iterations" in updates:
+        llm = get_section("llm", {})
+        if isinstance(llm, dict):
+            llm["max_tool_iterations"] = updates["max_tool_iterations"]
+            update_raw_section("llm", llm)
+    return _general_settings()
+
+
 @app.get("/api/config")
 async def get_ui_config():
-    """Return UI-related configuration flags (e.g., debug mode)."""
+    """Return General settings: display flags and investigation limits."""
+    settings = _general_settings()
     return JSONResponse(
         content={
             "success": True,
             "ui_debug": UI_DEBUG_MODE,
+            "ui_thinking": UI_THINKING_MODE,
+            **settings,
         }
     )
 
 
 @app.post("/api/config")
 async def update_ui_config(config: UIConfigUpdate):
-    """Update UI-related configuration flags (currently debug mode)."""
-    global UI_DEBUG_MODE
-    
+    """Persist General settings and apply display flags immediately."""
+    global UI_DEBUG_MODE, UI_THINKING_MODE
+
+    updates: Dict[str, Any] = {}
     if config.ui_debug is not None:
         UI_DEBUG_MODE = config.ui_debug
-        logger.info("UI debug mode updated via API: %s", UI_DEBUG_MODE)
-    
+        updates["debug"] = config.ui_debug
+        logger.info("Debug mode updated via API: %s", UI_DEBUG_MODE)
+    if config.ui_thinking is not None:
+        UI_THINKING_MODE = config.ui_thinking
+        updates["thinking"] = config.ui_thinking
+        logger.info("Thinking view updated via API: %s", UI_THINKING_MODE)
+    for key in ("max_tool_iterations", "tool_result_chars", "trace_chars", "request_timeout_seconds"):
+        value = getattr(config, key)
+        if value is not None:
+            updates[key] = value
+    settings = _save_general(updates) if updates else _general_settings()
+    if any(key in updates for key in ("max_tool_iterations", "tool_result_chars", "trace_chars", "request_timeout_seconds")):
+        logger.info("Investigation limits updated: %s", {key: settings[key] for key in updates if key in settings})
     return JSONResponse(
         content={
             "success": True,
             "ui_debug": UI_DEBUG_MODE,
+            "ui_thinking": UI_THINKING_MODE,
+            **settings,
         }
     )
 
@@ -1194,7 +1316,11 @@ async def kickoff_session_command(session_id: str, command_text: str) -> Dict[st
         try:
             session_manager.update_session_status(session_id, SessionStatus.RUNNING)
 
-            result = await executor.execute_command(command, cluster_id=cluster_id)
+            result = await executor.execute_command(
+                command,
+                cluster_id=cluster_id,
+                on_progress=_live_progress(session_id, entry.id),
+            )
 
             session_manager.update_entry(
                 session_id,

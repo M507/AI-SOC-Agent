@@ -253,6 +253,7 @@ class AgentExecutor:
         command: Command,
         cluster_id: Optional[str] = None,
         context: Optional[str] = None,
+        on_progress: Optional[Callable] = None,
     ) -> ExecutionResult:
         """
         Execute a parsed command and return the result.
@@ -273,7 +274,11 @@ class AgentExecutor:
             elif command.command_type == CommandType.RUN_RUNBOOK:
                 return await self._execute_runbook(command)
             elif command.command_type == CommandType.UNKNOWN:
-                return await self._execute_freeform_prompt(command.raw, context=context)
+                return await self._execute_freeform_prompt(
+                    command.raw,
+                    context=context,
+                    on_progress=on_progress,
+                )
             else:
                 return ExecutionResult(
                     success=False,
@@ -423,6 +428,7 @@ class AgentExecutor:
         self,
         prompt: str,
         context: Optional[str] = None,
+        on_progress: Optional[Callable] = None,
     ) -> ExecutionResult:
         """
         Execute a freeform prompt via the configured LLM provider.
@@ -432,6 +438,12 @@ class AgentExecutor:
         completions and may use MCP tools when the MCP server is running.
         """
         from ..llm.registry import get_active_provider
+        from ..core.config import (
+            DEFAULT_MAX_TOOL_ITERATIONS,
+            DEFAULT_REQUEST_TIMEOUT_SECONDS,
+            DEFAULT_TOOL_RESULT_CHARS,
+            DEFAULT_TRACE_CHARS,
+        )
         from ..core.config_storage import get_section
 
         if context:
@@ -441,11 +453,19 @@ class AgentExecutor:
             provider = get_active_provider()
             self._current_provider = provider
             llm_cfg = get_section("llm", {})
+            general = get_section("general", {})
             result = await provider.complete(
                 prompt,
                 mcp_client=self._mcp_client(),
                 system_prompt=llm_cfg.get("system_prompt"),
-                max_tool_iterations=llm_cfg.get("max_tool_iterations", 12),
+                max_tool_iterations=general.get("max_tool_iterations")
+                or llm_cfg.get("max_tool_iterations", DEFAULT_MAX_TOOL_ITERATIONS),
+                tool_result_chars=general.get("tool_result_chars", DEFAULT_TOOL_RESULT_CHARS),
+                trace_chars=general.get("trace_chars", DEFAULT_TRACE_CHARS),
+                request_timeout_seconds=general.get(
+                    "request_timeout_seconds", DEFAULT_REQUEST_TIMEOUT_SECONDS
+                ),
+                on_trace=on_progress,
             )
             return ExecutionResult(
                 success=result.success,

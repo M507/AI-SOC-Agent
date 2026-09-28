@@ -33,6 +33,8 @@ class LLMResult:
     tools_advertised: int = 0
     # None when the endpoint's tool support was not determined.
     tools_supported: Optional[bool] = None
+    # Ordered thoughts and MCP tool calls from this completion.
+    trace: List[Dict[str, Any]] = field(default_factory=list)
 
     def to_output_dict(self) -> Dict[str, Any]:
         return {
@@ -43,6 +45,7 @@ class LLMResult:
             "tool_calls": self.tool_calls,
             "tools_advertised": self.tools_advertised,
             "tools_supported": self.tools_supported,
+            "trace": list(self.trace),
         }
 
 

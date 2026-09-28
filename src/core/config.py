@@ -177,6 +177,26 @@ class WebConfig:
     tls_key: str = "certs/server.key"
 
 
+# Starting investigation limits. The General settings page shows these and
+# lets the operator save different values in config.json.
+DEFAULT_MAX_TOOL_ITERATIONS = 12
+DEFAULT_TOOL_RESULT_CHARS = 8000
+DEFAULT_TRACE_CHARS = 6000
+DEFAULT_REQUEST_TIMEOUT_SECONDS = 180
+
+
+@dataclass
+class GeneralConfig:
+    """Display flags and investigation limits edited on the General settings page."""
+
+    debug: bool = False
+    thinking: bool = False
+    max_tool_iterations: int = DEFAULT_MAX_TOOL_ITERATIONS
+    tool_result_chars: int = DEFAULT_TOOL_RESULT_CHARS
+    trace_chars: int = DEFAULT_TRACE_CHARS
+    request_timeout_seconds: int = DEFAULT_REQUEST_TIMEOUT_SECONDS
+
+
 @dataclass
 class AIControllerConfig:
     """Web controller storage and bind settings."""
@@ -254,6 +274,7 @@ class SamiConfig:
     ai_controller: Optional[AIControllerConfig] = None
     llm: Optional[LLMConfig] = None
     mcp: Optional[MCPRuntimeConfig] = None
+    general: Optional[GeneralConfig] = None
 
 
 def _require_env(name: str) -> str:

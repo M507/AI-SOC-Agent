@@ -6,6 +6,13 @@ class AIController {
         // Core state
         this.activeSessionId = null;
         this.uiDebugMode = false;
+        this.uiThinkingMode = false;
+        this.generalDefaults = {
+            max_tool_iterations: 12,
+            tool_result_chars: 8000,
+            trace_chars: 6000,
+            request_timeout_seconds: 180,
+        };
         this.activeSection = 'sessions'; // 'sessions' | 'autoruns' | 'requests' | 'settings' | 'mcp'
         this.activeSettingsPage = 'llm';
         this.mcpReadiness = null;
@@ -333,15 +340,63 @@ class AIController {
                 this.updateDebugMode(debugToggle.checked);
             });
         }
+        const thinkingToggle = document.getElementById('thinking-toggle');
+        if (thinkingToggle) {
+            thinkingToggle.addEventListener('change', () => {
+                this.updateThinkingMode(thinkingToggle.checked);
+            });
+        }
+        const generalSave = document.getElementById('general-save-btn');
+        if (generalSave) {
+            generalSave.addEventListener('click', () => this.saveGeneralLimits());
+        }
+        const generalReset = document.getElementById('general-reset-btn');
+        if (generalReset) {
+            generalReset.addEventListener('click', () => this.resetGeneralLimits());
+        }
     }
     
     async loadConfig() {
         const data = await this.api.loadConfig();
         if (data && data.success) {
             this.uiDebugMode = data.ui_debug === true;
+            this.uiThinkingMode = data.ui_thinking === true;
             const debugToggle = document.getElementById('debug-toggle');
             if (debugToggle) {
                 debugToggle.checked = this.uiDebugMode;
+            }
+            const thinkingToggle = document.getElementById('thinking-toggle');
+            if (thinkingToggle) {
+                thinkingToggle.checked = this.uiThinkingMode;
+            }
+            this.generalDefaults = data.defaults || this.generalDefaults;
+            this.fillGeneralLimits(data);
+        }
+    }
+
+    fillGeneralLimits(data) {
+        const fields = {
+            'general-max-rounds': data.max_tool_iterations,
+            'general-tool-result-chars': data.tool_result_chars,
+            'general-trace-chars': data.trace_chars,
+            'general-request-timeout': data.request_timeout_seconds,
+        };
+        Object.entries(fields).forEach(([id, value]) => {
+            const input = document.getElementById(id);
+            if (input && value != null && value !== '') {
+                input.value = value;
+            }
+        });
+    }
+
+    async refreshVisibleTranscript() {
+        if (this.activeSection === 'sessions' && this.activeSessionId) {
+            await this.loadSessionDetails(this.activeSessionId);
+        }
+        if (this.activeSection === 'autoruns' && this.autorunManager && this.autorunManager.currentAutorunId) {
+            const autorun = this.autorunManager.autoruns.get(this.autorunManager.currentAutorunId);
+            if (autorun) {
+                await this.loadAutorunSession(autorun);
             }
         }
     }
@@ -714,6 +769,7 @@ class AIController {
         
         const data = await this.api.updateConfig({ ui_debug: enabled });
         if (data.success) {
+            await this.refreshVisibleTranscript();
             if (window.toast) {
                 window.toast.success(
                     enabled ? 'Debug mode on — full JSON will be shown.' : 'Debug mode off — replies only.',
@@ -726,6 +782,51 @@ class AIController {
                 window.toast.error(data.error || 'Could not save debug mode', { key: 'ui' });
             }
         }
+    }
+
+    async updateThinkingMode(enabled) {
+        this.uiThinkingMode = enabled;
+        const data = await this.api.updateConfig({ ui_thinking: enabled });
+        if (data.success) {
+            await this.refreshVisibleTranscript();
+            if (window.toast) {
+                window.toast.success(
+                    enabled
+                        ? 'Thinking view on — decisions and MCP tools will be shown.'
+                        : 'Thinking view off.',
+                    { key: 'ui' }
+                );
+            }
+        } else if (window.toast) {
+            window.toast.error(data.error || 'Could not save thinking view', { key: 'ui' });
+        }
+    }
+
+    async saveGeneralLimits(message) {
+        const numberValue = (id) => Number((document.getElementById(id) || {}).value);
+        const payload = {
+            max_tool_iterations: numberValue('general-max-rounds'),
+            tool_result_chars: numberValue('general-tool-result-chars'),
+            trace_chars: numberValue('general-trace-chars'),
+            request_timeout_seconds: numberValue('general-request-timeout'),
+        };
+        const data = await this.api.updateConfig(payload);
+        if (data && data.success) {
+            if (data.defaults) {
+                this.generalDefaults = data.defaults;
+            }
+            this.fillGeneralLimits(data);
+            if (window.toast) {
+                window.toast.success(message || 'Investigation limits saved.', { key: 'ui' });
+            }
+        } else if (window.toast) {
+            window.toast.error((data && (data.error || data.detail)) || 'Could not save limits', { key: 'ui' });
+        }
+    }
+
+    async resetGeneralLimits() {
+        this.fillGeneralLimits(this.generalDefaults);
+        await this.saveGeneralLimits('Investigation limits restored to defaults.');
     }
 }
 
