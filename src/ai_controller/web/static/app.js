@@ -16,6 +16,7 @@ class AIController {
         this.activeSection = 'overview';
         this.activeSettingsPage = 'llm';
         this.activeLibraryPage = 'runbooks';
+        this.activeDetectionsPage = 'findings';
         this.mcpReadiness = null;
         this.lastMCPAlertCode = null;
         
@@ -38,6 +39,7 @@ class AIController {
         this.reportsManager = new ReportsManager(this);
         this.auditManager = new AuditManager(this);
         this.operatorsManager = new OperatorsManager(this);
+        this.detectionsManager = new DetectionsManager(this);
         
         this.init();
     }
@@ -107,6 +109,9 @@ class AIController {
                 }
                 if (item.dataset.libraryPage) {
                     this.activeLibraryPage = item.dataset.libraryPage;
+                }
+                if (item.dataset.detectionsPage) {
+                    this.activeDetectionsPage = item.dataset.detectionsPage;
                 }
                 this.setActiveSection(item.dataset.nav);
             });
@@ -317,6 +322,10 @@ class AIController {
         if (generalReset) {
             generalReset.addEventListener('click', () => this.resetGeneralLimits());
         }
+        const detectionSave = document.getElementById('detection-settings-save');
+        if (detectionSave) {
+            detectionSave.addEventListener('click', () => this.saveDetectionSettings());
+        }
     }
     
     async loadConfig() {
@@ -334,6 +343,7 @@ class AIController {
             }
             this.generalDefaults = data.defaults || this.generalDefaults;
             this.fillGeneralLimits(data);
+            this.loadDetectionSettings();
         }
     }
 
@@ -350,6 +360,65 @@ class AIController {
                 input.value = value;
             }
         });
+    }
+
+    fillDetectionSettings(settings) {
+        const path = document.getElementById('detection-rules-dir');
+        const findings = document.getElementById('detection-findings-hours');
+        const match = document.getElementById('detection-match-hours');
+        const status = document.getElementById('detection-rules-status');
+        if (!settings) return;
+        if (path) path.value = settings.rules_dir || '';
+        if (findings && settings.findings_hours != null) findings.value = settings.findings_hours;
+        if (match && settings.match_hours != null) match.value = settings.match_hours;
+        if (status) {
+            const bits = [];
+            if (settings.env_override) {
+                bits.push('SAMI_LAB_RULES_DIR is set and overrides the folder saved here.');
+            }
+            if (settings.effective_path) {
+                bits.push(settings.configured
+                    ? 'Using ' + settings.effective_path + '.'
+                    : 'Folder not found: ' + settings.effective_path + '.');
+            } else {
+                bits.push('No rules folder is configured.');
+            }
+            status.textContent = bits.join(' ');
+        }
+    }
+
+    async loadDetectionSettings() {
+        const response = await this.api._fetch('/api/detections/settings');
+        const data = await response.json().catch(() => ({}));
+        if (response.ok && data.settings) {
+            this.fillDetectionSettings(data.settings);
+        }
+    }
+
+    async saveDetectionSettings() {
+        const path = (document.getElementById('detection-rules-dir') || {}).value || '';
+        const findings = Number((document.getElementById('detection-findings-hours') || {}).value);
+        const match = Number((document.getElementById('detection-match-hours') || {}).value);
+        const response = await this.api._fetch('/api/detections/settings', {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                rules_dir: path.trim(),
+                findings_hours: findings,
+                match_hours: match,
+            }),
+        });
+        const data = await response.json().catch(() => ({}));
+        if (response.ok && data.success) {
+            this.fillDetectionSettings(data.settings);
+            if (window.toast) window.toast.success('Detection settings saved.', { key: 'ui' });
+            if (this.detectionsManager && this.activeSection === 'detections') {
+                this.detectionsManager.show(this.activeDetectionsPage);
+            }
+        } else {
+            const detail = data.detail || data.error || 'Could not save detection settings';
+            if (window.toast) window.toast.error(typeof detail === 'string' ? detail : 'Could not save detection settings', { key: 'ui' });
+        }
     }
 
     async refreshVisibleTranscript() {
@@ -538,7 +607,7 @@ class AIController {
     }
     
     setActiveSection(section) {
-        const known = ['overview', 'sessions', 'autoruns', 'cost', 'requests', 'settings', 'mcp', 'library', 'audit', 'reports', 'operators'];
+        const known = ['overview', 'sessions', 'autoruns', 'cost', 'requests', 'settings', 'mcp', 'library', 'audit', 'reports', 'operators', 'detections'];
         if (!known.includes(section)) {
             console.warn('[AIController] Unknown section:', section);
             return;
@@ -574,6 +643,7 @@ class AIController {
         const reportsContent = document.getElementById('reports-content');
         const auditContent = document.getElementById('audit-content');
         const operatorsContent = document.getElementById('operators-content');
+        const detectionsContent = document.getElementById('detections-content');
 
         if (section !== 'settings') {
             this.hideSettingsPages();
@@ -593,6 +663,7 @@ class AIController {
         show(reportsContent, section === 'reports' ? 'flex' : 'none');
         show(auditContent, section === 'audit' ? 'flex' : 'none');
         show(operatorsContent, section === 'operators' ? 'flex' : 'none');
+        show(detectionsContent, section === 'detections' ? 'flex' : 'none');
             show(mcpContent, section === 'mcp' ? 'flex' : 'none');
         show(sessionContent, 'none');
         show(noSessionMessage, 'none');
@@ -613,6 +684,8 @@ class AIController {
             if (this.auditManager) this.auditManager.load();
         } else if (section === 'operators') {
             if (this.operatorsManager) this.operatorsManager.load();
+        } else if (section === 'detections') {
+            if (this.detectionsManager) this.detectionsManager.show(this.activeDetectionsPage);
         } else if (section === 'cost') {
             document.querySelectorAll('button.tab[data-session-id]').forEach((tab) => {
                 tab.classList.remove('active');
@@ -669,6 +742,9 @@ class AIController {
             }
             if (on && item.dataset.libraryPage) {
                 on = item.dataset.libraryPage === this.activeLibraryPage;
+            }
+            if (on && item.dataset.detectionsPage) {
+                on = item.dataset.detectionsPage === this.activeDetectionsPage;
             }
             item.classList.toggle('active', on);
         });

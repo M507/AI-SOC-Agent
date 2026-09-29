@@ -40,6 +40,7 @@ from .routes_reports import router as reports_router
 from .routes_audit import router as audit_router
 from .routes_operators import router as operators_router
 from .routes_setup import router as setup_router
+from .routes_detections import router as detections_router
 
 logger = get_logger("sami.ai_controller.web.server")
 
@@ -135,6 +136,7 @@ app.include_router(reports_router)
 app.include_router(audit_router)
 app.include_router(operators_router)
 app.include_router(setup_router)
+app.include_router(detections_router)
 
 # Initialize components
 executor: Optional[AgentExecutor] = None

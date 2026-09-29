@@ -81,6 +81,45 @@ def read_signins() -> List[Dict[str, Any]]:
     return found
 
 
+def record_action(username: str, summary: str) -> None:
+    """Append one analyst action from Detection as Code. Never stores alert bodies."""
+    event = {
+        "id": str(uuid4()),
+        "at": datetime.now().isoformat(timespec="seconds"),
+        "username": (username or "analyst").strip()[:128],
+        "ip": "",
+        "outcome": "action",
+        "summary": " ".join((summary or "").split())[:500],
+    }
+    path = audit_log_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    line = json.dumps(event, ensure_ascii=False) + "\n"
+    with _LOCK:
+        with path.open("a", encoding="utf-8") as handle:
+            handle.write(line)
+        _trim(path)
+
+
+def read_actions() -> List[Dict[str, Any]]:
+    path = audit_log_path()
+    if not path.is_file():
+        return []
+    found: List[Dict[str, Any]] = []
+    with _LOCK:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    for line in text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            item = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(item, dict) and item.get("outcome") == "action":
+            found.append(item)
+    return found
+
+
 def build_audit(
     signins: Iterable[Dict[str, Any]],
     sessions: Iterable[Session],
@@ -146,6 +185,20 @@ def build_audit(
             "session_name": "",
             "request_id": request.id,
             "title": title,
+        })
+    for item in read_actions():
+        events.append({
+            "id": item.get("id") or str(uuid4()),
+            "at": item.get("at") or "",
+            "kind": "action",
+            "who": item.get("username") or "analyst",
+            "summary": item.get("summary") or "Detection action",
+            "outcome": "action",
+            "ip": "",
+            "session_id": None,
+            "session_name": "",
+            "request_id": None,
+            "title": "",
         })
     events.sort(key=lambda item: _stamp(item.get("at")), reverse=True)
     truncated = len(events) > limit

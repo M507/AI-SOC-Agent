@@ -39,6 +39,7 @@
         <link rel="stylesheet" href="/static/css/cost.css?v=3">
         <link rel="stylesheet" href="/static/css/overview.css?v=5">
         <link rel="stylesheet" href="/static/css/pages.css?v=4">
+        <link rel="stylesheet" href="/static/css/detections.css?v=5">
     </head>
 <body>
     <div class="container">
@@ -91,6 +92,20 @@
                     <button type="button" id="nav-requests" class="nav-item" data-nav="requests">
                         <span class="nav-label">Requests</span>
                         <span id="nav-requests-count" class="nav-count" hidden>0</span>
+                    </button>
+                </div>
+                <div class="sidebar-group">
+                    <div class="sidebar-header">
+                        <span class="sidebar-title">Detection as Code</span>
+                    </div>
+                    <button type="button" id="nav-findings" class="nav-item" data-nav="detections" data-detections-page="findings">
+                        <span class="nav-label">Findings</span>
+                    </button>
+                    <button type="button" id="nav-rules" class="nav-item" data-nav="detections" data-detections-page="rules">
+                        <span class="nav-label">Rules</span>
+                    </button>
+                    <button type="button" id="nav-detection-review" class="nav-item" data-nav="detections" data-detections-page="review">
+                        <span class="nav-label">Review</span>
                     </button>
                 </div>
                 <div class="sidebar-group">
@@ -635,6 +650,30 @@
                                     </div>
                                 </div>
                             </section>
+                            <section class="settings-card settings-span">
+                                <h3>Detection as Code</h3>
+                                <p class="settings-help">Saved in <code>config.json</code>. Rule files stay in this folder. They are not copied into SamiGPT. Extra suggested fields are read from <code>suggested_fields.json</code> in that folder. Each rule's highlighted investigation fields are suggested as well.</p>
+                                <div class="settings-fields-grid">
+                                    <div class="settings-field settings-field-wide">
+                                        <label for="detection-rules-dir">Rules folder</label>
+                                        <input type="text" id="detection-rules-dir" spellcheck="false" placeholder="/path/to/rules" autocomplete="off">
+                                        <p id="detection-rules-status" class="settings-help"></p>
+                                    </div>
+                                    <div class="settings-field">
+                                        <label for="detection-findings-hours">Findings lookback (hours)</label>
+                                        <input type="number" id="detection-findings-hours" min="1" max="2160" value="168">
+                                        <p class="settings-help">Default 168. How far back the Findings list searches open alerts.</p>
+                                    </div>
+                                    <div class="settings-field">
+                                        <label for="detection-match-hours">Match lookback (hours)</label>
+                                        <input type="number" id="detection-match-hours" min="1" max="2160" value="2160">
+                                        <p class="settings-help">Default 2160. How far back Acknowledge and Close look for the same checked fields.</p>
+                                    </div>
+                                </div>
+                                <div class="settings-field">
+                                    <button type="button" id="detection-settings-save" class="btn btn-primary btn-sm">Save detection settings</button>
+                                </div>
+                            </section>
                         </div>
                     </div>
                     <div id="settings-appearance-content" class="settings-content" data-settings-page-content="appearance" style="display: none;">
@@ -781,6 +820,139 @@
                             <section id="requests-detail" class="requests-detail" aria-live="polite">
                                 <div class="requests-detail-empty">Select a request to review it.</div>
                             </section>
+                        </div>
+                    </div>
+                    <div id="detections-content" class="page-content detections-content" style="display: none;">
+                        <div class="page-header session-header">
+                            <div class="page-heading">
+                                <h2 id="detections-title">Findings</h2>
+                                <p id="detections-caption" class="page-caption">Open alerts. Check fields, then ask, except, acknowledge, or close.</p>
+                            </div>
+                        </div>
+                        <p id="detections-status" class="page-status" role="status" aria-live="polite" hidden></p>
+                        <div id="detections-findings" data-detections-page-content="findings">
+                            <div class="detections-split">
+                                <aside class="detections-list-pane">
+                                    <div class="detections-toolbar">
+                                        <input id="findings-search" type="search" placeholder="Search rule, host, or severity" aria-label="Search findings">
+                                        <button type="button" class="btn btn-secondary btn-sm" id="findings-refresh">Refresh</button>
+                                    </div>
+                                    <p id="findings-count" class="detections-count"></p>
+                                    <div id="findings-list" class="detections-list" role="list" aria-label="Open findings"></div>
+                                </aside>
+                                <section id="findings-detail" class="detections-detail" aria-live="polite">
+                                    <p id="findings-empty" class="detections-empty">Select a finding to review its evidence and decide what to do.</p>
+                                    <header id="findings-summary" class="detections-summary" hidden></header>
+                                    <div id="findings-field-block" hidden>
+                                        <div class="detections-section-head">
+                                            <h3>Evidence</h3>
+                                            <p id="findings-selected" class="detections-meta">Checked fields go with every action.</p>
+                                            <div class="detections-inline-actions">
+                                                <button type="button" class="btn btn-secondary btn-sm" id="findings-select-suggested">Suggested</button>
+                                                <button type="button" class="btn btn-secondary btn-sm" id="findings-clear">Clear</button>
+                                            </div>
+                                        </div>
+                                        <ul id="findings-fields" class="detections-fields" hidden></ul>
+                                    </div>
+                                    <div class="detections-actions" id="findings-actions" hidden>
+                                        <section class="detections-action-group">
+                                            <h3>Ask</h3>
+                                            <p class="detections-hint">One model call. The answer stays on this finding.</p>
+                                            <div class="detections-ask-row">
+                                                <label>Template
+                                                    <select id="findings-ask-template" aria-label="Ask template"></select>
+                                                </label>
+                                                <input id="findings-ask-custom" type="text" placeholder="Your question" aria-label="Custom question" hidden>
+                                                <button type="button" class="btn btn-secondary btn-sm" data-detection-action="ask">Ask about this finding</button>
+                                            </div>
+                                            <pre id="findings-answer" class="detections-answer" hidden></pre>
+                                        </section>
+                                        <section class="detections-action-group">
+                                            <h3>Exception</h3>
+                                            <p class="detections-hint">Sends the checked fields to Review. Nothing is written until you implement it there.</p>
+                                            <div class="detections-button-row">
+                                                <button type="button" class="btn btn-secondary btn-sm" data-detection-action="exception">Create exception from checked fields</button>
+                                                <button type="button" class="btn btn-secondary btn-sm" data-detection-action="suggest">Suggest with AI</button>
+                                            </div>
+                                        </section>
+                                        <section class="detections-action-group">
+                                            <h3>Workflow</h3>
+                                            <p class="detections-hint">Updates every open alert for this rule that contains each checked field. Closing does not add an exception.</p>
+                                            <label class="detections-note" id="findings-note-label" for="findings-note">Optional note
+                                                <textarea id="findings-note" rows="3" placeholder="Leave empty to acknowledge or close without a note"></textarea>
+                                            </label>
+                                            <div class="detections-button-row">
+                                                <button type="button" class="btn btn-secondary btn-sm" data-detection-action="acknowledge">Acknowledge</button>
+                                                <button type="button" class="btn btn-danger btn-sm" data-detection-action="close">Close</button>
+                                            </div>
+                                        </section>
+                                    </div>
+                                </section>
+                            </div>
+                        </div>
+                        <div id="detections-rules" data-detections-page-content="rules" hidden>
+                            <div class="detections-split">
+                                <aside class="detections-list-pane">
+                                    <div class="detections-toolbar">
+                                        <input id="rules-search" type="search" placeholder="Search name, tag, or query" aria-label="Search rules">
+                                    </div>
+                                    <p id="rules-count" class="detections-count"></p>
+                                    <div id="rules-list" class="detections-list" role="list" aria-label="Rules"></div>
+                                </aside>
+                                <section id="rules-detail" class="detections-detail" aria-live="polite">
+                                    <p id="rules-empty" class="detections-empty">Select a rule to read its query and exceptions.</p>
+                                    <header id="rules-summary" class="detections-summary" hidden></header>
+                                    <section id="rules-query-block" class="detections-block" hidden>
+                                        <h3>Query</h3>
+                                        <pre id="rules-query" class="detections-code"></pre>
+                                    </section>
+                                    <section id="rules-exceptions-block" class="detections-block" hidden>
+                                        <h3>Exceptions</h3>
+                                        <pre id="rules-exceptions" class="detections-code"></pre>
+                                    </section>
+                                    <div id="rules-disable-bar" class="detections-action-group" hidden>
+                                        <p class="detections-hint">Disable opens a review. The file is renamed only when you implement it.</p>
+                                        <button type="button" class="btn btn-secondary btn-sm" id="rules-disable">Disable through review</button>
+                                    </div>
+                                </section>
+                            </div>
+                        </div>
+                        <div id="detections-review" data-detections-page-content="review" hidden>
+                            <div class="detections-split">
+                                <aside class="detections-list-pane">
+                                    <p id="review-count" class="detections-count"></p>
+                                    <div id="review-list" class="detections-list" role="list" aria-label="Open reviews"></div>
+                                </aside>
+                                <section id="review-detail" class="detections-detail" aria-live="polite">
+                                    <p id="review-empty" class="detections-empty">Select a review. Unchecked conditions are left out of the file.</p>
+                                    <div id="review-body" hidden>
+                                        <div id="review-overview" class="detections-overview"></div>
+                                        <section class="detections-block" id="review-conditions-block">
+                                            <div class="detections-section-head">
+                                                <h3>Conditions</h3>
+                                                <p id="review-selected" class="detections-meta"></p>
+                                            </div>
+                                            <div id="review-conditions" class="detections-conditions"></div>
+                                        </section>
+                                        <section class="detections-block">
+                                            <h3>Change</h3>
+                                            <pre id="review-diff" class="detections-diff" hidden></pre>
+                                        </section>
+                                        <label class="detections-note" id="review-feedback-label" for="review-feedback" hidden>Ask for changes
+                                            <textarea id="review-feedback" rows="3" placeholder="What should the next draft change?"></textarea>
+                                        </label>
+                                        <div class="detections-actions" id="review-actions" hidden>
+                                            <p id="review-action-hint" class="detections-hint"></p>
+                                            <div class="detections-button-row">
+                                                <button type="button" class="btn btn-secondary btn-sm" data-review-action="draft">Draft</button>
+                                                <button type="button" class="btn btn-secondary btn-sm" data-review-action="revise">Ask for changes</button>
+                                                <button type="button" class="btn btn-primary btn-sm" data-review-action="implement">Implement</button>
+                                                <button type="button" class="btn btn-secondary btn-sm" data-review-action="reject">Reject</button>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </section>
+                            </div>
                         </div>
                     </div>
                     <div id="mcp-content" class="settings-content" style="display: none;">
@@ -1089,6 +1261,7 @@
     <script src="/static/reports.js?v=3"></script>
     <script src="/static/audit.js?v=1"></script>
     <script src="/static/operators.js?v=1"></script>
+    <script src="/static/detections.js?v=6"></script>
     
     <!-- Main application (depends on all modules) -->
     <script src="/static/settings.js?v=7"></script>
@@ -1096,7 +1269,7 @@
     <script src="/static/netbox_settings.js?v=1"></script>
     <script src="/static/integrations_settings.js?v=6"></script>
     <script src="/static/theme.js?v=1"></script>
-    <script src="/static/app.js?v=25"></script>
+    <script src="/static/app.js?v=27"></script>
 </body>
 </html>
 

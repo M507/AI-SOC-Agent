@@ -71,6 +71,12 @@
     "trace_chars": 6000,
     "request_timeout_seconds": 180
   },
+  "detection": {
+    "_comment": "Detection as Code. Edited on Settings, General. rules_dir is the folder of rule JSON. SAMI_LAB_RULES_DIR overrides rules_dir when set. findings_hours is how far back Findings looks. match_hours is how far back Acknowledge and Close search for the same fields.",
+    "rules_dir": "",
+    "findings_hours": 168,
+    "match_hours": 2160
+  },
   "llm": {
     "_comment": "LLM backend used by the web UI for freeform prompts. provider: cursor_agent | openai | openrouter | openwebui | custom. Map OPENWEBUI_URL→base_url, OPENWEBUI_KEY→api_key, OPENWEBUI_MODEL→model.",
     "provider": "openwebui",
