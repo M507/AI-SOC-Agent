@@ -72,6 +72,8 @@ A `comment` on `update_alert_verdict` is itself filed as a pending **Add alert n
 
 No generic Approve. The analyst answers the identity question.
 
+SOC1 may file this with `create_approval_request` (`action_type=identity_verify`) when a Yes/No on identity/expected use would actually decide the alert (login, VPN, RDP, admin, travel). It is **optional**. Uncertain alone is not a reason to file it. The card asks a yes/no `question`. Leave `follow_ups` empty so the defaults below apply.
+
 | Answer | What runs | Added | Closed / changed |
 | --- | --- | --- | --- |
 | **Yes** | Close alert as benign true positive (and any pending **Add alert note** for that alert) | Close comment; associated notes | Alert closed; verdict benign true positive |

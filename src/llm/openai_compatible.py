@@ -43,10 +43,10 @@ DEFAULT_SYSTEM_PROMPT = (
     "create_runbook_recommendation is informational too: after the investigation finishes, "
     "if no soc*/cases playbook matched the alert type, file a detailed request for a new "
     "case runbook — never block triage for it. "
-    "For suspicious logins or 'is this you?' "
-    "checks, file action_type=identity_verify with a clear question and follow_ups for "
-    "yes (acknowledge / close as benign) and no (escalate to an Elastic Security case "
-    "via create_elastic_case — not IRIS or TheHive)."
+    "Is this you? (action_type=identity_verify) is optional: file it only when a Yes/No "
+    "on identity would actually decide the alert, not on every uncertain. "
+    "Yes acknowledges / closes as benign; No escalates to an Elastic Security case "
+    "via create_elastic_case — not IRIS or TheHive."
 )
 
 # Open WebUI's /api/v1 pipeline accepts requests containing `tools` but never

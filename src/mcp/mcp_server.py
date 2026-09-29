@@ -3090,13 +3090,14 @@ To be populated during investigation.
             if self.case_client:
                 if is_triage_runbook:
                     execution_instructions += (
-                        "IMPORTANT: Follow Step 2a (Quick Assessment) in the runbook FIRST. "
-                        "Only create a case using create_case if the quick assessment determines "
-                        "that case creation is needed (uncertain, suspicious, or requires tracking). "
+                        "IMPORTANT: Follow the SOC1 runbook. Do not create a case. "
                         "Record your working assessment immediately with update_alert_verdict "
                         "(no approval). If the alert should be closed as FP/BTP, call close_alert — "
                         "that files a Requests-view approval and does not close until an analyst approves. "
-                        "Do not tell the analyst the alert is already closed."
+                        "Do not tell the analyst the alert is already closed. "
+                        "If a Yes/No on identity would actually decide the alert, you may file "
+                        "create_approval_request with action_type=identity_verify (is this you?). "
+                        "Do not file it just because the verdict is uncertain."
                     )
                 else:
                     execution_instructions += "IMPORTANT: Create a case using create_case tool if one doesn't exist, following the case standard in standards/case_standard.md. "

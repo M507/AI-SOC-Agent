@@ -22,14 +22,14 @@ Irreversible MCP tools **file a request** instead of executing:
 *   Analysts can press **Create runbook** on that Requests note to open an Open WebUI session that authors a new `run_books/soc1/cases/*.md` via `save_case_runbook`.
 *   Before a visibility note: `search_lab_detection_rules` (1–3 keyword searches) then at most 1–2 `get_lab_detection_rule` calls. Only file a gap if the catalog does not already cover it.
 *   `update_alert_verdict` is **not** gated. It is the AI's working assessment and runs immediately. It does not close the alert. An optional `comment` is filed as `add_alert_note` and waits for approval.
-*   `create_approval_request` is for identity checks ("is this you?") and any custom follow-up (ACK vs escalate to an Elastic Security case).
+*   `create_approval_request` with `action_type=identity_verify` is **Is this you?** — an **optional** Yes/No question in Requests. File it only when a Yes/No on identity/expected use would actually decide the alert. Do **not** file it just because the verdict is `uncertain` or a user is present. Yes closes as benign; No escalates to an Elastic Security case. Do not claim the analyst already answered.
 *   After calling a gated tool, tell the analyst the action is **pending in Requests**. Do not claim it already happened. After a fine-tune, visibility, or runbook-gap note, say it is informational in Requests.
 
 ## SOC1 Fundamental Principles
 
 *   **MUST ALWAYS BEGIN FROM SECURITY ALERTS (`${ALERT_ID}`)**, never from existing cases.
 *   **Primary role is to close false positives** quickly without creating cases.
-*   **If uncertain about legitimacy**: Write a full alert note and set an honest verdict (`uncertain` / `true_positive`). Do **not** create a case.
+*   **If uncertain about legitimacy**: Write a full alert note and set an honest verdict (`uncertain` / `true_positive`). Do **not** create a case. **Is this you?** is optional — file it only when a Yes/No would actually help, not on every uncertain.
 *   Use `get_security_alert_by_id` as the FIRST step in every workflow.
 *   Use `get_rule_detections` / `get_security_alerts` to review past **closed** and **acknowledged** alerts of the same rule/type before deciding.
 *   **MUST** call `get_alert_notes` on matching past (and current) alerts — Security Solution / Rule Tuner notes are **not** on alert `_source`; reading past work means reading those notes.
@@ -73,6 +73,7 @@ Runbooks are structured markdown documents that the MCP server parses for metada
         *   **CTI Tools:** `lookup_hash_ti` (and others as applicable).
         *   **EDR Tools:** `get_endpoint_summary`, `isolate_endpoint`, `kill_process_on_endpoint`, `collect_forensic_artifacts` (where relevant).
         *   **Runbook & Agent Tools (when applicable):** `list_runbooks`, `get_runbook`, `execute_runbook`, `list_agent_profiles`, `get_agent_profile`, `route_case_to_agent`, `execute_as_agent`.
+        *   **Requests Tools:** `create_approval_request` (`action_type=identity_verify`) — optional **Is this you?** Yes/No, only when needed.
     *   Tool names **must** be wrapped in backticks (`` `tool_name` ``) so `RunbookManager` can extract them.
     *   SOC1 triage runbooks must **not** list `create_case` or other case-write tools.
 
@@ -82,8 +83,8 @@ Runbooks are structured markdown documents that the MCP server parses for metada
     *   **MANDATORY FIRST STEP:** SOC1 runbooks MUST start with "Receive Alert (MANDATORY)" and call `get_security_alert_by_id` with `${ALERT_ID}` as the FIRST action.
     *   Example: `1.  **Receive Alert (MANDATORY):** Obtain ${ALERT_ID} from SIEM alert queue. MUST use \`get_security_alert_by_id\` as FIRST action.`
     *   Within each step, explicitly reference which MCP tools to call, under what conditions, and what data to store.
-    *   Make decisions and branching explicit (e.g., "If IOC matches found, escalate for deeper investigation", "If uncertain, write a full alert note (no case)").
-    *   Document that if uncertain about legitimacy, document on the alert with a full note (no case).
+    *   Make decisions and branching explicit (e.g., "If IOC matches found, escalate for deeper investigation", "If uncertain, write a full alert note (no case); optionally file Is this you? only if a Yes/No would actually help").
+    *   Document that if uncertain about legitimacy, document on the alert with a full note (no case). **Is this you?** (`create_approval_request` / `identity_verify`) is optional — not required on uncertain.
 
 *   **Completion Criteria (`## Completion Criteria`):**
     *   Bullet list describing when the runbook is considered successfully completed.
@@ -95,7 +96,7 @@ Runbooks are structured markdown documents that the MCP server parses for metada
 
 *   **Escalation Criteria (`## Escalation Criteria`) (when applicable):**
     *   Clearly enumerate when to escalate / hand off for deeper work.
-    *   SOC1 escalates when uncertain about legitimacy (document on the alert with a full note (no case)) OR when suspicious/true positive indicators are found.
+    *   SOC1 escalates when uncertain about legitimacy (full alert note, no case) OR when suspicious/true positive indicators are found. **Is this you?** is optional and only when a Yes/No is actually needed.
     *   Examples:
         *   "True positive indicators are found…"
         *   "Uncertain about legitimacy - document on the alert with a full note (no case)…"

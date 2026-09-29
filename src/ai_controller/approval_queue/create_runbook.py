@@ -194,7 +194,7 @@ Final file must land at `run_books/{target_path}.md` alongside the other case pl
    - `## Completion Criteria`
    - `## Escalation Criteria` (when applicable)
    - Optional `## Warning` / `## Notes`
-6. SOC1 rules: start from alerts only; primary mission is FP/BTP closure via Requests (`close_alert`); do **not** teach `create_case` for SOC1 triage; if uncertain → full alert note + honest verdict, no case.
+6. SOC1 rules: start from alerts only; primary mission is FP/BTP closure via Requests (`close_alert`); do **not** teach `create_case` for SOC1 triage; if uncertain → full alert note + honest verdict, no case. `create_approval_request` (`action_type=identity_verify`) is optional — file it only when a Yes/No ("is this you?") would actually decide the alert, not on every uncertain.
 7. Ground the playbook in the investigated alert above (entities, rule, what worked / what was missing).
 8. When the markdown is ready, call:
    `save_case_runbook` with `path="{target_path}"` and `content=<full markdown>`.
