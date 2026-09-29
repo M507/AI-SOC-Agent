@@ -76,12 +76,6 @@ class AIController {
             if (this.activeSection === 'cost' && this.costManager && this.costManager.activePage !== 'rates') {
                 this.costManager.load();
             }
-
-            if (this.activeSection === 'requests') {
-                this.requestsManager.load();
-            } else {
-                this.requestsManager.refreshCounts();
-            }
         }, 3000);
 
         this.mcpHealthInterval = setInterval(() => {
@@ -577,6 +571,7 @@ class AIController {
             return;
         }
 
+        const previous = this.activeSection;
         this.activeSection = section;
 
         // Update sidebar nav active state
@@ -677,7 +672,7 @@ class AIController {
             if (requestsTab) {
                 requestsTab.classList.add('active');
             }
-            this.requestsManager.load();
+            this.requestsManager.show({ justOpened: previous !== 'requests' });
             if (this.activeSessionId) {
                 this.wsManager.disconnect(this.activeSessionId);
             }
@@ -720,6 +715,10 @@ class AIController {
             if (this.activeSessionId) {
                 this.wsManager.disconnect(this.activeSessionId);
             }
+        }
+
+        if (previous === 'requests' && section !== 'requests') {
+            this.requestsManager.hide();
         }
     }
 

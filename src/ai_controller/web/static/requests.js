@@ -11,11 +11,14 @@ const REQUEST_STATUS_LABELS = {
 };
 
 const DETECTION_CATEGORIES = new Set(['detections', 'runbooks']);
+const SOC_CATEGORIES = new Set(['siem', 'identity', 'edr', 'case', 'iam', 'email', 'network']);
 const ENG_ACTION_TYPES = new Set(['fine_tune', 'visibility', 'runbook_gap']);
+const REQUESTS_POLL_MS = 15000;
 
 class RequestsManager {
     constructor(controller) {
         this.controller = controller;
+        this.items = [];
         this.requests = [];
         this.catalog = [];
         this.selectedId = null;
@@ -24,12 +27,18 @@ class RequestsManager {
         this.queueTab = 'all';
         this.counts = { pending: 0, open: 0, archived: 0, all: 0, actionable: 0 };
         this.tabCounts = { open: 0, archived: 0, all: 0 };
+        this.queueCounts = {};
+        this.generation = 0;
         this.receipt = null;
         this._bound = false;
         this._busy = false;
         this._savedDetailComment = '';
         this._savedBulkComment = '';
         this._skipDetailRebuild = false;
+        this._loadSeq = 0;
+        this._fullById = {};
+        this._pollTimer = null;
+        this._externalRefreshing = false;
     }
 
     bind() {
@@ -73,9 +82,7 @@ class RequestsManager {
             }
             const childLink = event.target.closest('[data-request-open]');
             if (childLink) {
-                this.selectedId = childLink.dataset.requestOpen;
-                this.receipt = null;
-                this.render();
+                this.selectCard(childLink.dataset.requestOpen);
                 return;
             }
             const checkbox = event.target.closest('[data-request-check]');
@@ -85,10 +92,7 @@ class RequestsManager {
             }
             const card = event.target.closest('.request-card');
             if (card) {
-                this.selectedId = card.dataset.requestId;
-                this.receipt = null;
-                this.renderDetail();
-                this.highlightCards();
+                this.selectCard(card.dataset.requestId);
             }
         });
         pane.addEventListener('change', (event) => {
@@ -130,7 +134,15 @@ class RequestsManager {
         this.selectedIds.clear();
         this.receipt = null;
         this.syncQueueTabs();
-        this.load();
+        this.applyQueueFilter();
+        this.render();
+        if (this.selectedId) {
+            this.ensureFull(this.selectedId).then((full) => {
+                if (full && this.selectedId === full.id) {
+                    this.renderDetail();
+                }
+            });
+        }
     }
 
     syncQueueTabs() {
@@ -169,16 +181,21 @@ class RequestsManager {
     }
 
     async refreshFromTickets() {
-        if (this._syncing) {
-            return;
+        await this.refreshExternal({ quiet: false });
+    }
+
+    async refreshExternal(options) {
+        const quiet = Boolean(options && options.quiet);
+        if (this._externalRefreshing) {
+            return null;
         }
-        this._syncing = true;
+        this._externalRefreshing = true;
         const button = document.getElementById('requests-refresh-btn');
-        if (button) {
+        if (button && !quiet) {
             button.disabled = true;
             button.textContent = 'Refreshing…';
         }
-        if (window.toast) {
+        if (!quiet && window.toast) {
             window.toast.info('Checking linked tickets…', { key: 'requests-sync', duration: 0 });
         }
         let result = null;
@@ -186,11 +203,14 @@ class RequestsManager {
             result = await this.controller.api.syncRequests();
             await this.load();
         } finally {
-            this._syncing = false;
+            this._externalRefreshing = false;
             if (button) {
                 button.disabled = false;
                 button.textContent = 'Refresh';
             }
+        }
+        if (quiet) {
+            return result;
         }
         const message = (result && result.message) || 'Could not sync linked tickets.';
         if (window.toast) {
@@ -206,38 +226,169 @@ class RequestsManager {
                 window.toast.info(message, { key: 'requests-sync' });
             }
         }
+        return result;
+    }
+
+    show(options) {
+        const justOpened = Boolean(options && options.justOpened);
+        this.startLocalPoll();
+        const painted = this.load();
+        if (justOpened) {
+            painted.then(() => this.refreshExternal({ quiet: true }));
+        }
+    }
+
+    hide() {
+        this.stopLocalPoll();
+    }
+
+    startLocalPoll() {
+        this.stopLocalPoll();
+        this._pollTimer = setInterval(() => {
+            this.pollSummary();
+        }, REQUESTS_POLL_MS);
+    }
+
+    stopLocalPoll() {
+        if (this._pollTimer) {
+            clearInterval(this._pollTimer);
+            this._pollTimer = null;
+        }
+    }
+
+    async pollSummary() {
+        if (this._busy || this._externalRefreshing) {
+            return;
+        }
+        const data = await this.controller.api.getRequestsSummary();
+        if (!data || !data.success) {
+            return;
+        }
+        this.counts = data.counts || this.counts;
+        if (data.queue_counts) {
+            this.queueCounts = data.queue_counts;
+            this.tabCounts = data.queue_counts[this.queueTab] || this.tabCounts;
+        }
+        this.updateNavBadge();
+        this.updateHeaderMeta();
+        if (typeof data.generation === 'number' && data.generation !== this.generation) {
+            await this.load();
+        }
+    }
+
+    matchesQueue(item, queue) {
+        const key = (queue || this.queueTab || 'all').toLowerCase();
+        if (key === 'all' || key === '' || key === 'pending') {
+            return true;
+        }
+        const category = item && item.category;
+        if (key === 'soc') {
+            return SOC_CATEGORIES.has(category);
+        }
+        if (key === 'detection' || key === 'detections' || key === 'detection_engineering') {
+            return DETECTION_CATEGORIES.has(category);
+        }
+        if (key === 'engineering' || key === 'eng') {
+            return Boolean(this.githubIssue(item));
+        }
+        return true;
+    }
+
+    applyQueueFilter() {
+        this.requests = this.items.filter((item) => this.matchesQueue(item, this.queueTab));
+        if (this.queueCounts && this.queueCounts[this.queueTab]) {
+            this.tabCounts = this.queueCounts[this.queueTab];
+        }
+        const visible = new Set(this.requests.map((item) => item.id));
+        this.selectedIds = new Set([...this.selectedIds].filter((id) => visible.has(id)));
+    }
+
+    async selectCard(id) {
+        this.selectedId = id;
+        this.receipt = null;
+        this.highlightCards();
+        await this.ensureFull(id);
+        if (this.selectedId !== id) {
+            return;
+        }
+        this.renderDetail();
+    }
+
+    async ensureFull(id) {
+        if (!id) {
+            return null;
+        }
+        const cached = this._fullById[id];
+        if (cached && cached._generation === this.generation) {
+            return cached;
+        }
+        const data = await this.controller.api.getRequest(id);
+        if (!data || !data.success || !data.request) {
+            return cached || null;
+        }
+        const full = { ...data.request, _full: true, _generation: this.generation };
+        this._fullById[id] = full;
+        const index = this.items.findIndex((item) => item.id === id);
+        if (index >= 0) {
+            this.items[index] = { ...this.items[index], ...full };
+            this.applyQueueFilter();
+        }
+        return full;
     }
 
     async load() {
         this.bind();
         this.captureDrafts();
+        const seq = ++this._loadSeq;
         const status = this.filter === 'all' ? 'all' : this.filter;
         const [list, catalog] = await Promise.all([
-            this.controller.api.listRequests(status, this.queueTab),
+            this.controller.api.listRequests(status),
             this.catalog.length ? Promise.resolve({ actions: this.catalog }) : this.controller.api.getRequestCatalog(),
         ]);
+        if (seq !== this._loadSeq) {
+            return;
+        }
         if (catalog && catalog.actions) {
             this.catalog = catalog.actions;
         }
         if (list && list.success) {
-            this.requests = list.requests || [];
+            this.items = list.requests || [];
             this.counts = list.counts || this.counts;
-            this.tabCounts = list.tab_counts || this.tabCounts;
+            this.queueCounts = list.queue_counts || this.queueCounts;
+            this.tabCounts = (this.queueCounts && this.queueCounts[this.queueTab]) || list.tab_counts || this.tabCounts;
+            if (typeof list.generation === 'number') {
+                this.generation = list.generation;
+            }
+            this._fullById = {};
         }
-        const visible = new Set(this.requests.map((item) => item.id));
-        this.selectedIds = new Set([...this.selectedIds].filter((id) => visible.has(id)));
+        this.applyQueueFilter();
         this.updateNavBadge();
         this.syncQueueTabs();
         if (this.controller.activeSection === 'requests') {
             this.render();
+            if (this.selectedId) {
+                await this.ensureFull(this.selectedId);
+                if (seq !== this._loadSeq) {
+                    return;
+                }
+                if (!this._skipDetailRebuild) {
+                    this.renderDetail();
+                }
+            }
         }
     }
 
     async refreshCounts() {
-        const data = await this.controller.api.listRequests('open', this.queueTab);
+        const data = await this.controller.api.getRequestsSummary();
         if (data && data.success) {
             this.counts = data.counts || this.counts;
-            this.tabCounts = data.tab_counts || this.tabCounts;
+            if (data.queue_counts) {
+                this.queueCounts = data.queue_counts;
+                this.tabCounts = data.queue_counts[this.queueTab] || this.tabCounts;
+            }
+            if (typeof data.generation === 'number') {
+                this.generation = data.generation;
+            }
             this.updateNavBadge();
         }
     }
@@ -307,6 +458,9 @@ class RequestsManager {
 
     requestAlertIds(item) {
         const ids = new Set();
+        if (item && item.alert_id) {
+            ids.add(String(item.alert_id));
+        }
         const payload = (item && item.payload) || {};
         [payload.alert_id, payload.alertId].forEach((value) => {
             if (value) {
@@ -354,7 +508,11 @@ class RequestsManager {
         if (this.receipt && this.receipt.item && this.receipt.item.id === this.selectedId) {
             return this.receipt.item;
         }
-        return this.requests.find((item) => item.id === this.selectedId) || this.requests[0] || null;
+        const base = this.requests.find((item) => item.id === this.selectedId) || this.requests[0] || null;
+        if (!base) {
+            return null;
+        }
+        return this._fullById[base.id] || base;
     }
 
     isInformational(item, spec) {

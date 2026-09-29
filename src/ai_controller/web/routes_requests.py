@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict, Optional
+from typing import Any, Callable, Dict, Optional
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
@@ -44,16 +44,69 @@ class BulkPayload(BaseModel):
     comment: Optional[str] = None
 
 
-def _payload(request: ApprovalRequest) -> Dict[str, Any]:
-    data = request.to_dict()
-    data["cluster"] = cluster_summary(request.cluster_id)
+def _cluster_lookup() -> Callable[[Optional[str]], Optional[Dict[str, Any]]]:
+    cache: Dict[Optional[str], Optional[Dict[str, Any]]] = {}
+
+    def lookup(cluster_id: Optional[str]) -> Optional[Dict[str, Any]]:
+        if cluster_id not in cache:
+            cache[cluster_id] = cluster_summary(cluster_id)
+        return cache[cluster_id]
+
+    return lookup
+
+
+def _alert_id(request: ApprovalRequest) -> Optional[str]:
+    payload = request.payload or {}
+    for raw in (payload.get("alert_id"), payload.get("alertId")):
+        text = str(raw or "").strip()
+        if text:
+            return text
+    alert = payload.get("alert")
+    if isinstance(alert, dict):
+        for raw in (alert.get("id"), alert.get("alert_id"), alert.get("alertId")):
+            text = str(raw or "").strip()
+            if text:
+                return text
+    return None
+
+
+def _payload(
+    request: ApprovalRequest,
+    view: str = "full",
+    cluster_for: Optional[Callable[[Optional[str]], Optional[Dict[str, Any]]]] = None,
+) -> Dict[str, Any]:
     from ..approval_queue.models import is_archived
     from ..approval_queue.catalog import get_action_spec, github_issue_link
 
+    if cluster_for is None:
+        cluster_for = cluster_summary
     spec = get_action_spec(request.action_type)
-    data["archived"] = is_archived(request)
+    cluster = cluster_for(request.cluster_id)
+    archived = is_archived(request)
+    github = github_issue_link(request.payload)
+    view_key = (view or "full").strip().lower()
+    if view_key in {"summary", "list"}:
+        created = request.created_at.isoformat() if hasattr(request.created_at, "isoformat") else request.created_at
+        status = request.status.value if hasattr(request.status, "value") else request.status
+        return {
+            "id": request.id,
+            "action_type": request.action_type,
+            "title": request.title,
+            "status": status,
+            "risk": request.risk,
+            "cluster_id": request.cluster_id,
+            "cluster": cluster,
+            "category": spec.category if spec else None,
+            "github_issue": github,
+            "created_at": created,
+            "archived": archived,
+            "alert_id": _alert_id(request),
+        }
+    data = request.to_dict()
+    data["cluster"] = cluster
+    data["archived"] = archived
     data["category"] = spec.category if spec else None
-    data["github_issue"] = github_issue_link(request.payload)
+    data["github_issue"] = github
     return data
 
 
@@ -63,23 +116,35 @@ async def request_catalog():
     return {"success": True, "actions": queue.catalog()}
 
 
+@router.get("/summary")
+async def request_summary():
+    """Local generation and badge counts. No GitHub or Elasticsearch."""
+    page = get_queue().summary()
+    return {"success": True, **page}
+
+
 @router.get("")
 async def list_requests(
     status: Optional[str] = None,
     cluster_id: Optional[str] = None,
     queue: Optional[str] = None,
+    view: Optional[str] = "summary",
 ):
     queue_svc = get_queue()
     try:
-        items = queue_svc.list(status=status, cluster_id=cluster_id, queue=queue)
+        page = queue_svc.list_bundle(status=status, cluster_id=cluster_id, queue=queue)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    cluster_for = _cluster_lookup()
+    view_key = (view or "summary").strip().lower()
     return {
         "success": True,
-        "counts": queue_svc.counts(),
-        "tab_counts": queue_svc.tab_counts(queue),
-        "queue": queue or "all",
-        "requests": [_payload(item) for item in items],
+        "generation": page["generation"],
+        "counts": page["counts"],
+        "tab_counts": page["tab_counts"],
+        "queue_counts": page["queue_counts"],
+        "queue": page["queue"],
+        "requests": [_payload(item, view=view_key, cluster_for=cluster_for) for item in page["items"]],
     }
 
 
@@ -108,9 +173,9 @@ async def create_request(body: CreateRequestPayload):
 
 @router.post("/sync")
 async def sync_requests(cluster_id: Optional[str] = None):
-    """Pull linked GitHub issues and archive notes already closed there."""
+    """Pull linked GitHub issues and backfill sparse SIEM snapshots onto local tickets."""
     queue = get_queue()
-    result = queue.sync_external_closed(cluster_id=cluster_id)
+    result = queue.refresh_external(cluster_id=cluster_id)
     closed = int(result.get("closed") or 0)
     checked = int(result.get("checked") or 0)
     errors = int(result.get("errors") or 0)

@@ -52,6 +52,10 @@ def test_requests_view_is_in_the_shell():
     assert "Approve will also write" in requests_js
     assert "request-bulk-comment" in requests_js
     assert "Technical details" in requests_js
+    assert "matchesQueue" in requests_js
+    assert "startLocalPoll" in requests_js
+    assert "justOpened" in app_js
+    assert "getRequestsSummary" in (WEB / "static" / "api.js").read_text(encoding="utf-8")
 
 
 def _client(tmp_path):
@@ -447,3 +451,47 @@ def test_add_alert_note_request_approve_writes_and_deny_does_not(tmp_path, monke
     assert denied.status_code == 200, denied.text
     assert denied.json()["request"]["status"] == "denied"
     assert siem.notes == [("alert-ui-1", "Proposed investigation note for review.")]
+
+
+def test_list_defaults_to_summary_cards(tmp_path):
+    client = _client(tmp_path)
+    created = client.post(
+        "/api/requests",
+        json={
+            "action_type": "close_alert",
+            "title": "Close noisy DNS",
+            "summary": "scanner",
+            "payload": {"alert_id": "alert-summary-1", "reason": "false_positive", "comment": "noise"},
+        },
+    )
+    assert created.status_code == 200, created.text
+    request_id = created.json()["request"]["id"]
+    assert "payload" in created.json()["request"]
+
+    listed = client.get("/api/requests?status=open")
+    assert listed.status_code == 200, listed.text
+    body = listed.json()
+    assert body["success"] is True
+    assert "generation" in body
+    assert "queue_counts" in body
+    assert "soc" in body["queue_counts"]
+    match = next(item for item in body["requests"] if item["id"] == request_id)
+    assert "payload" not in match
+    assert match["alert_id"] == "alert-summary-1"
+    assert match["action_type"] == "close_alert"
+    assert match["category"] == "siem"
+
+    summary = client.get("/api/requests/summary")
+    assert summary.status_code == 200, summary.text
+    assert summary.json()["success"] is True
+    assert summary.json()["generation"] == body["generation"]
+    assert "actionable" in summary.json()["counts"]
+
+    full = client.get(f"/api/requests/{request_id}")
+    assert full.status_code == 200, full.text
+    assert full.json()["request"]["payload"]["alert_id"] == "alert-summary-1"
+
+    full_list = client.get("/api/requests?status=open&view=full")
+    assert full_list.status_code == 200
+    full_match = next(item for item in full_list.json()["requests"] if item["id"] == request_id)
+    assert full_match["payload"]["alert_id"] == "alert-summary-1"

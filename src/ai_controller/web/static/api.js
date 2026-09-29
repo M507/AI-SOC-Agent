@@ -679,7 +679,7 @@ class APIClient {
         }
     }
 
-    async listRequests(status = null, queue = 'all') {
+    async listRequests(status = null, queue = 'all', view = 'summary') {
         try {
             const params = new URLSearchParams();
             if (status) {
@@ -687,6 +687,9 @@ class APIClient {
             }
             if (queue && queue !== 'all') {
                 params.set('queue', queue);
+            }
+            if (view) {
+                params.set('view', view);
             }
             const query = params.toString() ? `?${params.toString()}` : '';
             return await this.request(`/api/requests${query}`);
@@ -696,8 +699,25 @@ class APIClient {
                 requests: [],
                 counts: { pending: 0, open: 0, archived: 0, all: 0, actionable: 0 },
                 tab_counts: { open: 0, archived: 0, all: 0 },
+                queue_counts: {},
                 error: error.message,
             };
+        }
+    }
+
+    async getRequest(requestId) {
+        try {
+            return await this.request(`/api/requests/${encodeURIComponent(requestId)}`);
+        } catch (error) {
+            return { success: false, error: error.message };
+        }
+    }
+
+    async getRequestsSummary() {
+        try {
+            return await this.request('/api/requests/summary');
+        } catch (error) {
+            return { success: false, error: error.message };
         }
     }
 

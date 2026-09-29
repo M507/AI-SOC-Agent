@@ -94,6 +94,7 @@ class ApprovalRequest:
     error: Optional[str] = None
     archived: bool = False
     archived_at: Optional[datetime] = None
+    enrichment_attempted_at: Optional[datetime] = None
 
     def to_dict(self) -> Dict[str, Any]:
         data = asdict(self)
@@ -101,6 +102,9 @@ class ApprovalRequest:
         data["created_at"] = self.created_at.isoformat()
         data["updated_at"] = self.updated_at.isoformat()
         data["archived_at"] = self.archived_at.isoformat() if self.archived_at else None
+        data["enrichment_attempted_at"] = (
+            self.enrichment_attempted_at.isoformat() if self.enrichment_attempted_at else None
+        )
         data["decision"] = self.decision.to_dict() if self.decision else None
         data["follow_ups"] = {
             key: plan.to_dict() if isinstance(plan, FollowUpPlan) else plan
@@ -118,6 +122,10 @@ class ApprovalRequest:
             payload["archived_at"] = datetime.fromisoformat(payload["archived_at"])
         else:
             payload["archived_at"] = None
+        if payload.get("enrichment_attempted_at"):
+            payload["enrichment_attempted_at"] = datetime.fromisoformat(payload["enrichment_attempted_at"])
+        else:
+            payload["enrichment_attempted_at"] = None
         payload["archived"] = bool(payload.get("archived", False))
         payload["decision"] = Decision.from_dict(payload.get("decision"))
         raw_follow = payload.get("follow_ups") or {}

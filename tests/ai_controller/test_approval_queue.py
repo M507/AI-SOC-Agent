@@ -1,4 +1,5 @@
 import asyncio
+import os
 
 from src.ai_controller.approval_queue.catalog import ACTION_CATALOG, get_action_spec
 from src.ai_controller.approval_queue.clients import ClientBundle
@@ -894,3 +895,67 @@ def test_approve_close_alert_uses_kibana_detection_engine(tmp_path, monkeypatch)
     assert status_calls[0]["json"]["signal_ids"] == ["alert-9"]
     assert status_calls[0]["json"]["status"] == "closed"
     assert status_calls[0]["json"]["reason"] == "false_positive"
+
+
+def test_store_skips_reread_when_mtime_unchanged(tmp_path):
+    import time
+
+    from src.ai_controller.approval_queue.store import RequestStore
+
+    store = RequestStore(str(tmp_path))
+    request = ApprovalRequest(action_type="close_alert", title="Close", summary="noise")
+    store.put(request)
+    reads = store._reads
+    first = store.list()
+    second = store.list()
+    assert store._reads == reads
+    assert [item.id for item in first] == [request.id]
+    assert [item.id for item in second] == [request.id]
+    path = store._path(request.id)
+    later = time.time() + 5
+    os.utime(path, (later, later))
+    store.list()
+    assert store._reads == reads + 1
+
+
+def test_list_does_not_call_github_or_siem(tmp_path, monkeypatch):
+    fetches = {"github": 0, "siem": 0}
+
+    class _SIEM:
+        def get_security_alert_by_id(self, alert_id, include_detections=True):
+            fetches["siem"] += 1
+            return None
+
+    monkeypatch.setattr(
+        "src.ai_controller.approval_queue.service.resolve_clients",
+        lambda cluster_id=None: ClientBundle(siem=_SIEM()),
+    )
+    monkeypatch.setattr(
+        "src.ai_controller.approval_queue.enrichment.resolve_clients",
+        lambda cluster_id=None: ClientBundle(siem=_SIEM()),
+    )
+    monkeypatch.setattr(
+        ApprovalQueue,
+        "sync_github_closed",
+        lambda self, cluster_id=None: (_ for _ in ()).throw(AssertionError("list must not sync GitHub")),
+    )
+    queue = ApprovalQueue(str(tmp_path))
+    close = queue.create(
+        "close_alert",
+        "Close noisy DNS",
+        "scanner",
+        payload={"alert_id": "alert-list-1", "reason": "false_positive"},
+    )
+    note = queue.create(
+        "visibility",
+        "Missing DNS",
+        "gap",
+        payload={"title": "Missing DNS", "description": "Need DNS logs"},
+    )
+    queue.attach_engineering(note.id, _engineering_payload())
+    fetches["siem"] = 0
+    open_items = queue.list(status="open")
+    assert {item.id for item in open_items} == {close.id, note.id}
+    assert fetches["siem"] == 0
+    soc = queue.list(status="open", queue="soc")
+    assert {item.id for item in soc} == {close.id}
