@@ -782,6 +782,31 @@ class APIClient {
         }
     }
 
+    async getOverview(range) {
+        try {
+            return await this.request(`/api/overview?range=${encodeURIComponent(range || '30d')}`);
+        } catch (error) {
+            return { success: false, error: error.message };
+        }
+    }
+
+    async listLibrary(collection) {
+        try {
+            return await this.request(`/api/library/${encodeURIComponent(collection)}`);
+        } catch (error) {
+            return { success: false, error: error.message, groups: [] };
+        }
+    }
+
+    async readLibraryFile(collection, path) {
+        try {
+            const query = new URLSearchParams({ path: path || '' });
+            return await this.request(`/api/library/${encodeURIComponent(collection)}/file?${query}`);
+        } catch (error) {
+            return { success: false, error: error.message };
+        }
+    }
+
     async updateUsagePricing(payload) {
         try {
             return await this.request('/api/usage/pricing', {

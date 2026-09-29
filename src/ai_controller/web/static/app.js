@@ -13,8 +13,9 @@ class AIController {
             trace_chars: 6000,
             request_timeout_seconds: 180,
         };
-        this.activeSection = 'sessions'; // 'sessions' | 'autoruns' | 'cost' | 'requests' | 'settings' | 'mcp'
+        this.activeSection = 'overview';
         this.activeSettingsPage = 'llm';
+        this.activeLibraryPage = 'runbooks';
         this.mcpReadiness = null;
         this.lastMCPAlertCode = null;
         
@@ -32,6 +33,8 @@ class AIController {
         this.mcpPanel = new MCPPanel(this);
         this.requestsManager = new RequestsManager(this);
         this.costManager = new CostManager(this);
+        this.overviewManager = new OverviewManager(this);
+        this.libraryManager = new LibraryManager(this);
         
         this.init();
     }
@@ -76,6 +79,9 @@ class AIController {
             if (this.activeSection === 'cost' && this.costManager && this.costManager.activePage !== 'rates') {
                 this.costManager.load();
             }
+            if (this.activeSection === 'overview' && this.overviewManager) {
+                this.overviewManager.load();
+            }
         }, 3000);
 
         this.mcpHealthInterval = setInterval(() => {
@@ -84,45 +90,22 @@ class AIController {
         this.mcpReadinessInterval = setInterval(() => {
             this.refreshMCPReadiness();
         }, 30000);
+        this.setActiveSection('overview');
     }
     
     setupEventListeners() {
-        // Left navigation
-        const navSessions = document.getElementById('nav-sessions');
-        const navAutoruns = document.getElementById('nav-autoruns');
-        const navRequests = document.getElementById('nav-requests');
-        const navCost = document.getElementById('nav-cost');
-        const navSettings = document.getElementById('nav-settings');
-        const navMcp = document.getElementById('nav-mcp');
-
-        if (navSessions) {
-            navSessions.addEventListener('click', () => {
-                this.setActiveSection('sessions');
-            });
-        }
-        if (navAutoruns) {
-            navAutoruns.addEventListener('click', () => {
-                this.setActiveSection('autoruns');
-            });
-        }
-        if (navCost) {
-            navCost.addEventListener('click', () => {
-                this.setActiveSection('cost');
-            });
-        }
-        if (navRequests) {
-            navRequests.addEventListener('click', () => {
-                this.setActiveSection('requests');
-            });
-        }
-        if (navSettings) {
-            navSettings.addEventListener('click', () => {
-                this.setActiveSection('settings');
-            });
-        }
-        if (navMcp) {
-            navMcp.addEventListener('click', () => {
-                this.setActiveSection('mcp');
+        const sidebar = document.querySelector('.sidebar');
+        if (sidebar) {
+            sidebar.addEventListener('click', (event) => {
+                const item = event.target.closest('.nav-item[data-nav]');
+                if (!item) return;
+                if (item.dataset.settingsPage) {
+                    this.activeSettingsPage = item.dataset.settingsPage;
+                }
+                if (item.dataset.libraryPage) {
+                    this.activeLibraryPage = item.dataset.libraryPage;
+                }
+                this.setActiveSection(item.dataset.nav);
             });
         }
         const readinessAction = document.getElementById('mcp-readiness-action');
@@ -167,6 +150,7 @@ class AIController {
         const settingsBtn = document.getElementById('settings-btn');
         if (settingsBtn) {
             settingsBtn.addEventListener('click', () => {
+                this.activeSettingsPage = 'llm';
                 this.setActiveSection('settings');
             });
         }
@@ -292,26 +276,7 @@ class AIController {
             }
         });
         
-        // Settings sub-tabs (LLM, Elastic, UI, Integrations, and future pages)
-        const settingsTabs = document.getElementById('settings-tabs');
-        if (settingsTabs) {
-            settingsTabs.addEventListener('click', (event) => {
-                const tab = event.target.closest('[data-settings-page]');
-                if (!tab) return;
-                if (this.activeSection !== 'settings') {
-                    this.activeSettingsPage = tab.dataset.settingsPage;
-                    this.setActiveSection('settings');
-                    return;
-                }
-                this.setSettingsPage(tab.dataset.settingsPage);
-            });
-        }
-        const mcpTab = document.getElementById('mcp-tab');
-        if (mcpTab) {
-            mcpTab.addEventListener('click', () => {
-                this.setActiveSection('mcp');
-            });
-        }
+        // Request queue tabs stay in the horizontal strip. Settings pages live in the sidebar.
         const requestsTabs = document.getElementById('requests-tabs');
         if (requestsTabs) {
             requestsTabs.addEventListener('click', (event) => {
@@ -566,53 +531,29 @@ class AIController {
     }
     
     setActiveSection(section) {
-        if (!['sessions', 'autoruns', 'cost', 'requests', 'settings', 'mcp'].includes(section)) {
+        const known = ['overview', 'sessions', 'autoruns', 'cost', 'requests', 'settings', 'mcp', 'library', 'audit', 'reports', 'environment', 'operators'];
+        if (!known.includes(section)) {
             console.warn('[AIController] Unknown section:', section);
             return;
         }
 
         const previous = this.activeSection;
         this.activeSection = section;
+        this.syncNav();
 
-        // Update sidebar nav active state
-        const sections = ['sessions', 'autoruns', 'cost', 'requests', 'settings', 'mcp'];
-        sections.forEach((name) => {
-            const el = document.getElementById(`nav-${name}`);
-            if (el) {
-                if (name === section) {
-                    el.classList.add('active');
-                } else {
-                    el.classList.remove('active');
-                }
-            }
-        });
-
-        // Tab groups
+        const tabbed = ['sessions', 'autoruns', 'cost', 'requests'];
+        const tabsContainer = document.getElementById('tabs-container');
+        if (tabsContainer) {
+            tabsContainer.style.display = tabbed.includes(section) ? '' : 'none';
+        }
         const sessionsGroup = document.getElementById('sessions-tab-group');
         const autorunsGroup = document.getElementById('autoruns-tab-group');
         const costGroup = document.getElementById('cost-tab-group');
         const requestsGroup = document.getElementById('requests-tab-group');
-        const settingsGroup = document.getElementById('settings-tab-group');
-        const mcpGroup = document.getElementById('mcp-tab-group');
-
-        if (sessionsGroup) {
-            sessionsGroup.style.display = section === 'sessions' ? 'flex' : 'none';
-        }
-        if (autorunsGroup) {
-            autorunsGroup.style.display = section === 'autoruns' ? 'flex' : 'none';
-        }
-        if (costGroup) {
-            costGroup.style.display = section === 'cost' ? 'flex' : 'none';
-        }
-        if (requestsGroup) {
-            requestsGroup.style.display = section === 'requests' ? 'flex' : 'none';
-        }
-        if (settingsGroup) {
-            settingsGroup.style.display = section === 'settings' ? 'flex' : 'none';
-        }
-        if (mcpGroup) {
-            mcpGroup.style.display = section === 'mcp' ? 'flex' : 'none';
-        }
+        if (sessionsGroup) sessionsGroup.style.display = section === 'sessions' ? 'flex' : 'none';
+        if (autorunsGroup) autorunsGroup.style.display = section === 'autoruns' ? 'flex' : 'none';
+        if (costGroup) costGroup.style.display = section === 'cost' ? 'flex' : 'none';
+        if (requestsGroup) requestsGroup.style.display = section === 'requests' ? 'flex' : 'none';
 
         this.syncHeaderActions(section);
 
@@ -621,37 +562,43 @@ class AIController {
         const requestsContent = document.getElementById('requests-content');
         const costContent = document.getElementById('cost-content');
         const noSessionMessage = document.getElementById('no-session-message');
+        const overviewContent = document.getElementById('overview-content');
+        const libraryContent = document.getElementById('library-content');
+        const placeholderContent = document.getElementById('placeholder-content');
 
         if (section !== 'settings') {
             this.hideSettingsPages();
         }
-
         if (section !== 'autoruns' && this.autorunManager) {
             this.autorunManager.setPanelOpen(false);
             this.autorunManager.setEmptyVisible(false);
         }
 
-        if (requestsContent) {
-            requestsContent.style.display = section === 'requests' ? 'flex' : 'none';
-        }
-        if (costContent) {
-            costContent.style.display = section === 'cost' ? 'flex' : 'none';
-        }
+        const show = (element, display) => {
+            if (element) element.style.display = display;
+        };
+        show(requestsContent, section === 'requests' ? 'flex' : 'none');
+        show(costContent, section === 'cost' ? 'flex' : 'none');
+        show(overviewContent, section === 'overview' ? 'flex' : 'none');
+        show(libraryContent, section === 'library' ? 'flex' : 'none');
+        show(placeholderContent, ['audit', 'reports', 'environment', 'operators'].includes(section) ? 'flex' : 'none');
+        show(mcpContent, 'none');
+        show(sessionContent, 'none');
+        show(noSessionMessage, 'none');
 
         if (section === 'sessions') {
-            if (sessionContent) sessionContent.style.display = this.activeSessionId ? 'flex' : 'none';
-            if (mcpContent) mcpContent.style.display = 'none';
-            if (noSessionMessage) noSessionMessage.style.display = this.activeSessionId ? 'none' : 'flex';
+            show(sessionContent, this.activeSessionId ? 'flex' : 'none');
+            show(noSessionMessage, this.activeSessionId ? 'none' : 'flex');
         } else if (section === 'autoruns') {
-            if (sessionContent) sessionContent.style.display = 'none';
-            if (mcpContent) mcpContent.style.display = 'none';
-            if (noSessionMessage) noSessionMessage.style.display = 'none';
             this.autorunManager.syncView();
             this.autorunManager.fitStrip();
+        } else if (section === 'overview') {
+            if (this.overviewManager) this.overviewManager.load();
+        } else if (section === 'library') {
+            if (this.libraryManager) this.libraryManager.load(this.activeLibraryPage);
+        } else if (section === 'audit' || section === 'reports' || section === 'environment' || section === 'operators') {
+            this.showPlaceholder(section);
         } else if (section === 'cost') {
-            if (sessionContent) sessionContent.style.display = 'none';
-            if (mcpContent) mcpContent.style.display = 'none';
-            if (noSessionMessage) noSessionMessage.style.display = 'none';
             document.querySelectorAll('button.tab[data-session-id]').forEach((tab) => {
                 tab.classList.remove('active');
             });
@@ -663,9 +610,6 @@ class AIController {
                 this.wsManager.disconnect(this.activeSessionId);
             }
         } else if (section === 'requests') {
-            if (sessionContent) sessionContent.style.display = 'none';
-            if (mcpContent) mcpContent.style.display = 'none';
-            if (noSessionMessage) noSessionMessage.style.display = 'none';
             document.querySelectorAll('button.tab[data-session-id]').forEach((tab) => {
                 tab.classList.remove('active');
             });
@@ -678,40 +622,19 @@ class AIController {
                 this.wsManager.disconnect(this.activeSessionId);
             }
         } else if (section === 'settings') {
-            if (sessionContent) sessionContent.style.display = 'none';
-            if (mcpContent) mcpContent.style.display = 'none';
-            if (noSessionMessage) noSessionMessage.style.display = 'none';
-
             document.querySelectorAll('button.tab[data-session-id]').forEach((tab) => {
                 tab.classList.remove('active');
             });
             this.setSettingsPage(this.activeSettingsPage);
             this.settingsManager.load();
-            if (this.elasticClusters) {
-                this.elasticClusters.load();
-            }
-            if (this.netboxSettings) {
-                this.netboxSettings.load();
-            }
-            if (this.integrationsSettings) {
-                this.integrationsSettings.load();
-            }
-
+            if (this.elasticClusters) this.elasticClusters.load();
+            if (this.netboxSettings) this.netboxSettings.load();
+            if (this.integrationsSettings) this.integrationsSettings.load();
             if (this.activeSessionId) {
                 this.wsManager.disconnect(this.activeSessionId);
             }
         } else if (section === 'mcp') {
-            if (sessionContent) sessionContent.style.display = 'none';
-            if (mcpContent) mcpContent.style.display = 'block';
-            if (noSessionMessage) noSessionMessage.style.display = 'none';
-
-            document.querySelectorAll('button.tab[data-session-id]').forEach((tab) => {
-                tab.classList.remove('active');
-            });
-            const mcpTab = document.getElementById('mcp-tab');
-            if (mcpTab) {
-                mcpTab.classList.add('active');
-            }
+            show(mcpContent, 'block');
             this.mcpPanel.load();
             if (this.activeSessionId) {
                 this.wsManager.disconnect(this.activeSessionId);
@@ -721,6 +644,38 @@ class AIController {
         if (previous === 'requests' && section !== 'requests') {
             this.requestsManager.hide();
         }
+    }
+
+    syncNav() {
+        document.querySelectorAll('.nav-item[data-nav]').forEach((item) => {
+            let on = item.dataset.nav === this.activeSection;
+            if (on && item.dataset.settingsPage) {
+                on = item.dataset.settingsPage === this.activeSettingsPage;
+            }
+            if (on && item.dataset.libraryPage) {
+                on = item.dataset.libraryPage === this.activeLibraryPage;
+            }
+            item.classList.toggle('active', on);
+        });
+    }
+
+    showPlaceholder(section) {
+        const copy = {
+            audit: 'Audit is under construction. Sign-ins, session and autorun chats, and other platform actions will show here later.',
+            reports: 'Reports is under construction. Finished investigation write-ups will be collected here later.',
+            environment: 'Environment is under construction. Internal subnets, servers, users, and naming schemas will be viewable here later.',
+            operators: 'Operators is under construction. Who can sign in, and what they may approve, will be managed here later.',
+        };
+        const titles = {
+            audit: 'Audit',
+            reports: 'Reports',
+            environment: 'Environment',
+            operators: 'Operators',
+        };
+        const title = document.getElementById('placeholder-title');
+        const note = document.getElementById('placeholder-note');
+        if (title) title.textContent = titles[section] || 'Under construction';
+        if (note) note.textContent = copy[section] || 'This page is under construction.';
     }
 
     syncHeaderActions(section) {
@@ -738,21 +693,16 @@ class AIController {
         document.querySelectorAll('[data-settings-page-content]').forEach((panel) => {
             panel.style.display = 'none';
         });
-        document.querySelectorAll('#settings-tabs [data-settings-page]').forEach((tab) => {
-            tab.classList.remove('active');
-        });
     }
 
     setSettingsPage(pageId) {
-        const tabs = Array.from(document.querySelectorAll('#settings-tabs [data-settings-page]'));
+        const tabs = Array.from(document.querySelectorAll('.nav-item[data-settings-page]'));
         const pages = tabs.map((tab) => tab.dataset.settingsPage);
         if (!pageId || !pages.includes(pageId)) {
             pageId = pages.includes(this.activeSettingsPage) ? this.activeSettingsPage : pages[0];
         }
         this.activeSettingsPage = pageId || 'llm';
-        tabs.forEach((tab) => {
-            tab.classList.toggle('active', tab.dataset.settingsPage === this.activeSettingsPage);
-        });
+        this.syncNav();
         document.querySelectorAll('[data-settings-page-content]').forEach((panel) => {
             panel.style.display = panel.dataset.settingsPageContent === this.activeSettingsPage ? 'flex' : 'none';
         });

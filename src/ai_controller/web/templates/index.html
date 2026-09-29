@@ -24,7 +24,7 @@
         <!-- CSS Files - Organized by purpose for easier maintenance -->
         <link rel="stylesheet" href="/static/css/tokens.css?v=1">
         <link rel="stylesheet" href="/static/css/base.css?v=3">
-        <link rel="stylesheet" href="/static/css/layout.css?v=8">
+        <link rel="stylesheet" href="/static/css/layout.css?v=10">
         <link rel="stylesheet" href="/static/css/buttons.css?v=4">
         <link rel="stylesheet" href="/static/css/tabs.css?v=4">
     <link rel="stylesheet" href="/static/css/session_tabs.css?v=8">
@@ -32,18 +32,19 @@
         <link rel="stylesheet" href="/static/css/terminal.css?v=7">
         <link rel="stylesheet" href="/static/css/autorun.css?v=6">
         <link rel="stylesheet" href="/static/css/modal.css?v=5">
-        <link rel="stylesheet" href="/static/css/settings.css?v=15">
+        <link rel="stylesheet" href="/static/css/settings.css?v=18">
         <link rel="stylesheet" href="/static/css/toast.css?v=2">
         <link rel="stylesheet" href="/static/css/scrollbar.css?v=3">
         <link rel="stylesheet" href="/static/css/requests.css?v=2">
         <link rel="stylesheet" href="/static/css/cost.css?v=3">
+        <link rel="stylesheet" href="/static/css/overview.css?v=3">
     </head>
 <body>
     <div class="container">
         <header>
             <h1>SamiGPT – SOC AI Agents Orchestrator</h1>
             <div class="header-actions">
-                <button id="new-session-btn" class="btn btn-primary">+ New Session</button>
+                <button id="new-session-btn" class="btn btn-primary" hidden>+ New Session</button>
                 <button id="new-autorun-btn" class="btn btn-primary" hidden>+ New Autorun</button>
                 <button id="settings-btn" class="btn btn-secondary">Settings</button>
                 <button id="mcp-btn" class="btn btn-secondary mcp-header-btn">
@@ -70,45 +71,98 @@
             <aside class="sidebar">
                 <div class="sidebar-group">
                     <div class="sidebar-header">
+                        <span class="sidebar-title">Overview</span>
+                    </div>
+                    <button type="button" id="nav-overview" class="nav-item active" data-nav="overview">
+                        <span class="nav-label">Dashboard</span>
+                    </button>
+                </div>
+                <div class="sidebar-group">
+                    <div class="sidebar-header">
                         <span class="sidebar-title">Work</span>
                     </div>
-                    <button id="nav-sessions" class="nav-item active">
+                    <button type="button" id="nav-sessions" class="nav-item" data-nav="sessions">
                         <span class="nav-label">Sessions</span>
                     </button>
-                    <button id="nav-autoruns" class="nav-item">
+                    <button type="button" id="nav-autoruns" class="nav-item" data-nav="autoruns">
                         <span class="nav-label">Autoruns</span>
                     </button>
-                    <button id="nav-requests" class="nav-item">
+                    <button type="button" id="nav-requests" class="nav-item" data-nav="requests">
                         <span class="nav-label">Requests</span>
                         <span id="nav-requests-count" class="nav-count" hidden>0</span>
                     </button>
                 </div>
                 <div class="sidebar-group">
                     <div class="sidebar-header">
-                        <span class="sidebar-title">Insight</span>
+                        <span class="sidebar-title">AI</span>
                     </div>
-                    <button id="nav-cost" class="nav-item">
-                        <span class="nav-label">Cost</span>
+                    <button type="button" id="nav-llm" class="nav-item" data-nav="settings" data-settings-page="llm">
+                        <span class="nav-label">AI Provider</span>
+                    </button>
+                    <button type="button" id="nav-mcp" class="nav-item" data-nav="mcp">
+                        <span class="nav-label">MCP Server</span>
+                        <span id="nav-mcp-dot" class="health-dot health-unknown"></span>
                     </button>
                 </div>
                 <div class="sidebar-group">
                     <div class="sidebar-header">
-                        <span class="sidebar-title">System</span>
+                        <span class="sidebar-title">Connections</span>
                     </div>
-                    <button id="nav-settings" class="nav-item">
-                        <span class="nav-label">Settings</span>
+                    <button type="button" id="nav-integrations" class="nav-item" data-nav="settings" data-settings-page="integrations">
+                        <span class="nav-label">Integrations</span>
                     </button>
-                    <button id="nav-mcp" class="nav-item">
-                        <span class="nav-label">MCP Server</span>
-                        <span id="nav-mcp-dot" class="health-dot health-unknown"></span>
+                    <button type="button" id="nav-environment" class="nav-item" data-nav="environment">
+                        <span class="nav-label">Environment</span>
+                    </button>
+                </div>
+                <div class="sidebar-group">
+                    <div class="sidebar-header">
+                        <span class="sidebar-title">Insight</span>
+                    </div>
+                    <button type="button" id="nav-cost" class="nav-item" data-nav="cost">
+                        <span class="nav-label">Cost</span>
+                    </button>
+                    <button type="button" id="nav-audit" class="nav-item" data-nav="audit">
+                        <span class="nav-label">Audit</span>
+                    </button>
+                    <button type="button" id="nav-reports" class="nav-item" data-nav="reports">
+                        <span class="nav-label">Reports</span>
+                    </button>
+                </div>
+                <div class="sidebar-group">
+                    <div class="sidebar-header">
+                        <span class="sidebar-title">Library</span>
+                    </div>
+                    <button type="button" id="nav-runbooks" class="nav-item" data-nav="library" data-library-page="runbooks">
+                        <span class="nav-label">Runbooks</span>
+                    </button>
+                    <button type="button" id="nav-standards" class="nav-item" data-nav="library" data-library-page="standards">
+                        <span class="nav-label">Standards</span>
+                    </button>
+                    <button type="button" id="nav-documentation" class="nav-item" data-nav="library" data-library-page="documentation">
+                        <span class="nav-label">Documentation</span>
+                    </button>
+                </div>
+                <div class="sidebar-group">
+                    <div class="sidebar-header">
+                        <span class="sidebar-title">Preferences</span>
+                    </div>
+                    <button type="button" id="nav-general" class="nav-item" data-nav="settings" data-settings-page="general">
+                        <span class="nav-label">General</span>
+                    </button>
+                    <button type="button" id="nav-appearance" class="nav-item" data-nav="settings" data-settings-page="appearance">
+                        <span class="nav-label">Appearance</span>
+                    </button>
+                    <button type="button" id="nav-operators" class="nav-item" data-nav="operators">
+                        <span class="nav-label">Operators</span>
                     </button>
                 </div>
             </aside>
 
             <div class="main-panel">
-                <div class="tabs-container">
+                <div class="tabs-container" id="tabs-container" style="display: none;">
                     <div class="tabs-header">
-                        <div class="session-tab-bar" id="sessions-tab-group" role="tablist" aria-label="Sessions">
+                        <div class="session-tab-bar" id="sessions-tab-group" role="tablist" aria-label="Sessions" style="display: none;">
                             <div class="session-tab-pinned" id="session-tab-pinned"></div>
                             <div class="session-tab-divider" id="session-tab-divider" hidden></div>
                             <div class="session-tab-strip" id="sessions-tabs"></div>
@@ -141,32 +195,81 @@
                                 <button class="tab" type="button" data-request-queue="detection">Detection engineering</button>
                             </div>
                         </div>
-                        <div class="tab-group" id="settings-tab-group" style="display: none;">
-                            <span class="tab-group-label">Settings</span>
-                            <div class="tabs" id="settings-tabs">
-                                <!-- Add a button here plus a matching data-settings-page-content panel for each new Settings page. -->
-                                <span class="tab-subgroup-label">AI</span>
-                                <button class="tab active" type="button" data-settings-page="llm">LLM</button>
-                                <span class="tab-subgroup-label">Connections</span>
-                                <button class="tab" type="button" data-settings-page="integrations">Integrations</button>
-                                <button class="tab" type="button" data-settings-page="elastic">Elastic</button>
-                                <button class="tab" type="button" data-settings-page="netbox">NetBox</button>
-                                <span class="tab-subgroup-label">Preferences</span>
-                                <button class="tab" type="button" data-settings-page="general">General</button>
-                                <button class="tab" type="button" data-settings-page="appearance">Appearance</button>
-                            </div>
-                        </div>
-                        <div class="tab-group" id="mcp-tab-group" style="display: none;">
-                            <span class="tab-group-label">MCP Server</span>
-                            <div class="tabs" id="mcp-tabs">
-                                <button class="tab" id="mcp-tab">Health &amp; Settings</button>
-                            </div>
-                        </div>
                     </div>
                 </div>
 
                 <div class="content-area">
-                    <div id="no-session-message" class="empty-state">
+                    <div id="overview-content" class="overview-content">
+                        <div class="session-header">
+                            <h2>Dashboard</h2>
+                            <div class="overview-actions">
+                                <button type="button" id="overview-review" class="btn btn-secondary btn-sm">Review requests</button>
+                                <button type="button" id="overview-new-session" class="btn btn-secondary btn-sm">New session</button>
+                                <button type="button" id="overview-cost" class="btn btn-secondary btn-sm">Cost</button>
+                                <div class="session-actions" id="overview-range" role="group" aria-label="Time range">
+                                    <button type="button" class="btn btn-secondary btn-sm" data-overview-range="7d" aria-pressed="false">7 days</button>
+                                    <button type="button" class="btn btn-primary btn-sm" data-overview-range="30d" aria-pressed="true">30 days</button>
+                                    <button type="button" class="btn btn-secondary btn-sm" data-overview-range="all" aria-pressed="false">All</button>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="overview-body">
+                            <p class="overview-caption" id="overview-range-note">Open work ignores this range. Every other chart uses it.</p>
+                            <div id="overview-status" class="overview-status" role="status" hidden></div>
+                            <div class="overview-charts" id="overview-charts">
+                                <section class="overview-section overview-span" aria-labelledby="overview-waiting-title">
+                                    <h3 id="overview-waiting-title">What is open right now</h3>
+                                    <div id="overview-waiting"></div>
+                                </section>
+                                <section class="overview-section overview-span" aria-labelledby="overview-activity-title">
+                                    <h3 id="overview-activity-title">What was filed and settled</h3>
+                                    <div id="overview-activity"></div>
+                                </section>
+                                <section class="overview-section" aria-labelledby="overview-decisions-title">
+                                    <h3 id="overview-decisions-title">How closed alerts were decided</h3>
+                                    <div id="overview-decisions"></div>
+                                </section>
+                                <section class="overview-section" aria-labelledby="overview-outcomes-title">
+                                    <h3 id="overview-outcomes-title">How the queue was resolved</h3>
+                                    <div id="overview-outcomes"></div>
+                                </section>
+                                <section class="overview-section" aria-labelledby="overview-detection-title">
+                                    <h3 id="overview-detection-title">What detection work was filed</h3>
+                                    <div id="overview-detection"></div>
+                                </section>
+                                <section class="overview-section" aria-labelledby="overview-response-title">
+                                    <h3 id="overview-response-title">What response actually ran</h3>
+                                    <div id="overview-response"></div>
+                                </section>
+                                <section class="overview-section" aria-labelledby="overview-work-title">
+                                    <h3 id="overview-work-title">What the model cost</h3>
+                                    <div id="overview-work"></div>
+                                </section>
+                                <section class="overview-section" aria-labelledby="overview-recent-title">
+                                    <h3 id="overview-recent-title">Recent</h3>
+                                    <div class="overview-recent" id="overview-recent"></div>
+                                </section>
+                            </div>
+                        </div>
+                    </div>
+                    <div id="library-content" class="library-content" style="display: none;">
+                        <div class="session-header">
+                            <h2 id="library-title">Runbooks</h2>
+                        </div>
+                        <div class="library-layout">
+                            <nav id="library-list" class="library-list" aria-label="Documents"></nav>
+                            <article id="library-doc" class="library-doc markdown-content"></article>
+                        </div>
+                    </div>
+                    <div id="placeholder-content" class="placeholder-content" style="display: none;">
+                        <div class="session-header">
+                            <h2 id="placeholder-title">Under construction</h2>
+                        </div>
+                        <div class="overview-body">
+                            <p id="placeholder-note" class="placeholder-note">This page is under construction.</p>
+                        </div>
+                    </div>
+                    <div id="no-session-message" class="empty-state" style="display: none;">
                         <div class="empty-state-body">
                             <h2>Start an investigation</h2>
                             <p>Create a session and ask the agent about an alert, hash, host, or case. It uses MCP tools against your SIEM, cases, NetBox inventory, and threat intel.</p>
@@ -199,7 +302,7 @@
                     </div>
                     <div id="settings-llm-content" class="settings-content" data-settings-page-content="llm" style="display: none;">
                         <div class="session-header">
-                            <h2>LLM</h2>
+                            <h2>AI Provider</h2>
                             <div class="session-actions">
                                 <button id="llm-test-btn" class="btn btn-secondary btn-sm">Test provider</button>
                                 <button id="llm-test-model-btn" class="btn btn-secondary btn-sm">Test model</button>
@@ -250,7 +353,7 @@
                             </section>
                         </div>
                     </div>
-                    <div id="settings-elastic-content" class="settings-content" data-settings-page-content="elastic" style="display: none;">
+                    <div id="integration-configure-elastic" hidden>
                         <div class="session-header">
                             <h2>Elastic clusters</h2>
                         </div>
@@ -329,7 +432,7 @@
                             </section>
                         </div>
                     </div>
-                    <div id="settings-netbox-content" class="settings-content" data-settings-page-content="netbox" style="display: none;">
+                    <div id="integration-configure-netbox" hidden>
                         <div class="session-header">
                             <div>
                                 <h2>NetBox</h2>
@@ -510,6 +613,13 @@
                             </section>
                             <p id="integrations-page-status" class="settings-status" role="status" aria-live="polite" hidden></p>
                             <div id="integrations-grid" class="integrations-grid" aria-live="polite"></div>
+                            <section id="integration-configure" class="integration-configure" hidden>
+                                <div class="integration-configure-bar">
+                                    <h3 id="integration-configure-title">Configure</h3>
+                                    <button type="button" id="integration-configure-back" class="btn btn-secondary btn-sm">Back</button>
+                                </div>
+                                <div id="integration-configure-host"></div>
+                            </section>
                         </div>
                     </div>
                     <div id="cost-content" class="cost-content" style="display: none;">
@@ -828,7 +938,7 @@
     <script src="/static/toast.js?v=1"></script>
     
     <!-- API client (no dependencies) -->
-    <script src="/static/api.js?v=17"></script>
+    <script src="/static/api.js?v=18"></script>
     
     <!-- Component modules (depend on utils) -->
     <script src="/static/websocket.js?v=2"></script>
@@ -839,14 +949,16 @@
     <script src="/static/modals.js?v=7"></script>
     <script src="/static/requests.js?v=6"></script>
     <script src="/static/cost.js?v=2"></script>
+    <script src="/static/overview.js?v=2"></script>
+    <script src="/static/library.js?v=1"></script>
     
     <!-- Main application (depends on all modules) -->
     <script src="/static/settings.js?v=7"></script>
     <script src="/static/elastic_settings.js?v=8"></script>
     <script src="/static/netbox_settings.js?v=1"></script>
-    <script src="/static/integrations_settings.js?v=4"></script>
+    <script src="/static/integrations_settings.js?v=6"></script>
     <script src="/static/theme.js?v=1"></script>
-    <script src="/static/app.js?v=22"></script>
+    <script src="/static/app.js?v=23"></script>
 </body>
 </html>
 

@@ -66,7 +66,8 @@ def test_cost_view_is_in_the_shell():
     assert 'data-cost-page="rates"' in html
     assert "cost.js" in html
     assert "cost.css" in html
-    assert "setActiveSection('cost')" in app_js
+    assert 'data-nav="cost"' in html
+    assert "section === 'cost'" in app_js
     assert "CostManager" in app_js
     assert "class CostManager" in cost_js
     assert "/api/usage" in (WEB / "static" / "api.js").read_text(encoding="utf-8")
@@ -133,9 +134,13 @@ def test_netbox_settings_page_is_wired():
     app_js = APP_JS.read_text(encoding="utf-8")
     integrations = (WEB / "static" / "integrations_settings.js").read_text(encoding="utf-8")
 
-    assert 'data-settings-page="netbox"' in html
-    assert 'data-settings-page-content="netbox"' in html
     assert 'id="netbox-url"' in html
+    assert 'id="integration-configure"' in html
+    assert 'id="integration-configure-netbox"' in html
+    assert 'id="integration-configure-elastic"' in html
+    assert 'id="nav-elastic"' not in html
+    assert 'id="nav-netbox"' not in html
+    assert "data-integration-configure" in integrations
     assert "netbox_settings.js" in html
     assert "NetBoxSettingsManager" in app_js
     assert "netboxSettings.load()" in app_js
@@ -162,13 +167,27 @@ def test_appearance_theme_system_is_wired():
     assert 'id="appearance-theme-b"' in html
     assert 'id="appearance-theme-system"' in html
     assert 'class="sidebar-title">Work</span>' in html
+    assert 'class="sidebar-title">Overview</span>' in html
+    assert 'class="sidebar-title">Library</span>' in html
+    assert 'class="sidebar-title">AI</span>' in html
+    assert 'class="sidebar-title">Connections</span>' in html
     assert 'class="sidebar-title">Insight</span>' in html
-    assert 'class="sidebar-title">System</span>' in html
-    assert 'class="tab-subgroup-label">AI</span>' in html
-    assert 'class="tab-subgroup-label">Connections</span>' in html
-    assert 'class="tab-subgroup-label">Preferences</span>' in html
+    assert 'class="sidebar-title">Preferences</span>' in html
+    assert html.index('class="sidebar-title">Insight</span>') < html.index('class="sidebar-title">Library</span>')
+    assert html.index('class="sidebar-title">Library</span>') < html.index('class="sidebar-title">Preferences</span>')
+    assert 'class="sidebar-title">System</span>' not in html
+    assert 'id="nav-overview"' in html
     assert 'id="nav-sessions"' in html
+    assert 'id="nav-llm"' in html
     assert 'id="nav-mcp"' in html
+    assert 'data-settings-page="llm"' in html
+    assert 'id="nav-audit"' in html
+    assert 'id="nav-reports"' in html
+    assert 'id="nav-environment"' in html
+    assert 'id="nav-operators"' in html
+    assert 'id="overview-content"' in html
+    assert 'id="library-content"' in html
+    assert "under construction" in html
 
     assert 'html[data-theme="u"]' in tokens
     assert 'html[data-theme="ft"]' in tokens

@@ -34,6 +34,8 @@ from .routes_integrations import router as integrations_router
 from .routes_netbox import router as netbox_router
 from .routes_requests import router as requests_router
 from .routes_usage import router as usage_router
+from .routes_overview import router as overview_router
+from .routes_library import router as library_router
 
 logger = get_logger("sami.ai_controller.web.server")
 
@@ -123,6 +125,8 @@ app.include_router(integrations_router)
 app.include_router(netbox_router)
 app.include_router(requests_router)
 app.include_router(usage_router)
+app.include_router(overview_router)
+app.include_router(library_router)
 
 # Initialize components
 executor: Optional[AgentExecutor] = None

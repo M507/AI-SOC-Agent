@@ -398,6 +398,29 @@ def dashboard() -> Dict[str, Any]:
     }
 
 
+def cost_events() -> Dict[str, Any]:
+    """Priced and unpriced model calls, decorated the same way as dashboard()."""
+    try:
+        pricing = load_pricing()
+        pricing_ok = True
+    except Exception:
+        logger.exception("Could not load pricing for dashboard spend")
+        pricing = default_pricing()
+        pricing_ok = False
+    events = []
+    for row in read_usage():
+        decorated = _decorate(row, pricing, pricing_ok)
+        events.append(
+            {
+                "at": decorated.get("at"),
+                "cost_usd": decorated.get("cost_usd") if decorated.get("priced") else None,
+                "priced": bool(decorated.get("priced")),
+                "usage_reported": bool(decorated.get("usage_reported")),
+            }
+        )
+    return {"events": events}
+
+
 def _decorate(row: Dict[str, Any], pricing: Dict[str, Any], pricing_ok: bool) -> Dict[str, Any]:
     tokens = {
         **{key: _int(row.get(key)) for key in _empty_tokens()},

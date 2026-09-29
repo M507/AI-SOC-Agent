@@ -14,10 +14,11 @@
     display: flex;
     flex-direction: column;
     padding: 12px 8px;
+    overflow-y: auto;
 }
 
 .sidebar-group {
-    margin-bottom: 16px;
+    margin-bottom: 4px;
 }
 
 .sidebar-group:last-child {
@@ -25,7 +26,7 @@
 }
 
 .sidebar-header {
-    padding: 4px 8px 8px 8px;
+    padding: 8px 8px 2px 8px;
 }
 
 .sidebar-title {

@@ -18,6 +18,14 @@
     overflow-y: auto;
 }
 
+#settings-llm-content .settings-body,
+#settings-general-content .settings-body,
+#settings-appearance-content .settings-body,
+#mcp-content .settings-body,
+#integration-configure-host .settings-body {
+    max-width: 760px;
+}
+
 .settings-toggle {
     display: flex;
     align-items: center;
@@ -544,6 +552,57 @@
     grid-template-columns: repeat(auto-fill, minmax(285px, 1fr));
     gap: 14px;
     align-items: start;
+}
+
+#settings-integrations-content.is-configuring .integration-overview,
+#settings-integrations-content.is-configuring #integrations-page-status,
+#settings-integrations-content.is-configuring #integrations-grid {
+    display: none;
+}
+
+.integration-configure {
+    margin-top: 4px;
+}
+
+.integration-configure-bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 16px;
+}
+
+.integration-configure-bar h3 {
+    margin: 0;
+    font-size: 15px;
+    color: var(--color-text-strong);
+}
+
+.integration-configure .session-header {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 12px 16px;
+    margin-bottom: 16px;
+    padding: 0 0 14px;
+    background: transparent;
+    border-bottom: 1px solid var(--color-border);
+}
+
+.integration-configure .session-header > div:first-child {
+    flex: 1 1 280px;
+    min-width: 0;
+}
+
+.integration-configure .settings-header-copy {
+    margin: 4px 0 0;
+    max-width: 62ch;
+}
+
+.integration-configure .settings-body {
+    padding: 0;
+    overflow: visible;
 }
 
 .integration-card {
