@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Setup – SamiGPT</title>
+    <script>
+        (function () {
+            var key = 'samigpt.appearance';
+            var mode = 'u';
+            try {
+                var stored = JSON.parse(localStorage.getItem(key) || '{}');
+                if (stored && ['u', 'ft', 'b', 'system'].indexOf(stored.mode) !== -1) {
+                    mode = stored.mode;
+                }
+            } catch (e) {}
+            var theme = mode === 'system'
+                ? (window.matchMedia('(prefers-color-scheme: light)').matches ? 'b' : 'u')
+                : mode;
+            document.documentElement.setAttribute('data-theme', theme);
+            document.documentElement.setAttribute('data-appearance-mode', mode);
+        })();
+    </script>
+    <link rel="stylesheet" href="/static/css/tokens.css?v=1">
+    <link rel="stylesheet" href="/static/css/base.css?v=3">
+    <link rel="stylesheet" href="/static/css/setup.css?v=1">
+</head>
+<body class="setup-page">
+    <main class="setup-shell">
+        <header class="setup-header">
+            <p class="setup-kicker">SamiGPT</p>
+            <h1 id="setup-title">Setup</h1>
+            <p id="setup-why" class="setup-why"></p>
+            <ol id="setup-progress" class="setup-progress" aria-label="Setup progress"></ol>
+        </header>
+        <form id="setup-form" class="setup-form" novalidate>
+            <div id="setup-notices"></div>
+            <div id="setup-fields"></div>
+            <p id="setup-error" class="setup-error" role="alert" hidden></p>
+            <div class="setup-actions">
+                <button type="button" id="setup-back" class="setup-secondary">Back</button>
+                <button type="button" id="setup-skip" class="setup-secondary">Skip for now</button>
+                <button type="submit" id="setup-next">Continue</button>
+            </div>
+        </form>
+    </main>
+    <script src="/static/theme.js?v=1"></script>
+    <script src="/static/setup.js?v=1"></script>
+</body>
+</html>

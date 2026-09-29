@@ -1,0 +1,19 @@
+name: samigpt-onboarding
+
+services:
+  onboarding:
+    build:
+      context: ..
+      dockerfile: onboarding/Dockerfile
+    ports:
+      - "18081:8081"
+      - "18082:8082"
+    environment:
+      SAMIGPT_CONFIG_FILE: /var/lib/samigpt/config.json
+    volumes:
+      - onboarding_state:/var/lib/samigpt
+      - onboarding_certs:/app/certs
+
+volumes:
+  onboarding_state:
+  onboarding_certs:
