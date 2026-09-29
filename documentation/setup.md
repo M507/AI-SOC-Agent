@@ -50,3 +50,7 @@ journalctl -u servee -f
 | Config | `/opt/servee/config.json` |
 
 Point the installer at a specific Python 3.10+ binary with `sudo PYTHON_BIN=/path/to/python3.11 ./servee/install.sh`.
+
+## TODOs
+
+- Detection as Code: add a wizard step that stores only a folder path for rule JSON. SamiGPT reads and, after review, writes that folder itself. There is no other rules application. The step should be skippable like the other optional steps and should not copy rule files into this tree, `config.json` beyond the path, or the container image.
