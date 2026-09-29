@@ -73,7 +73,7 @@ done
 if [[ ! -f "${INSTALL_DIR}/config.json" ]]; then
   if [[ -f "${INSTALL_DIR}/config.json.example" ]]; then
     cp "${INSTALL_DIR}/config.json.example" "${INSTALL_DIR}/config.json"
-    echo "==> Seeded config.json from config.json.example — set web.password before first login"
+    echo "==> Seeded config.json from config.json.example — set web.password to an Argon2id hash before first login (see README)"
   else
     echo "WARNING: no config.json found; app may refuse to start" >&2
   fi

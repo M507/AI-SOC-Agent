@@ -37,7 +37,8 @@
         <link rel="stylesheet" href="/static/css/scrollbar.css?v=3">
         <link rel="stylesheet" href="/static/css/requests.css?v=2">
         <link rel="stylesheet" href="/static/css/cost.css?v=3">
-        <link rel="stylesheet" href="/static/css/overview.css?v=3">
+        <link rel="stylesheet" href="/static/css/overview.css?v=4">
+        <link rel="stylesheet" href="/static/css/pages.css?v=2">
     </head>
 <body>
     <div class="container">
@@ -110,9 +111,6 @@
                     </div>
                     <button type="button" id="nav-integrations" class="nav-item" data-nav="settings" data-settings-page="integrations">
                         <span class="nav-label">Integrations</span>
-                    </button>
-                    <button type="button" id="nav-environment" class="nav-item" data-nav="environment">
-                        <span class="nav-label">Environment</span>
                     </button>
                 </div>
                 <div class="sidebar-group">
@@ -261,12 +259,88 @@
                             <article id="library-doc" class="library-doc markdown-content"></article>
                         </div>
                     </div>
-                    <div id="placeholder-content" class="placeholder-content" style="display: none;">
-                        <div class="session-header">
-                            <h2 id="placeholder-title">Under construction</h2>
+                    <div id="reports-content" class="page-content" style="display: none;">
+                        <div class="session-header page-header">
+                            <div class="page-heading">
+                                <h2>Reports</h2>
+                                <p class="page-caption">Finished investigation write-ups.</p>
+                            </div>
                         </div>
-                        <div class="overview-body">
-                            <p id="placeholder-note" class="placeholder-note">This page is under construction.</p>
+                        <div class="page-body" id="reports-body">
+                            <p id="reports-status" class="page-status" role="status" hidden></p>
+                            <div id="reports-empty" class="empty-state page-empty" hidden>
+                                <div class="empty-state-body">
+                                    <h2>No finished write-ups yet</h2>
+                                    <p>When a session finishes an investigation, the reply is collected here.</p>
+                                    <button type="button" id="reports-open-sessions" class="btn btn-primary">Open sessions</button>
+                                </div>
+                            </div>
+                            <div id="reports-layout" class="library-layout page-split" hidden>
+                                <nav id="reports-list" class="library-list" aria-label="Write-ups"></nav>
+                                <div class="report-read">
+                                    <div class="report-read-head">
+                                        <div class="page-heading">
+                                            <h3 id="reports-read-title">Report</h3>
+                                            <p id="reports-read-command" class="page-caption"></p>
+                                            <p class="page-caption"><time id="reports-read-time"></time> · <span id="reports-read-status"></span></p>
+                                        </div>
+                                        <button type="button" id="reports-open-session" class="btn btn-secondary btn-sm">Open session</button>
+                                    </div>
+                                    <article id="reports-doc" class="library-doc markdown-content"></article>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div id="audit-content" class="page-content" style="display: none;">
+                        <div class="session-header page-header">
+                            <div class="page-heading">
+                                <h2>Audit</h2>
+                                <p id="audit-caption" class="page-caption">Sign-ins, chats, and decisions. Sign-in history starts with this console.</p>
+                            </div>
+                        </div>
+                        <div class="page-body" id="audit-body">
+                            <p id="audit-status" class="page-status" role="status" hidden></p>
+                            <div class="page-toolbar">
+                                <div id="audit-segments" class="page-segments" role="group" aria-label="Audit kinds"></div>
+                                <input id="audit-filter" class="page-filter" type="search" placeholder="Filter this list" aria-label="Filter this list">
+                            </div>
+                            <div id="audit-table"></div>
+                        </div>
+                    </div>
+                    <div id="operators-content" class="page-content" style="display: none;">
+                        <div class="session-header page-header">
+                            <div class="page-heading">
+                                <h2>Operators</h2>
+                                <p class="page-caption">Who can sign in, and what they may approve.</p>
+                            </div>
+                        </div>
+                        <div class="page-body" id="operators-body">
+                            <p id="operators-status" class="page-status" role="status" hidden></p>
+                            <section class="settings-card">
+                                <h3>Sign-in</h3>
+                                <p id="operator-identity" class="operator-identity">Signed in as —.</p>
+                                <form id="operator-form">
+                                    <label for="operator-current">Current password</label>
+                                    <input id="operator-current" type="password" autocomplete="current-password">
+                                    <p id="operator-current-error" class="page-field-error" hidden></p>
+                                    <label for="operator-username">New username</label>
+                                    <input id="operator-username" type="text" autocomplete="username">
+                                    <p id="operator-username-error" class="page-field-error" hidden></p>
+                                    <label for="operator-new">New password</label>
+                                    <input id="operator-new" type="password" autocomplete="new-password">
+                                    <p id="operator-new-error" class="page-field-error" hidden></p>
+                                    <label for="operator-confirm">Confirm password</label>
+                                    <input id="operator-confirm" type="password" autocomplete="new-password">
+                                    <p id="operator-confirm-error" class="page-field-error" hidden></p>
+                                    <div class="settings-inline-row">
+                                        <button type="submit" id="operator-save" class="btn btn-primary" disabled>Save</button>
+                                    </div>
+                                </form>
+                            </section>
+                            <section class="settings-card">
+                                <h3>What this operator may approve</h3>
+                                <div id="operator-groups"></div>
+                            </section>
                         </div>
                     </div>
                     <div id="no-session-message" class="empty-state" style="display: none;">
@@ -934,11 +1008,11 @@
     <script src="https://cdn.jsdelivr.net/npm/marked@12.0.0/marked.min.js"></script>
     
     <!-- Core utilities (no dependencies) -->
-    <script src="/static/utils.js?v=4"></script>
+    <script src="/static/utils.js?v=5"></script>
     <script src="/static/toast.js?v=1"></script>
     
     <!-- API client (no dependencies) -->
-    <script src="/static/api.js?v=18"></script>
+    <script src="/static/api.js?v=20"></script>
     
     <!-- Component modules (depend on utils) -->
     <script src="/static/websocket.js?v=2"></script>
@@ -950,7 +1024,10 @@
     <script src="/static/requests.js?v=6"></script>
     <script src="/static/cost.js?v=2"></script>
     <script src="/static/overview.js?v=2"></script>
-    <script src="/static/library.js?v=1"></script>
+    <script src="/static/library.js?v=2"></script>
+    <script src="/static/reports.js?v=1"></script>
+    <script src="/static/audit.js?v=1"></script>
+    <script src="/static/operators.js?v=1"></script>
     
     <!-- Main application (depends on all modules) -->
     <script src="/static/settings.js?v=7"></script>
@@ -958,7 +1035,7 @@
     <script src="/static/netbox_settings.js?v=1"></script>
     <script src="/static/integrations_settings.js?v=6"></script>
     <script src="/static/theme.js?v=1"></script>
-    <script src="/static/app.js?v=23"></script>
+    <script src="/static/app.js?v=25"></script>
 </body>
 </html>
 

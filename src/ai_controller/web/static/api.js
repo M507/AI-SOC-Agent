@@ -807,6 +807,62 @@ class APIClient {
         }
     }
 
+    async listReports() {
+        try {
+            return await this.request('/api/reports');
+        } catch (error) {
+            return { success: false, error: error.message, reports: [] };
+        }
+    }
+
+    async readReport(sessionId, entryId) {
+        try {
+            return await this.request(
+                `/api/reports/${encodeURIComponent(sessionId)}/${encodeURIComponent(entryId)}`,
+            );
+        } catch (error) {
+            return { success: false, error: error.message };
+        }
+    }
+
+    async getAudit() {
+        try {
+            return await this.request('/api/audit');
+        } catch (error) {
+            return { success: false, error: error.message, events: [] };
+        }
+    }
+
+    async getOperator() {
+        try {
+            return await this.request('/api/operators');
+        } catch (error) {
+            return { success: false, error: error.message };
+        }
+    }
+
+    async updateOperator(payload) {
+        try {
+            const response = await this._fetch('/api/operators', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload || {}),
+            });
+            const data = await response.json();
+            if (!response.ok) {
+                return {
+                    success: false,
+                    errors: (data && data.errors) || {},
+                    detail: data && data.detail,
+                    error: (data && data.detail) || 'Could not save the operator.',
+                };
+            }
+            return data;
+        } catch (error) {
+            return { success: false, error: error.message, errors: {} };
+        }
+    }
+
     async updateUsagePricing(payload) {
         try {
             return await this.request('/api/usage/pricing', {

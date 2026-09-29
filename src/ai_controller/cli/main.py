@@ -237,7 +237,7 @@ def main():
         os.environ["SAMI_COOKIE_SECURE"] = "1"
 
         print(f"Starting SamiGPT AI Controller on https://{web_host}:{web_port}")
-        print("Sign-in uses web.username / web.password from config.json")
+        print("Sign-in uses web.username and the Argon2id hash in web.password")
         if args.debug:
             print("Debug mode: auto-reloading when Python files under src/ change")
         print("Press Ctrl+C to stop")

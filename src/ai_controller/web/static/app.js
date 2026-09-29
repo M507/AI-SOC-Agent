@@ -35,6 +35,9 @@ class AIController {
         this.costManager = new CostManager(this);
         this.overviewManager = new OverviewManager(this);
         this.libraryManager = new LibraryManager(this);
+        this.reportsManager = new ReportsManager(this);
+        this.auditManager = new AuditManager(this);
+        this.operatorsManager = new OperatorsManager(this);
         
         this.init();
     }
@@ -531,7 +534,7 @@ class AIController {
     }
     
     setActiveSection(section) {
-        const known = ['overview', 'sessions', 'autoruns', 'cost', 'requests', 'settings', 'mcp', 'library', 'audit', 'reports', 'environment', 'operators'];
+        const known = ['overview', 'sessions', 'autoruns', 'cost', 'requests', 'settings', 'mcp', 'library', 'audit', 'reports', 'operators'];
         if (!known.includes(section)) {
             console.warn('[AIController] Unknown section:', section);
             return;
@@ -564,7 +567,9 @@ class AIController {
         const noSessionMessage = document.getElementById('no-session-message');
         const overviewContent = document.getElementById('overview-content');
         const libraryContent = document.getElementById('library-content');
-        const placeholderContent = document.getElementById('placeholder-content');
+        const reportsContent = document.getElementById('reports-content');
+        const auditContent = document.getElementById('audit-content');
+        const operatorsContent = document.getElementById('operators-content');
 
         if (section !== 'settings') {
             this.hideSettingsPages();
@@ -581,7 +586,9 @@ class AIController {
         show(costContent, section === 'cost' ? 'flex' : 'none');
         show(overviewContent, section === 'overview' ? 'flex' : 'none');
         show(libraryContent, section === 'library' ? 'flex' : 'none');
-        show(placeholderContent, ['audit', 'reports', 'environment', 'operators'].includes(section) ? 'flex' : 'none');
+        show(reportsContent, section === 'reports' ? 'flex' : 'none');
+        show(auditContent, section === 'audit' ? 'flex' : 'none');
+        show(operatorsContent, section === 'operators' ? 'flex' : 'none');
         show(mcpContent, 'none');
         show(sessionContent, 'none');
         show(noSessionMessage, 'none');
@@ -596,8 +603,12 @@ class AIController {
             if (this.overviewManager) this.overviewManager.load();
         } else if (section === 'library') {
             if (this.libraryManager) this.libraryManager.load(this.activeLibraryPage);
-        } else if (section === 'audit' || section === 'reports' || section === 'environment' || section === 'operators') {
-            this.showPlaceholder(section);
+        } else if (section === 'reports') {
+            if (this.reportsManager) this.reportsManager.load();
+        } else if (section === 'audit') {
+            if (this.auditManager) this.auditManager.load();
+        } else if (section === 'operators') {
+            if (this.operatorsManager) this.operatorsManager.load();
         } else if (section === 'cost') {
             document.querySelectorAll('button.tab[data-session-id]').forEach((tab) => {
                 tab.classList.remove('active');
@@ -657,25 +668,6 @@ class AIController {
             }
             item.classList.toggle('active', on);
         });
-    }
-
-    showPlaceholder(section) {
-        const copy = {
-            audit: 'Audit is under construction. Sign-ins, session and autorun chats, and other platform actions will show here later.',
-            reports: 'Reports is under construction. Finished investigation write-ups will be collected here later.',
-            environment: 'Environment is under construction. Internal subnets, servers, users, and naming schemas will be viewable here later.',
-            operators: 'Operators is under construction. Who can sign in, and what they may approve, will be managed here later.',
-        };
-        const titles = {
-            audit: 'Audit',
-            reports: 'Reports',
-            environment: 'Environment',
-            operators: 'Operators',
-        };
-        const title = document.getElementById('placeholder-title');
-        const note = document.getElementById('placeholder-note');
-        if (title) title.textContent = titles[section] || 'Under construction';
-        if (note) note.textContent = copy[section] || 'This page is under construction.';
     }
 
     syncHeaderActions(section) {

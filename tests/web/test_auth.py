@@ -9,6 +9,7 @@ from src.ai_controller.web.auth import (
     WebAuthConfig,
     _login_failures,
     _sessions,
+    hash_password,
 )
 from src.ai_controller.web.server import app, initialize
 from src.ai_controller.web import auth as auth_mod
@@ -33,7 +34,7 @@ def _client():
     auth_mod._auth = SessionManagerAuth(
         WebAuthConfig(
             username="admin",
-            password=TEST_PASSWORD,
+            password=hash_password(TEST_PASSWORD),
             session_secret="test-session-secret-value-minimum-32-chars-long",
             session_ttl_seconds=43200,
             cookie_secure=True,

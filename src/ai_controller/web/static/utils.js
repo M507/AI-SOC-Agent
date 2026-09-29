@@ -179,6 +179,19 @@ function extractResultText(result) {
     return String(result);
 }
 
+function formatPageWhen(iso) {
+    if (!iso) return '';
+    const date = new Date(iso);
+    if (Number.isNaN(date.getTime())) return String(iso).replace('T', ' ');
+    return date.toLocaleString(undefined, {
+        month: 'short',
+        day: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+        timeZoneName: 'short',
+    });
+}
+
 function formatUsageFooter(result) {
     const output = result && result.output;
     if (output && output.usage_footer) {

@@ -58,23 +58,27 @@ class LibraryManager {
     }
 
     renderMarkdown(text, target) {
-        if (typeof marked === 'undefined') {
-            target.textContent = text;
-            return;
-        }
-        const html = marked.parse(text, { gfm: true, breaks: true });
-        const parsed = new DOMParser().parseFromString(html, 'text/html');
-        parsed.querySelectorAll('script, iframe, object, embed, link, style').forEach((node) => node.remove());
-        parsed.body.querySelectorAll('*').forEach((element) => {
-            [...element.attributes].forEach((attribute) => {
-                const name = attribute.name.toLowerCase();
-                const value = (attribute.value || '').trim().toLowerCase();
-                if (name.startsWith('on') || value.startsWith('javascript:')) {
-                    element.removeAttribute(attribute.name);
-                }
-            });
-        });
-        target.className = 'library-doc markdown-content';
-        target.replaceChildren(...parsed.body.childNodes);
+        renderSanitizedMarkdown(text, target, 'library-doc markdown-content');
     }
+}
+
+function renderSanitizedMarkdown(text, target, className) {
+    target.className = className || 'library-doc markdown-content';
+    if (typeof marked === 'undefined') {
+        target.textContent = text || '';
+        return;
+    }
+    const html = marked.parse(text || '', { gfm: true, breaks: true });
+    const parsed = new DOMParser().parseFromString(html, 'text/html');
+    parsed.querySelectorAll('script, iframe, object, embed, link, style').forEach((node) => node.remove());
+    parsed.body.querySelectorAll('*').forEach((element) => {
+        [...element.attributes].forEach((attribute) => {
+            const name = attribute.name.toLowerCase();
+            const value = (attribute.value || '').trim().toLowerCase();
+            if (name.startsWith('on') || value.startsWith('javascript:')) {
+                element.removeAttribute(attribute.name);
+            }
+        });
+    });
+    target.replaceChildren(...parsed.body.childNodes);
 }

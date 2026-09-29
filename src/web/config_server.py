@@ -562,7 +562,7 @@ if __name__ == "__main__":
         "The standalone config UI is disabled because it served HTTP with a default password.\n"
         "Start the HTTPS web interface instead:\n"
         "  python app.py\n"
-        "Then sign in with web.username / web.password from config.json.",
+        "Then sign in with web.username and the password whose Argon2id hash is in web.password.",
         file=sys.stderr,
     )
     sys.exit(1)

@@ -166,7 +166,8 @@ class LoggingConfig:
 @dataclass
 class WebConfig:
     """
-    Configuration for the HTTPS web UI (username/password live in config.json).
+    Configuration for the HTTPS web UI.
+    password is an Argon2id hash stored in config.json, not the sign-in password.
     """
 
     username: str = "admin"

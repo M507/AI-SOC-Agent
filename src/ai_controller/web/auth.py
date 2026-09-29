@@ -17,6 +17,8 @@ from datetime import datetime, timedelta, timezone
 from typing import Dict, Optional, Tuple
 from urllib.parse import quote
 
+from argon2 import PasswordHasher
+from argon2.exceptions import InvalidHashError, VerificationError, VerifyMismatchError
 from fastapi import HTTPException, Request, Response, WebSocket, status
 from fastapi.responses import JSONResponse, RedirectResponse
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -37,6 +39,17 @@ PUBLIC_STATIC_PATHS = frozenset(
     }
 )
 WEAK_PASSWORD_VALUES = frozenset({"", "changeme", "admin", "password", "secret"})
+# OWASP password-storage recommendation: Argon2id, 19 MiB, 2 iterations, parallelism 1.
+ARGON2_TIME_COST = 2
+ARGON2_MEMORY_KIB = 19456
+ARGON2_PARALLELISM = 1
+_HASHER = PasswordHasher(
+    time_cost=ARGON2_TIME_COST,
+    memory_cost=ARGON2_MEMORY_KIB,
+    parallelism=ARGON2_PARALLELISM,
+    hash_len=32,
+    salt_len=16,
+)
 PLACEHOLDER_SECRETS = frozenset(
     {
         "",
@@ -66,6 +79,43 @@ def _consteq(left: str, right: str) -> bool:
     )
 
 
+def is_password_hash(value: str) -> bool:
+    """True only for an Argon2id PHC string. Plaintext and other Argon2 variants are not."""
+    return (value or "").startswith("$argon2id$")
+
+
+def hash_password(password: str) -> str:
+    """Argon2id hash with a fresh salt. The result is what config.json should store."""
+    return _HASHER.hash(password)
+
+
+_PASSWORD_HASH_REQUIRED = (
+    "config.json web.password must be an Argon2id hash ($argon2id$...). "
+    "A plaintext password is not accepted. Generate the hash with: "
+    'python -c "from src.ai_controller.web.auth import hash_password; '
+    "print(hash_password('choose-a-strong-password'))\""
+)
+
+
+def password_matches(password: str, stored: str) -> bool:
+    """True only when password verifies against an Argon2id hash."""
+    if not is_password_hash(stored):
+        return False
+    try:
+        return _HASHER.verify(stored, password)
+    except (VerifyMismatchError, InvalidHashError, VerificationError):
+        return False
+
+
+def _require_password_hash(password: str) -> None:
+    if not is_password_hash(password):
+        raise RuntimeError(_PASSWORD_HASH_REQUIRED)
+    try:
+        _HASHER.check_needs_rehash(password)
+    except InvalidHashError as exc:
+        raise RuntimeError(_PASSWORD_HASH_REQUIRED) from exc
+
+
 def load_web_auth_config(cookie_secure: bool = True) -> WebAuthConfig:
     """Load auth settings from config.json, generating a session secret if needed."""
     raw = get_section(
@@ -79,26 +129,25 @@ def load_web_auth_config(cookie_secure: bool = True) -> WebAuthConfig:
     )
     username = (raw.get("username") or "admin").strip()
     password = raw.get("password") or ""
-    if not password.strip():
+    if not str(password).strip():
         raise RuntimeError(
-            "config.json is missing web.password. Set a password under the 'web' section "
-            "before starting the UI."
+            "config.json is missing web.password. " + _PASSWORD_HASH_REQUIRED
         )
+    _require_password_hash(password)
+    changed = False
     secret = (raw.get("session_secret") or "").strip()
     if secret in PLACEHOLDER_SECRETS or len(secret) < 32:
         secret = secrets.token_urlsafe(48)
+        changed = True
+        logger.warning("Generated a new web.session_secret and wrote it to config.json")
+    if changed:
         persisted = dict(raw)
         persisted["username"] = username
         persisted["password"] = password
         persisted["session_secret"] = secret
         persisted["session_ttl_seconds"] = int(raw.get("session_ttl_seconds") or 43200)
         update_raw_section("web", persisted)
-        logger.warning("Generated a new web.session_secret and wrote it to config.json")
     ttl = int(raw.get("session_ttl_seconds") or 43200)
-    if password.strip().lower() in WEAK_PASSWORD_VALUES:
-        logger.warning(
-            "web.password in config.json is a well-known default. Change it before exposing the UI."
-        )
     return WebAuthConfig(
         username=username,
         password=password,
@@ -206,6 +255,20 @@ def get_auth() -> SessionManagerAuth:
     return _auth
 
 
+def apply_credentials(username: str, password: str) -> None:
+    """Replace the in-memory username and password hash without ending open sessions."""
+    if not is_password_hash(password):
+        raise ValueError("password must be an Argon2id hash")
+    auth = get_auth()
+    auth.config = WebAuthConfig(
+        username=username,
+        password=password,
+        session_secret=auth.config.session_secret,
+        session_ttl_seconds=auth.config.session_ttl_seconds,
+        cookie_secure=auth.config.cookie_secure,
+    )
+
+
 def current_user(request: Request) -> Optional[Dict]:
     return get_auth().authenticate_token(request.cookies.get(COOKIE_NAME))
 
@@ -233,7 +296,15 @@ def clear_login_failures(ip: str) -> None:
 
 def verify_credentials(username: str, password: str) -> bool:
     cfg = get_auth().config
-    return _consteq(username.strip(), cfg.username) and _consteq(password, cfg.password)
+    name_ok = _consteq(username.strip(), cfg.username)
+    secret_ok = password_matches(password, cfg.password)
+    if name_ok and secret_ok and is_password_hash(cfg.password) and _HASHER.check_needs_rehash(cfg.password):
+        upgraded = hash_password(password)
+        raw = dict(get_section("web", {}))
+        raw["password"] = upgraded
+        update_raw_section("web", raw)
+        apply_credentials(cfg.username, upgraded)
+    return name_ok and secret_ok
 
 
 class AuthMiddleware(BaseHTTPMiddleware):

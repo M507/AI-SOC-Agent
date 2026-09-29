@@ -1,6 +1,5 @@
 .overview-content,
-.library-content,
-.placeholder-content {
+.library-content {
     display: flex;
     flex-direction: column;
     flex: 1 1 auto;
@@ -9,14 +8,9 @@
     overflow: hidden;
 }
 
-.overview-body,
-.placeholder-body {
+.overview-body {
     flex: 1;
     overflow-y: auto;
-}
-
-.placeholder-body {
-    padding: 20px;
 }
 
 .overview-body {
@@ -423,11 +417,4 @@ button.chart-hbar:hover .chart-hbar-name {
     border-bottom: 1px solid var(--color-border);
     padding: 8px 10px;
     text-align: left;
-}
-
-.placeholder-note {
-    max-width: 560px;
-    color: var(--color-text-muted);
-    font-size: 15px;
-    line-height: 1.5;
 }

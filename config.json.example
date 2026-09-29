@@ -136,9 +136,9 @@
     }
   },
   "web": {
-    "_comment": "Required. The web UI is HTTPS-only and rejects every request without a valid session.",
+    "_comment": "Required. The web UI is HTTPS-only and rejects every request without a valid session. password must be an Argon2id hash generated with hash_password (see README). A plaintext password is not accepted.",
     "username": "admin",
-    "password": "changeme",
+    "password": "",
     "session_secret": "",
     "session_ttl_seconds": 43200
   }

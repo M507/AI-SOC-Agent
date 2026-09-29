@@ -4,7 +4,7 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 
-from src.ai_controller.web.auth import COOKIE_NAME, SessionManagerAuth, WebAuthConfig, _login_failures, _sessions
+from src.ai_controller.web.auth import COOKIE_NAME, SessionManagerAuth, WebAuthConfig, _login_failures, _sessions, hash_password
 from src.ai_controller.web.server import app, initialize
 from src.ai_controller.web import auth as auth_mod
 
@@ -75,7 +75,7 @@ def _client(tmp_path):
     auth_mod._auth = SessionManagerAuth(
         WebAuthConfig(
             username="admin",
-            password=TEST_PASSWORD,
+            password=hash_password(TEST_PASSWORD),
             session_secret="test-session-secret-value-minimum-32-chars-long",
             session_ttl_seconds=43200,
             cookie_secure=True,

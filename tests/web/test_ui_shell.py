@@ -183,11 +183,17 @@ def test_appearance_theme_system_is_wired():
     assert 'data-settings-page="llm"' in html
     assert 'id="nav-audit"' in html
     assert 'id="nav-reports"' in html
-    assert 'id="nav-environment"' in html
+    assert 'id="nav-environment"' not in html
     assert 'id="nav-operators"' in html
     assert 'id="overview-content"' in html
     assert 'id="library-content"' in html
-    assert "under construction" in html
+    assert 'id="environment-content"' not in html
+    assert 'id="reports-content"' in html
+    assert 'id="audit-content"' in html
+    assert 'id="operators-content"' in html
+    assert "under construction" not in html
+    assert "Filter this list" in html
+    assert "What this operator may approve" in html
 
     assert 'html[data-theme="u"]' in tokens
     assert 'html[data-theme="ft"]' in tokens
