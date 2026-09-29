@@ -102,7 +102,7 @@ This runbook explicitly **excludes**:
     *   Set `${ASSESSMENT}` accordingly.
 
 7.  **FP/BTP Closure (no case) — MANDATORY final verdict:**
-    *   `add_alert_note` citing history (verdicts + note takeaways), NetBox role match, pivot summary (host `lab-1` / user `bob` as applicable), and IOC results.
+    *   `add_alert_note` citing history (verdicts + note takeaways), NetBox role match, pivot summary (host `lab-1` / user `bob` as applicable), and IOC results. Queued for Requests — do not claim the note is already written.
     *   **MANDATORY:** `update_alert_verdict` → `false_positive` or `benign_true_positive` (set `${FINAL_VERDICT}`).
     *   `close_alert` with appropriate reason + comment. Close is **queued for Requests** — do not claim the alert is already closed.
     *   If the rule is noisy for known lab/widget roles, create/update a fine-tuning recommendation (`list_fine_tuning_recommendations` → comment or `create_fine_tuning_recommendation` with tags like `["false-positive", "fine-tuning", "soc1-triage", "widget-abuse"]`).
@@ -111,7 +111,7 @@ This runbook explicitly **excludes**:
 8.  **TP / Uncertain Handoff (still no case) — MANDATORY final verdict:**
     *   Prefer a short additional targeted search only if pivots left a gap; keep light.
     *   Choose **final** verdict: `true_positive` or `uncertain` only — never end on `in-progress`.
-    *   `add_alert_note` MUST include:
+    *   `add_alert_note` MUST include (queued for Requests — do not claim the note is already written):
         1. Alert id, rule name/id, severity, key entities (`lab-1`, `bob`, …)
         2. `${NETBOX_CONTEXT}` match or mismatch
         3. `${HISTORICAL_DECISIONS}` including `get_alert_notes` takeaways
@@ -119,7 +119,7 @@ This runbook explicitly **excludes**:
         5. Why not closed and what a human should check next (widget legitimacy, user intent, lateral activity)
     *   **MANDATORY:** `update_alert_verdict` with that final assessment (`${FINAL_VERDICT}`).
     *   If visibility gaps blocked triage (missing NetBox, weak widget telemetry), optionally `create_visibility_recommendation`.
-    *   **Do not create a case.** Set `${ACTION_TAKEN}` = "Alert documented with final verdict; no case created." End.
+    *   **Do not create a case.** Set `${ACTION_TAKEN}` = "Alert note requested (pending analyst approval); final verdict recorded; no case created." End.
 
 ## Completion Criteria
 

@@ -805,6 +805,9 @@ class RequestsManager {
             'alert', 'rule', 'coverage_check', 'rule_found', 'suggestion', 'description',
             'engineering', 'github_issue',
         ]);
+        if (item.action_type === 'add_alert_note') {
+            skip.add('note');
+        }
         const payloadRows = Object.keys(payload).length
             ? Object.entries(payload)
                 .filter(([key, value]) => !skip.has(key) && value != null && value !== '')
@@ -813,8 +816,12 @@ class RequestsManager {
                     return `<dt>${escapeHtml(label)}</dt><dd>${escapeHtml(this.formatValue(value))}</dd>`;
                 }).join('')
             : '';
+        const proposedNote = item.action_type === 'add_alert_note' && payload.note
+            ? `<div class="request-section-label">Proposed note</div><div class="request-detail-summary">${escapeHtml(this.formatValue(payload.note))}</div>`
+            : '';
         return `
             ${this.alertHtml(payload.alert)}
+            ${proposedNote}
             ${payloadRows ? `<div class="request-section-label">Action parameters</div><dl class="request-payload">${payloadRows}</dl>` : ''}
         `;
     }

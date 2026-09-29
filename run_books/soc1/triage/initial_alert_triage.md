@@ -163,7 +163,7 @@ Standardized SOC1 triage for SIEM alerts: start from the alert queue, **before a
 
 ### 6. FP/BTP closure request (no case) — MANDATORY final verdict
 
-1. `add_alert_note` citing `${HISTORICAL_DECISIONS}` (prior verdicts + note takeaways) + NetBox + IOC results.
+1. `add_alert_note` citing `${HISTORICAL_DECISIONS}` (prior verdicts + note takeaways) + NetBox + IOC results. Queued for Requests — do not claim the note is already written.
 2. **MANDATORY:** `update_alert_verdict` → `false_positive` or `benign_true_positive` (set `${FINAL_VERDICT}`).
 3. `close_alert` (queued for Requests). Do not claim the alert is already closed.
 4. Optionally update/create a fine-tuning recommendation for noisy rules.
@@ -175,14 +175,14 @@ Standardized SOC1 triage for SIEM alerts: start from the alert queue, **before a
 1. Targeted SIEM searches / entity enrichment as needed (keep light).
 2. Re-check history if new entities suggest additional past decisions to read.
 3. Choose **final** working verdict: `uncertain` or `true_positive` only (do **not** leave `in-progress` when ending).
-4. `add_alert_note` MUST include:
+4. `add_alert_note` MUST include (queued for Requests — do not claim the note is already written):
    - Rule name/id, key entities
    - `${HISTORICAL_DECISIONS}` (prior verdicts + `get_alert_notes` summary)
    - NetBox match/mismatch
    - IOC/enrichment highlights
    - Why it was not closed and what a human should check next
 5. **MANDATORY:** `update_alert_verdict` with that final assessment (set `${FINAL_VERDICT}`).
-6. **Do not create a case.** Set `${ACTION_TAKEN}` = "Alert documented with final verdict; no case created."
+6. **Do not create a case.** Set `${ACTION_TAKEN}` = "Alert note requested (pending analyst approval); final verdict recorded; no case created."
 7. **Post-investigation (non-blocking):** if no case playbook under `soc1/cases` covered this alert type, go to Step 8; otherwise **end**.
 
 ### 8. Case-runbook gap request (AFTER investigation — never blocks triage)

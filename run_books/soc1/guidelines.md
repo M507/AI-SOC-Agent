@@ -82,7 +82,7 @@ SOC1 **recommends** closures; an analyst must approve them in the SamiGPT **Requ
 - Use **NetBox** to understand what the host/IP is *for* (role, tags, description).
 - **Before deciding:** review **past closed and acknowledged alerts** of the same detection rule/type **and** matching key values (IPs, hosts, users, hashes, …); open those alerts and **read prior verdicts and `get_alert_notes` note bodies**.
 - Close clear FP/BTP with `update_alert_verdict` + `close_alert` (no case).
-- If uncertain or suspicious: **still** set a final verdict (`uncertain` / `true_positive`), add a detailed alert note, and stop — **do not create a case**. Never end without a final verdict.
+- If uncertain or suspicious: **still** set a final verdict (`uncertain` / `true_positive`), request a detailed alert note (pending in Requests), and stop — **do not create a case**. Never end without a final verdict.
 
 ## Responsibilities (What SOC1 Does)
 
@@ -110,7 +110,7 @@ SOC1 **recommends** closures; an analyst must approve them in the SamiGPT **Requ
 
 - **Alert documentation only (verdict always required)**
   - **MANDATORY:** `update_alert_verdict` at lock (`in-progress`) and again with the **final** assessment before ending.
-  - `add_alert_note` / comments on the alert; `close_alert` when recommending closure.
+  - `add_alert_note` files a Requests-view approval (do not claim the note is already written); `close_alert` when recommending closure.
   - Never `create_case`, `attach_observable_to_case`, `add_case_comment`, or `add_case_task` for SOC1 triage.
 
 - **Case-playbook feedback (after triage — never blocks)**

@@ -2028,7 +2028,11 @@ class SamiGPTMCPServer:
                     },
                     "comment": {
                         "type": "string",
-                        "description": "Optional comment explaining the verdict",
+                        "description": (
+                            "Optional investigation note. Filed for analyst approval in the "
+                            "Requests view and not written until approved. The verdict itself "
+                            "is recorded immediately. Use add_alert_note for a standalone note."
+                        ),
                     },
                 },
                 "required": ["alert_id", "verdict"],
@@ -2057,7 +2061,13 @@ class SamiGPTMCPServer:
 
         self.tools["add_alert_note"] = {
             "name": "add_alert_note",
-            "description": "Add a note or comment to a security alert in the SIEM platform. Use this to document investigation findings, recommendations for detection rule improvements, case numbers, or other relevant information about the alert.",
+            "description": (
+                "Request adding a note or comment to a security alert in the SIEM platform."
+                + _QUEUED_FOR_ANALYST
+                + " Use this to document investigation findings, recommendations for detection "
+                "rule improvements, case numbers, or other relevant information about the alert. "
+                "Tell the analyst the note is pending in Requests; do not claim it was written."
+            ),
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -2653,7 +2663,7 @@ class SamiGPTMCPServer:
             "description": (
                 "Execute an investigation runbook. The runbook content will be provided as context "
                 "for you to follow step-by-step. Use the appropriate MCP tools for each step. "
-                "Irreversible tools (close_alert, isolate, kill, forensics) file a "
+                "Irreversible tools (close_alert, add_alert_note, isolate, kill, forensics) file a "
                 "Requests-view approval and do not run until an analyst approves them. "
                 "Fine-tune, visibility, and runbook-gap notes are informational only."
             ),
@@ -3093,8 +3103,8 @@ To be populated during investigation.
         
         execution_instructions += (
             f"Follow the workflow steps in the runbook below. Use the appropriate MCP tools for each step. "
-            f"Irreversible actions (close_alert, isolate_endpoint, kill_process_on_endpoint, "
-            f"collect_forensic_artifacts) are queued for analyst "
+            f"Irreversible actions (close_alert, add_alert_note, isolate_endpoint, "
+            f"kill_process_on_endpoint, collect_forensic_artifacts) are queued for analyst "
             f"approval in the SamiGPT Requests view — report them as pending, not completed. "
             f"create_fine_tuning_recommendation, create_visibility_recommendation, and "
             f"create_runbook_recommendation file informational notes only (no approve button). "
@@ -4053,12 +4063,24 @@ To be populated during investigation.
             self._mcp_logger.debug(f"Tool {tool_name} completed successfully")
             return result
         elif tool_name == "update_alert_verdict" and self.siem_client:
+            note_text = str(args.get("comment") or "").strip()
             result = tools_siem.update_alert_verdict(
                 alert_id=args["alert_id"],
                 verdict=args["verdict"],
-                comment=args.get("comment"),
+                comment=None,
                 client=self.siem_client,
             )
+            if note_text:
+                from ..ai_controller.approval_queue.mcp_bridge import enqueue_gated_tool
+                from .cluster_context import get_elastic_cluster_id
+
+                queued_note = enqueue_gated_tool(
+                    "add_alert_note",
+                    {"alert_id": args["alert_id"], "note": note_text},
+                    cluster_id=get_elastic_cluster_id(),
+                )
+                if isinstance(result, dict):
+                    result["note_queued"] = queued_note
             self._mcp_logger.debug(f"Tool {tool_name} completed successfully")
             return result
         elif tool_name == "tag_alert" and self.siem_client:

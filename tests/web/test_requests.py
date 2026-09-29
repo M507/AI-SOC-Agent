@@ -47,6 +47,7 @@ def test_requests_view_is_in_the_shell():
     assert 'data-request-action="ignore"' in requests_js
     assert 'data-request-action="approve"' in requests_js
     assert "Needs approval" in requests_js
+    assert "Proposed note" in requests_js
     assert "request-bulk-comment" in requests_js
     assert "Technical details" in requests_js
 
@@ -93,6 +94,7 @@ def test_requests_api_create_list_deny(tmp_path):
     assert catalog.status_code == 200
     types = {item["action_type"] for item in catalog.json()["actions"]}
     assert "close_alert" in types
+    assert "add_alert_note" in types
     assert "identity_verify" in types
     assert "update_verdict" not in types
 
@@ -380,3 +382,66 @@ def test_ignore_archives_informational_request(tmp_path, monkeypatch):
     assert all(item["id"] != request_id for item in open_list.json()["requests"])
     archived = client.get("/api/requests?status=archived&queue=detection")
     assert any(item["id"] == request_id for item in archived.json()["requests"])
+
+
+def test_add_alert_note_request_approve_writes_and_deny_does_not(tmp_path, monkeypatch):
+    from src.ai_controller.approval_queue.clients import ClientBundle
+
+    class _FakeSIEM:
+        def __init__(self):
+            self.notes = []
+
+        def get_security_alert_by_id(self, alert_id, include_detections=True):
+            return {"id": alert_id, "title": "User Account Creation"}
+
+        def add_alert_note(self, alert_id, note):
+            self.notes.append((alert_id, note))
+            return {"alert_id": alert_id, "note": note, "alert": {}}
+
+    siem = _FakeSIEM()
+    bundle = lambda cluster_id=None: ClientBundle(cluster_id="lab", siem=siem)
+    monkeypatch.setattr("src.ai_controller.approval_queue.service.resolve_clients", bundle)
+    monkeypatch.setattr("src.ai_controller.approval_queue.enrichment.resolve_clients", bundle)
+
+    client = _client(tmp_path)
+    created = client.post(
+        "/api/requests",
+        json={
+            "action_type": "add_alert_note",
+            "title": "Add note: User Account Creation",
+            "summary": "Proposed investigation note for review.",
+            "payload": {
+                "alert_id": "alert-ui-1",
+                "note": "Proposed investigation note for review.",
+            },
+        },
+    )
+    assert created.status_code == 200, created.text
+    body = created.json()["request"]
+    assert body["status"] == "pending"
+    assert body["action_type"] == "add_alert_note"
+    assert body["payload"]["note"] == "Proposed investigation note for review."
+    assert siem.notes == []
+
+    approved = client.post(f"/api/requests/{body['id']}/approve", json={})
+    assert approved.status_code == 200, approved.text
+    assert approved.json()["request"]["status"] == "executed"
+    assert siem.notes == [("alert-ui-1", "Proposed investigation note for review.")]
+
+    second = client.post(
+        "/api/requests",
+        json={
+            "action_type": "add_alert_note",
+            "title": "Add note: denied",
+            "summary": "This note must not be written.",
+            "payload": {"alert_id": "alert-ui-2", "note": "This note must not be written."},
+        },
+    )
+    assert second.status_code == 200, second.text
+    denied = client.post(
+        f"/api/requests/{second.json()['request']['id']}/deny",
+        json={"comment": "not yet"},
+    )
+    assert denied.status_code == 200, denied.text
+    assert denied.json()["request"]["status"] == "denied"
+    assert siem.notes == [("alert-ui-1", "Proposed investigation note for review.")]

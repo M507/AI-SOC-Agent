@@ -3,9 +3,9 @@
 Analyst queue in the SamiGPT web UI (**Views → Requests**).
 
 The AI files a request with the payload needed to run later. Irreversible MCP
-tools (`close_alert`, isolate, kill process, collect forensics) are queued here
-instead of executing immediately. Close, escalate, and Elastic Security cases
-run against the **Elastic cluster bound to the request**.
+tools (`close_alert`, `add_alert_note`, isolate, kill process, collect forensics)
+are queued here instead of executing immediately. Close, notes, escalate, and
+Elastic Security cases run against the **Elastic cluster bound to the request**.
 
 **Fine-tune**, **Visibility gap**, and **Runbook gap** are **informational only**. They appear in
 Requests so an analyst can read them. There is no Approve/Deny. Fine-tune / visibility
@@ -36,6 +36,7 @@ are **not** auto-run. They become a second pending request.
 | Action | Payload stored | On approve | Status |
 |---|---|---|---|
 | **Close alert** | `alert_id`, reason, comment, cluster | Elastic `close_alert` | **Done** |
+| **Add alert note** | `alert_id`, note, cluster | Elastic `add_alert_note` | **Done** |
 | **Is this you?** | `alert_id`, user, IP, host, time, activity, question | **Yes** → ACK (close as benign TP). **No** → escalate: TP tag + verdict + **Elastic Security case** with the full alert | **Done** (case uses Kibana Cases, not IRIS/TheHive) |
 | **Fine-tune** | title, suggestion, `rule_id` / `rule_name`, pulled Home Lab rule (query, tags, exceptions) | **None** — no buttons | **Informational**. Rule is loaded from `/root/Home-Lab-Rules/rules/elastic_1/rules/` (override with `SAMI_LAB_RULES_DIR`). No engineering board. |
 | **Visibility gap** | title, suggestion, missing source, `coverage_check` | **None** — no buttons | **Informational**. Catalog is searched first; the note includes whether a Home Lab rule already covers it. |
@@ -68,14 +69,14 @@ Override path: env `SAMI_LAB_RULES_DIR`. Runbooks: env `SAMI_RUNBOOKS_DIR` (opti
 
 | Action | What it does | Status |
 |---|---|---|
-| **AI verdict** (`update_alert_verdict`) | Writes the investigator's working assessment (`in-progress`, FP, BTP, TP, uncertain). Does not close the alert. | **Runs immediately** |
+| **AI verdict** (`update_alert_verdict`) | Writes the investigator's working assessment (`in-progress`, FP, BTP, TP, uncertain). Does not close the alert. An optional `comment` is filed as **Add alert note** and waits for approval. | **Runs immediately** (verdict only) |
 | **Elastic Security case** (`create_elastic_case`) | Opens a Kibana Security case on the bound cluster. Loads and attaches the SIEM alert. Used by **Is this you? → No** and by escalate. | **Runs immediately**. SIEM skill; tests in `tests/integrations/siem/elastic/test_elastic_cases.py` |
 | **Search / get Home Lab rules** | Compact catalog search and one-rule excerpt. | **Runs immediately**. SIEM skill; local files, not Elastic. |
 
 ## How requests get filed
 
 - MCP tool `create_approval_request` (preferred for identity checks and custom follow-ups). Default **No** follow-up is `escalate` → Elastic Security case.
-- Calling a gated MCP tool (`close_alert`, `isolate_endpoint`, `kill_process_on_endpoint`, `collect_forensic_artifacts`, `release_endpoint_isolation`) — those enqueue and wait for approve.
+- Calling a gated MCP tool (`close_alert`, `add_alert_note`, `isolate_endpoint`, `kill_process_on_endpoint`, `collect_forensic_artifacts`, `release_endpoint_isolation`) — those enqueue and wait for approve. A `comment` on `update_alert_verdict` is also filed as `add_alert_note`.
 - Calling `create_fine_tuning_recommendation`, `create_visibility_recommendation`, or `create_runbook_recommendation` — those file **informational** items (no approve).
 - `POST /api/requests` (manual / tests)
 

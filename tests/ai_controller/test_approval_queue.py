@@ -14,6 +14,7 @@ class _FakeSIEM:
         self.cases = []
         self.isolated = []
         self.released = []
+        self.notes = []
         self.alerts = {
             "alert-9": {
                 "id": "alert-9",
@@ -45,6 +46,10 @@ class _FakeSIEM:
     def close_alert(self, alert_id, reason=None, comment=None):
         self.closed.append((alert_id, reason, comment))
         return {"alert_id": alert_id, "status": "closed", "reason": reason, "comment": comment, "alert": {}}
+
+    def add_alert_note(self, alert_id, note):
+        self.notes.append((alert_id, note))
+        return {"alert_id": alert_id, "note": note, "alert": {}}
 
     def update_alert_verdict(self, alert_id, verdict, comment=None):
         self.verdicts.append((alert_id, verdict, comment))
@@ -96,11 +101,14 @@ class _FakeSIEM:
 def test_catalog_covers_soc_actions():
     types = {spec.action_type for spec in ACTION_CATALOG}
     assert "close_alert" in types
+    assert "add_alert_note" in types
     assert "identity_verify" in types
     assert "isolate_endpoint" in types
     assert "fine_tune" in types
     assert "update_verdict" not in types
     assert get_action_spec("close_alert").execution == "ready"
+    assert get_action_spec("add_alert_note").execution == "ready"
+    assert get_action_spec("add_alert_note").gated_mcp_tool == "add_alert_note"
     assert get_action_spec("isolate_endpoint").execution == "ready"
     assert get_action_spec("isolate_endpoint").integration == "siem"
     assert get_action_spec("fine_tune").execution == "informational"
@@ -145,6 +153,46 @@ def test_close_alert_enriches_sparse_mcp_payload(tmp_path, monkeypatch):
     assert "workstation-1" in created.summary
     assert "dns query evil.example" in created.rationale
     assert created.payload.get("username") == "alice"
+
+
+def test_add_alert_note_enriches_and_executes_on_approve(tmp_path, monkeypatch):
+    queue = ApprovalQueue(str(tmp_path))
+    siem = _FakeSIEM()
+    bundle = lambda cluster_id=None: ClientBundle(cluster_id=cluster_id or "lab", siem=siem)
+    monkeypatch.setattr("src.ai_controller.approval_queue.service.resolve_clients", bundle)
+    monkeypatch.setattr("src.ai_controller.approval_queue.enrichment.resolve_clients", bundle)
+    created = queue.create_from_mcp_tool(
+        "add_alert_note",
+        {"alert_id": "alert-9", "note": "Host is a scanner; prior notes agree."},
+        cluster_id="lab",
+    )
+    assert created.status is RequestStatus.PENDING
+    assert created.title.startswith("Add note:")
+    assert "Suspicious DNS Query" in created.title
+    assert created.payload["note"] == "Host is a scanner; prior notes agree."
+    assert created.summary == "Host is a scanner; prior notes agree."
+    assert siem.notes == []
+    done = queue.approve(created.id)
+    assert done.status is RequestStatus.EXECUTED
+    assert siem.notes == [("alert-9", "Host is a scanner; prior notes agree.")]
+
+
+def test_deny_add_alert_note_does_not_write(tmp_path, monkeypatch):
+    queue = ApprovalQueue(str(tmp_path))
+    siem = _FakeSIEM()
+    monkeypatch.setattr(
+        "src.ai_controller.approval_queue.service.resolve_clients",
+        lambda cluster_id=None: ClientBundle(siem=siem),
+    )
+    created = queue.create(
+        "add_alert_note",
+        "Add note",
+        "pending note",
+        payload={"alert_id": "alert-1", "note": "should not land"},
+    )
+    denied = queue.deny(created.id, comment="not yet")
+    assert denied.status is RequestStatus.DENIED
+    assert siem.notes == []
 
 
 def test_deny_does_not_execute(tmp_path, monkeypatch):
@@ -305,6 +353,42 @@ def test_mcp_close_alert_is_queued(tmp_path, monkeypatch):
     assert filed.payload["alert_id"] == "a-1"
 
 
+def test_mcp_add_alert_note_is_queued(tmp_path, monkeypatch):
+    from src.ai_controller.approval_queue import service as queue_service
+    from src.mcp.mcp_server import SamiGPTMCPServer
+
+    queue_service.init_queue(str(tmp_path))
+    monkeypatch.setattr(
+        "src.core.elastic_clusters.skill_vector_for_cluster",
+        lambda cluster_id=None: "MSV:1/IRIS:Y/TH:Y/SIEM:Y/EDR:Y/CTI:Y/KB:Y/ENG:Y/RB:Y/AG:Y/RU:Y",
+    )
+    siem = _FakeSIEM()
+    server = SamiGPTMCPServer(siem_client=siem)
+
+    async def _call():
+        return await server.handle_request(
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "tools/call",
+                "params": {
+                    "name": "add_alert_note",
+                    "arguments": {"alert_id": "a-1", "note": "Findings stay in Requests until approved."},
+                },
+            }
+        )
+
+    response = asyncio.run(_call())
+    body = response["result"]["content"][0]["text"]
+    assert "queued" in body
+    assert siem.notes == []
+    assert queue_service.get_queue().counts()["pending"] == 1
+    filed = queue_service.get_queue().list(status="pending")[0]
+    assert filed.action_type == "add_alert_note"
+    assert filed.payload["alert_id"] == "a-1"
+    assert filed.payload["note"] == "Findings stay in Requests until approved."
+
+
 def test_mcp_update_alert_verdict_runs_without_approval(tmp_path, monkeypatch):
     from src.ai_controller.approval_queue import service as queue_service
     from src.mcp.mcp_server import SamiGPTMCPServer
@@ -328,7 +412,6 @@ def test_mcp_update_alert_verdict_runs_without_approval(tmp_path, monkeypatch):
                     "arguments": {
                         "alert_id": "a-2",
                         "verdict": "in-progress",
-                        "comment": "AI working assessment",
                     },
                 },
             }
@@ -337,8 +420,49 @@ def test_mcp_update_alert_verdict_runs_without_approval(tmp_path, monkeypatch):
     response = asyncio.run(_call())
     body = response["result"]["content"][0]["text"]
     assert "queued" not in body
-    assert siem.verdicts == [("a-2", "in-progress", "AI working assessment")]
+    assert siem.verdicts == [("a-2", "in-progress", None)]
     assert queue_service.get_queue().counts()["pending"] == 0
+
+
+def test_mcp_update_alert_verdict_comment_files_note_request(tmp_path, monkeypatch):
+    from src.ai_controller.approval_queue import service as queue_service
+    from src.mcp.mcp_server import SamiGPTMCPServer
+
+    queue_service.init_queue(str(tmp_path))
+    monkeypatch.setattr(
+        "src.core.elastic_clusters.skill_vector_for_cluster",
+        lambda cluster_id=None: "MSV:1/IRIS:Y/TH:Y/SIEM:Y/EDR:Y/CTI:Y/KB:Y/ENG:Y/RB:Y/AG:Y/RU:Y",
+    )
+    siem = _FakeSIEM()
+    server = SamiGPTMCPServer(siem_client=siem)
+
+    async def _call():
+        return await server.handle_request(
+            {
+                "jsonrpc": "2.0",
+                "id": 3,
+                "method": "tools/call",
+                "params": {
+                    "name": "update_alert_verdict",
+                    "arguments": {
+                        "alert_id": "a-2",
+                        "verdict": "true_positive",
+                        "comment": "Note must wait for approval.",
+                    },
+                },
+            }
+        )
+
+    response = asyncio.run(_call())
+    body = response["result"]["content"][0]["text"]
+    assert siem.verdicts == [("a-2", "true_positive", None)]
+    assert siem.notes == []
+    assert "note_queued" in body
+    assert queue_service.get_queue().counts()["pending"] == 1
+    filed = queue_service.get_queue().list(status="pending")[0]
+    assert filed.action_type == "add_alert_note"
+    assert filed.payload["alert_id"] == "a-2"
+    assert filed.payload["note"] == "Note must wait for approval."
 
 
 def test_gated_mcp_tool_descriptions_tell_the_model_they_queue():
@@ -351,6 +475,7 @@ def test_gated_mcp_tool_descriptions_tell_the_model_they_queue():
     )
     gated = [
         "close_alert",
+        "add_alert_note",
         "isolate_endpoint",
         "release_endpoint_isolation",
         "kill_process_on_endpoint",

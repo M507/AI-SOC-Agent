@@ -214,7 +214,13 @@ class ApprovalQueue:
             raise ValueError(f"Tool {tool_name!r} is not gated through the approval queue")
         args = dict(arguments or {})
         title = args.get("title") or f"{spec.label}: {args.get('alert_id') or args.get('endpoint_id') or 'pending'}"
-        summary = args.get("summary") or args.get("comment") or args.get("description") or spec.description
+        summary = (
+            args.get("summary")
+            or args.get("comment")
+            or args.get("note")
+            or args.get("description")
+            or spec.description
+        )
         rationale = (
             args.get("rationale")
             or args.get("comment")

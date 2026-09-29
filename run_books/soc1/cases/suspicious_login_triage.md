@@ -95,7 +95,7 @@ This runbook explicitly **excludes**:
 
 9.  **Create Case (If Needed) & Synthesize & Document:**
     *   **Only create a case if:** Assessment determined that case creation is needed (uncertain, suspicious, or requires tracking).
-    *   Do **not** create a case. If not closing, use `add_alert_note` / `update_alert_verdict` with comprehensive alert details from `${ALERT_COMPLETE_DETAILS}`.
+    *   Do **not** create a case. If not closing, use `add_alert_note` (queued for Requests — do not claim the note is already written) / `update_alert_verdict` with comprehensive alert details from `${ALERT_COMPLETE_DETAILS}`.
     *   Store `${CASE_ID}` for subsequent steps.
     *   Combine findings: User context (`USER_SIEM_SUMMARY`), Source IP context (`IP_REPORT`, `IP_SIEM_SUMMARY`, `IP_RELATED_EVENTS`, `IP_IOC_MATCH`), Hostname context (`HOSTNAME_SIEM_SUMMARY`), Login patterns (`LOGIN_ACTIVITY_SUMMARY`), Related cases (`${RELATED_CASES}`).
     *   Assess the severity and store in `${ASSESSMENT}` (FP, BTP, TP/Suspicious, Uncertain).

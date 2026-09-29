@@ -49,6 +49,20 @@ class CloseAlertHandler:
         )
 
 
+class AddAlertNoteHandler:
+    def execute(self, request: ApprovalRequest, clients: ClientBundle) -> Dict[str, Any]:
+        _require(request, "alert_id", "note")
+        if clients.siem is None:
+            return _missing("siem", "No SIEM client for this cluster. Note payload is stored.")
+        from ...orchestrator import tools_siem
+
+        return tools_siem.add_alert_note(
+            alert_id=str(request.payload["alert_id"]),
+            note=str(request.payload["note"]),
+            client=clients.siem,
+        )
+
+
 class IsolateEndpointHandler:
     def execute(self, request: ApprovalRequest, clients: ClientBundle) -> Dict[str, Any]:
         _require_host(request)
@@ -294,6 +308,7 @@ class IdentityVerifyHandler:
 
 HANDLERS: Dict[str, ActionHandler] = {
     "close_alert": CloseAlertHandler(),
+    "add_alert_note": AddAlertNoteHandler(),
     "identity_verify": IdentityVerifyHandler(),
     "isolate_endpoint": IsolateEndpointHandler(),
     "release_isolation": ReleaseIsolationHandler(),
