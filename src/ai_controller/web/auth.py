@@ -28,6 +28,14 @@ logger = get_logger("sami.web.auth")
 
 COOKIE_NAME = "sami_session"
 PUBLIC_PATHS = frozenset({"/login", "/api/auth/login", "/api/auth/status"})
+PUBLIC_STATIC_PATHS = frozenset(
+    {
+        "/static/css/tokens.css",
+        "/static/css/base.css",
+        "/static/css/login.css",
+        "/static/theme.js",
+    }
+)
 WEAK_PASSWORD_VALUES = frozenset({"", "changeme", "admin", "password", "secret"})
 PLACEHOLDER_SECRETS = frozenset(
     {
@@ -238,7 +246,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
                 content={"success": False, "detail": "HTTPS is required"},
             )
         path = request.url.path
-        if path in PUBLIC_PATHS:
+        if path in PUBLIC_PATHS or path in PUBLIC_STATIC_PATHS:
             return await call_next(request)
 
         user = current_user(request)

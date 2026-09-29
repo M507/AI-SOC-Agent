@@ -4,16 +4,23 @@ This directory contains the CSS styles for the AI Controller web interface, orga
 
 ## File Structure
 
+### `tokens.css`
+**Purpose:** Centralized design tokens and theme palettes
+- Semantic color, type, radius, and shadow variables
+- Theme blocks for `U-Theme` (`data-theme="u"`), `FT-Theme` (`data-theme="ft"`), and `B-Theme` (`data-theme="b"`)
+- Preview cards reuse the same `data-theme` variables
+
 ### `base.css`
 **Purpose:** Base styles, CSS reset, body, and container styles
 - Global reset rules (`*`, `margin`, `padding`, `box-sizing`)
 - Body styling (font, background, colors, overflow)
 - Container layout
+- Visible `:focus-visible` ring
 
 ### `layout.css`
 **Purpose:** Main layout structure, sidebar, header, and content areas
 - Main layout with sidebar (`main-layout`, `sidebar`, `main-panel`)
-- Navigation items (`nav-item`, `nav-label`)
+- Navigation groups and items (`sidebar-group`, `nav-item`, `nav-label`)
 - Header styling (`header`, `header-actions`)
 - Content area (`content-area`, `session-content`, `session-header`)
 - Empty state messages (`no-session`)
@@ -28,7 +35,7 @@ This directory contains the CSS styles for the AI Controller web interface, orga
 ### `tabs.css`
 **Purpose:** Tab container, tabs, and tab-related elements
 - Tab container and header (`tabs-container`, `tabs-header`)
-- Tab groups and labels (`tab-group`, `tab-group-label`)
+- Tab groups and labels (`tab-group`, `tab-group-label`, `tab-subgroup-label`)
 - Individual tabs (`tab`, `tab.active`)
 - Tab badges and close buttons (`tab-badge`, `tab-close`)
 
@@ -62,6 +69,7 @@ This directory contains the CSS styles for the AI Controller web interface, orga
 - Settings content and body layout
 - Toggle switches and labels
 - Help text and tooltips
+- Appearance theme picker
 - Help link styling
 
 ### `scrollbar.css`
@@ -72,23 +80,25 @@ This directory contains the CSS styles for the AI Controller web interface, orga
 ## Loading Order
 
 The CSS files are loaded in the following order in `index.html`:
-1. `base.css` - Foundation styles
-2. `layout.css` - Layout structure
-3. `buttons.css` - Button components
-4. `tabs.css` - Tab components
-5. `status.css` - Status indicators
-6. `terminal.css` - Terminal components
-7. `autorun.css` - Autorun-specific overrides
-8. `modal.css` - Modal components
-9. `settings.css` - Settings page
-10. `toast.css` - Bottom-right status toasts
-11. `scrollbar.css` - Scrollbar styling
+1. `tokens.css` - Theme variables
+2. `base.css` - Foundation styles
+3. `layout.css` - Layout structure
+4. `buttons.css` - Button components
+5. `tabs.css` - Tab components
+6. `status.css` - Status indicators
+7. `terminal.css` - Terminal components
+8. `autorun.css` - Autorun-specific overrides
+9. `modal.css` - Modal components
+10. `settings.css` - Settings page
+11. `toast.css` - Bottom-right status toasts
+12. `scrollbar.css` - Scrollbar styling
 
 This order ensures that more specific styles (like `autorun.css`) can override base styles when needed.
 
 ## Making Changes
 
 When updating styles:
+- **New theme:** Add a `html[data-theme="…"]` block in `tokens.css` and a card on the Appearance page
 - **Layout changes:** Edit `layout.css`
 - **Button styling:** Edit `buttons.css`
 - **Terminal appearance:** Edit `terminal.css`
@@ -98,7 +108,8 @@ When updating styles:
 - **Status toasts:** Edit `toast.css`
 - **Global changes:** Edit `base.css` or `scrollbar.css`
 
+Use the semantic tokens from `tokens.css` instead of hardcoded colors so every theme stays in sync.
+
 ## Versioning
 
 Each CSS file includes a version query parameter in the HTML (`?v=1`) to enable cache busting when styles are updated. Increment the version number when making changes to force browsers to reload the updated styles.
-

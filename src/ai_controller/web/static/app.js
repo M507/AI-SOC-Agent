@@ -647,6 +647,7 @@ class AIController {
             if (mcpContent) mcpContent.style.display = 'none';
             if (noSessionMessage) noSessionMessage.style.display = 'none';
             this.autorunManager.syncView();
+            this.autorunManager.fitStrip();
         } else if (section === 'cost') {
             if (sessionContent) sessionContent.style.display = 'none';
             if (mcpContent) mcpContent.style.display = 'none';
@@ -864,7 +865,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const contentArea = document.querySelector('.content-area');
         if (contentArea) {
             contentArea.innerHTML = `
-                <div style="padding: 20px; color: #f48771;">
+                <div class="init-error">
                     <h2>Error Initializing Application</h2>
                     <p>${error.message}</p>
                     <p>Please check the browser console for more details.</p>

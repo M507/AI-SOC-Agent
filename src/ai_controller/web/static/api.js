@@ -184,6 +184,19 @@ class APIClient {
     /**
      * Delete a session.
      */
+    async renameSession(sessionId, name) {
+        const response = await this._fetch(`/api/sessions/${sessionId}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name }),
+        });
+        if (response.ok) {
+            return await response.json();
+        }
+        const data = await response.json().catch(() => ({}));
+        return { success: false, error: data.detail || 'Failed to rename session' };
+    }
+
     async deleteSession(sessionId) {
         try {
             const response = await this._fetch(`/api/sessions/${sessionId}`, {

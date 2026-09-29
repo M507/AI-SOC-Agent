@@ -1221,6 +1221,24 @@ async def get_session(session_id: str):
     })
 
 
+@app.patch("/api/sessions/{session_id}")
+async def rename_session(session_id: str, request: Request):
+    """Rename a session. History and the on-disk file stay in place."""
+    if not session_manager:
+        raise HTTPException(status_code=500, detail="Session manager not initialized")
+    data = await request.json()
+    try:
+        session = session_manager.rename_session(session_id, data.get("name"))
+    except ValueError as exc:
+        detail = str(exc)
+        status = 404 if "not found" in detail.lower() else 400
+        raise HTTPException(status_code=status, detail=detail) from exc
+    return JSONResponse(content={
+        "success": True,
+        "session": _session_payload(session),
+    })
+
+
 @app.delete("/api/sessions/{session_id}")
 async def delete_session(session_id: str):
     """Delete a session and clean up all associated resources."""

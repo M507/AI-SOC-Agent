@@ -20,15 +20,15 @@
 }
 
 .cost-card {
-    background: #252526;
-    border: 1px solid #3e3e42;
+    background: var(--color-surface);
+    border: 1px solid var(--color-border);
     padding: 14px 16px;
 }
 
 .cost-card h3 {
     margin: 0 0 8px;
     font-size: 12px;
-    color: #9cdcfe;
+    color: var(--color-syntax-info);
     text-transform: uppercase;
     letter-spacing: 0.04em;
 }
@@ -36,7 +36,7 @@
 .cost-metric {
     margin: 0 0 8px;
     font-size: 22px;
-    color: #d4d4d4;
+    color: var(--color-text);
 }
 
 .cost-table-wrap {
@@ -54,16 +54,16 @@
 .cost-table td {
     text-align: left;
     padding: 8px 10px;
-    border-bottom: 1px solid #3e3e42;
+    border-bottom: 1px solid var(--color-border);
     vertical-align: top;
 }
 
 .cost-table th {
-    color: #9cdcfe;
+    color: var(--color-syntax-info);
     font-weight: 600;
     position: sticky;
     top: 0;
-    background: #252526;
+    background: var(--color-surface);
 }
 
 .cost-auto-form {
@@ -77,6 +77,6 @@
     display: flex;
     flex-direction: column;
     gap: 6px;
-    color: #d4d4d4;
+    color: var(--color-text);
     font-size: 13px;
 }

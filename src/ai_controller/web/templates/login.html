@@ -4,61 +4,28 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Sign in – SamiGPT</title>
-    <style>
-        * { box-sizing: border-box; margin: 0; padding: 0; }
-        body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            background: #1e1e1e;
-            color: #d4d4d4;
-            min-height: 100vh;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-        }
-        .card {
-            background: #252526;
-            border: 1px solid #3e3e42;
-            border-radius: 8px;
-            padding: 32px;
-            width: 100%;
-            max-width: 380px;
-        }
-        h1 { font-size: 20px; color: #fff; margin-bottom: 6px; }
-        p { font-size: 13px; color: #858585; margin-bottom: 24px; }
-        label { display: block; font-size: 13px; margin: 12px 0 6px; }
-        input {
-            width: 100%;
-            padding: 10px 12px;
-            background: #1e1e1e;
-            border: 1px solid #3e3e42;
-            border-radius: 4px;
-            color: #d4d4d4;
-            font-size: 14px;
-        }
-        input:focus { outline: none; border-color: #007acc; }
-        button {
-            width: 100%;
-            margin-top: 20px;
-            padding: 10px 16px;
-            background: #007acc;
-            color: #fff;
-            border: none;
-            border-radius: 4px;
-            font-size: 14px;
-            font-weight: 500;
-            cursor: pointer;
-        }
-        button:hover { background: #005a9e; }
-        button:disabled { background: #3e3e42; cursor: not-allowed; }
-        .error {
-            display: none;
-            margin-top: 12px;
-            font-size: 13px;
-            color: #f48771;
-        }
-    </style>
+    <script>
+        (function () {
+            var key = 'samigpt.appearance';
+            var mode = 'u';
+            try {
+                var stored = JSON.parse(localStorage.getItem(key) || '{}');
+                if (stored && ['u', 'ft', 'b', 'system'].indexOf(stored.mode) !== -1) {
+                    mode = stored.mode;
+                }
+            } catch (e) {}
+            var theme = mode === 'system'
+                ? (window.matchMedia('(prefers-color-scheme: light)').matches ? 'b' : 'u')
+                : mode;
+            document.documentElement.setAttribute('data-theme', theme);
+            document.documentElement.setAttribute('data-appearance-mode', mode);
+        })();
+    </script>
+    <link rel="stylesheet" href="/static/css/tokens.css?v=1">
+    <link rel="stylesheet" href="/static/css/base.css?v=3">
+    <link rel="stylesheet" href="/static/css/login.css?v=1">
 </head>
-<body>
+<body class="login-page">
     <div class="card">
         <h1>SamiGPT</h1>
         <p>Sign in to the SOC AI orchestrator</p>
@@ -71,6 +38,7 @@
             <div class="error" id="error"></div>
         </form>
     </div>
+    <script src="/static/theme.js?v=1"></script>
     <script>
         document.getElementById('login-form').addEventListener('submit', async (event) => {
             event.preventDefault();

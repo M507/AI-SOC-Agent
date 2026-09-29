@@ -63,8 +63,21 @@ def test_api_usage_rejected_without_session():
 
 def test_static_rejected_without_session():
     client = _client()
-    response = client.get("/static/css/base.css", follow_redirects=False)
+    response = client.get("/static/css/layout.css", follow_redirects=False)
     assert response.status_code in (302, 401)
+
+
+def test_login_theme_assets_are_public():
+    client = _client()
+    tokens = client.get("/static/css/tokens.css")
+    login_css = client.get("/static/css/login.css")
+    theme_js = client.get("/static/theme.js")
+    assert tokens.status_code == 200
+    assert "--color-app" in tokens.text
+    assert login_css.status_code == 200
+    assert ".login-page" in login_css.text
+    assert theme_js.status_code == 200
+    assert "samigpt.appearance" in theme_js.text
 
 
 def test_docs_are_disabled():

@@ -1,0 +1,240 @@
+/* Design tokens. Themes only change these variables; layout stays the same.
+   Theme ids: u (U-Theme), ft (FT-Theme), b (B-Theme). */
+
+:root {
+    --color-app: #1e1e1e;
+    --color-surface: #252526;
+    --color-elevated: #2d2d30;
+    --color-sunken: #1e1e1e;
+    --color-hover: #2d2d30;
+    --color-active: #3e3e42;
+    --color-text: #d4d4d4;
+    --color-text-muted: #858585;
+    --color-text-strong: #ffffff;
+    --color-text-inverse: #ffffff;
+    --color-border: #3e3e42;
+    --color-accent: #007acc;
+    --color-accent-hover: #005a9e;
+    --color-accent-soft: #1e2a32;
+    --color-focus: #007acc;
+    --color-danger: #c72525;
+    --color-danger-hover: #a01e1e;
+    --color-danger-text: #f48771;
+    --color-danger-bg: #4a1f1f;
+    --color-success: #0e7c0e;
+    --color-success-text: #89d185;
+    --color-success-bg: #1e3a1e;
+    --color-success-border: #3d6b3d;
+    --color-warning: #8a6d1d;
+    --color-warning-text: #fff4c2;
+    --color-warning-bg: #4b3b12;
+    --color-warning-border: #8a6d1d;
+    --color-info: #4a9eff;
+    --color-info-text: #9cdcfe;
+    --color-info-bg: #1e3a4c;
+    --color-info-border: #2e5a73;
+    --color-overlay: rgba(0, 0, 0, 0.7);
+    --color-code: #ce9178;
+    --color-link: #4ec9b0;
+    --color-link-hover: #6dd5c4;
+    --color-syntax-command: #4ec9b0;
+    --color-syntax-info: #9cdcfe;
+    --color-syntax-type: #dcdcaa;
+    --color-syntax-keyword: #c586c0;
+    --color-icon-bg: #1d2a39;
+    --color-icon-border: #3f526a;
+    --color-selection: #243040;
+    --color-muted-bg: #3a3a3a;
+    --color-high: #a15c12;
+    --color-scrollbar: #424242;
+    --color-scrollbar-hover: #4e4e52;
+    --shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
+    --shadow-sm: 0 8px 24px rgba(0, 0, 0, 0.16);
+    --radius: 4px;
+    --radius-lg: 8px;
+    --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+    --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+    --font-tracking: 0;
+    color-scheme: dark;
+}
+
+html[data-theme="u"],
+.theme-preview[data-theme="u"],
+.theme-preview-half[data-theme="u"] {
+    --color-app: #1e1e1e;
+    --color-surface: #252526;
+    --color-elevated: #2d2d30;
+    --color-sunken: #1e1e1e;
+    --color-hover: #2d2d30;
+    --color-active: #3e3e42;
+    --color-text: #d4d4d4;
+    --color-text-muted: #858585;
+    --color-text-strong: #ffffff;
+    --color-text-inverse: #ffffff;
+    --color-border: #3e3e42;
+    --color-accent: #007acc;
+    --color-accent-hover: #005a9e;
+    --color-accent-soft: #1e2a32;
+    --color-focus: #007acc;
+    --color-danger: #c72525;
+    --color-danger-hover: #a01e1e;
+    --color-danger-text: #f48771;
+    --color-danger-bg: #4a1f1f;
+    --color-success: #0e7c0e;
+    --color-success-text: #89d185;
+    --color-success-bg: #1e3a1e;
+    --color-success-border: #3d6b3d;
+    --color-warning: #8a6d1d;
+    --color-warning-text: #fff4c2;
+    --color-warning-bg: #4b3b12;
+    --color-warning-border: #8a6d1d;
+    --color-info: #4a9eff;
+    --color-info-text: #9cdcfe;
+    --color-info-bg: #1e3a4c;
+    --color-info-border: #2e5a73;
+    --color-overlay: rgba(0, 0, 0, 0.7);
+    --color-code: #ce9178;
+    --color-link: #4ec9b0;
+    --color-link-hover: #6dd5c4;
+    --color-syntax-command: #4ec9b0;
+    --color-syntax-info: #9cdcfe;
+    --color-syntax-type: #dcdcaa;
+    --color-syntax-keyword: #c586c0;
+    --color-icon-bg: #1d2a39;
+    --color-icon-border: #3f526a;
+    --color-selection: #243040;
+    --color-muted-bg: #3a3a3a;
+    --color-high: #a15c12;
+    --color-scrollbar: #424242;
+    --color-scrollbar-hover: #4e4e52;
+    --shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
+    --shadow-sm: 0 8px 24px rgba(0, 0, 0, 0.16);
+    --radius: 4px;
+    --radius-lg: 8px;
+    --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+    --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+    --font-tracking: 0;
+    color-scheme: dark;
+}
+
+html[data-theme="ft"],
+.theme-preview[data-theme="ft"],
+.theme-preview-half[data-theme="ft"] {
+    --color-app: #07111f;
+    --color-surface: #0e1c32;
+    --color-elevated: #152640;
+    --color-sunken: #050d18;
+    --color-hover: #1a2f4d;
+    --color-active: #243a5c;
+    --color-text: #d7e2f0;
+    --color-text-muted: #7f93ad;
+    --color-text-strong: #f4f7fb;
+    --color-text-inverse: #ffffff;
+    --color-border: #2c4a72;
+    --color-accent: #c62828;
+    --color-accent-hover: #9b1c1c;
+    --color-accent-soft: #24151c;
+    --color-focus: #e53935;
+    --color-danger: #c62828;
+    --color-danger-hover: #9b1c1c;
+    --color-danger-text: #ff8a80;
+    --color-danger-bg: #3a1218;
+    --color-success: #1b7a4a;
+    --color-success-text: #7dcea0;
+    --color-success-bg: #0f2a1c;
+    --color-success-border: #2e6b4a;
+    --color-warning: #c9a227;
+    --color-warning-text: #ffe082;
+    --color-warning-bg: #3a2e0c;
+    --color-warning-border: #c9a227;
+    --color-info: #4fc3f7;
+    --color-info-text: #81d4fa;
+    --color-info-bg: #0d2a3c;
+    --color-info-border: #1e5a73;
+    --color-overlay: rgba(2, 6, 14, 0.78);
+    --color-code: #ffab91;
+    --color-link: #80cbc4;
+    --color-link-hover: #b2dfdb;
+    --color-syntax-command: #80cbc4;
+    --color-syntax-info: #81d4fa;
+    --color-syntax-type: #ffe082;
+    --color-syntax-keyword: #ce93d8;
+    --color-icon-bg: #12223a;
+    --color-icon-border: #2c4a72;
+    --color-selection: #1c2438;
+    --color-muted-bg: #1a2a40;
+    --color-high: #e65100;
+    --color-scrollbar: #2c4a72;
+    --color-scrollbar-hover: #3d5f8a;
+    --shadow: 0 4px 22px rgba(2, 6, 14, 0.65);
+    --shadow-sm: 0 8px 24px rgba(2, 6, 14, 0.35);
+    --radius: 3px;
+    --radius-lg: 6px;
+    --font: "Segoe UI", system-ui, sans-serif;
+    --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, "Courier New", monospace;
+    --font-tracking: -0.015em;
+    color-scheme: dark;
+}
+
+html[data-theme="b"],
+.theme-preview[data-theme="b"],
+.theme-preview-half[data-theme="b"] {
+    --color-app: #e7eef5;
+    --color-surface: #ffffff;
+    --color-elevated: #f3f6fa;
+    --color-sunken: #f0f4f8;
+    --color-hover: #e8eef5;
+    --color-active: #d3deea;
+    --color-text: #243044;
+    --color-text-muted: #5c6b7d;
+    --color-text-strong: #0f1a28;
+    --color-text-inverse: #ffffff;
+    --color-border: #c5d3e2;
+    --color-accent: #1565c0;
+    --color-accent-hover: #0d47a1;
+    --color-accent-soft: #e3f0fa;
+    --color-focus: #1565c0;
+    --color-danger: #c62828;
+    --color-danger-hover: #9b1c1c;
+    --color-danger-text: #b71c1c;
+    --color-danger-bg: #fdecea;
+    --color-success: #2e7d32;
+    --color-success-text: #1b5e20;
+    --color-success-bg: #e8f5e9;
+    --color-success-border: #a5d6a7;
+    --color-warning: #ef6c00;
+    --color-warning-text: #e65100;
+    --color-warning-bg: #fff3e0;
+    --color-warning-border: #ffcc80;
+    --color-info: #0277bd;
+    --color-info-text: #01579b;
+    --color-info-bg: #e1f5fe;
+    --color-info-border: #81d4fa;
+    --color-overlay: rgba(15, 26, 40, 0.45);
+    --color-code: #bf360c;
+    --color-link: #0d7377;
+    --color-link-hover: #00695c;
+    --color-syntax-command: #00695c;
+    --color-syntax-info: #0277bd;
+    --color-syntax-type: #f9a825;
+    --color-syntax-keyword: #6a1b9a;
+    --color-icon-bg: #e3f0fa;
+    --color-icon-border: #90caf9;
+    --color-selection: #d6e8f8;
+    --color-muted-bg: #d3deea;
+    --color-high: #e65100;
+    --color-scrollbar: #b7c6d6;
+    --color-scrollbar-hover: #9aafc4;
+    --shadow: 0 4px 20px rgba(15, 26, 40, 0.12);
+    --shadow-sm: 0 8px 24px rgba(15, 26, 40, 0.08);
+    --radius: 6px;
+    --radius-lg: 8px;
+    --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+    --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+    --font-tracking: 0;
+    color-scheme: light;
+}
+
+html {
+    background: var(--color-app);
+}

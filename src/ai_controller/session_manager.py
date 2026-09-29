@@ -206,7 +206,21 @@ class SessionManager:
         
         logger.info("Created session: %s (%s, type=%s)", session.id, session.name, session.session_type.value)
         return session
-    
+
+    def rename_session(self, session_id: str, name: str) -> Session:
+        """Rename a session without touching its history."""
+        session = self.get_session(session_id)
+        if not session:
+            raise ValueError(f"Session {session_id} not found")
+        resolved = (name or "").strip()
+        if not resolved:
+            raise ValueError("Session name is required")
+        session.name = resolved
+        session.updated_at = datetime.now()
+        self._save_session(session)
+        logger.info("Renamed session %s to %s", session.id, session.name)
+        return session
+
     def get_session(self, session_id: str) -> Optional[Session]:
         """Get a session by ID."""
         return self._sessions.get(session_id)
