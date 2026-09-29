@@ -35,7 +35,7 @@ are **not** auto-run. They become a second pending request.
 
 | Action | Payload stored | On approve | Status |
 |---|---|---|---|
-| **Close alert** | `alert_id`, reason, comment, cluster | Elastic `close_alert` | **Done** |
+| **Close alert** | `alert_id`, reason, comment, cluster | Pending **Add alert note** for the same alert, then Elastic `close_alert` | **Done**. Associated notes are approved and written first |
 | **Add alert note** | `alert_id`, note, cluster | Elastic `add_alert_note` | **Done** |
 | **Is this you?** | `alert_id`, user, IP, host, time, activity, question | **Yes** → ACK (close as benign TP). **No** → escalate: TP tag + verdict + **Elastic Security case** with the full alert | **Done** (case uses Kibana Cases, not IRIS/TheHive) |
 | **Fine-tune** | title, suggestion, `rule_id` / `rule_name`, pulled Home Lab rule (query, tags, exceptions) | **None** — no buttons | **Informational**. Rule is loaded from `/root/Home-Lab-Rules/rules/elastic_1/rules/` (override with `SAMI_LAB_RULES_DIR`). No engineering board. |

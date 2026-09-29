@@ -501,6 +501,23 @@ class ApprovalQueue:
                     }
                 )
                 continue
+            if normalized == "approve" and request.status in {
+                RequestStatus.EXECUTED,
+                RequestStatus.FAILED,
+                RequestStatus.DENIED,
+                RequestStatus.AWAITING_INTEGRATION,
+            }:
+                skipped += 1
+                results.append(
+                    {
+                        "id": request_id,
+                        "success": True,
+                        "skipped": True,
+                        "error": "Already settled",
+                        "status": request.status.value,
+                    }
+                )
+                continue
             if normalized == "approve" and spec and spec.asks_question:
                 skipped += 1
                 results.append(
@@ -643,7 +660,86 @@ class ApprovalQueue:
             self._mark_archived(request)
         return self.store.put(request)
 
+    @staticmethod
+    def _request_alert_ids(request: ApprovalRequest) -> set:
+        """Alert ids on a request: top-level payload and the enriched alert snapshot."""
+        ids = set()
+        payload = request.payload or {}
+        for raw in (payload.get("alert_id"), payload.get("alertId")):
+            text = str(raw or "").strip()
+            if text:
+                ids.add(text)
+        alert = payload.get("alert")
+        if isinstance(alert, dict):
+            for raw in (alert.get("id"), alert.get("alert_id"), alert.get("alertId")):
+                text = str(raw or "").strip()
+                if text:
+                    ids.add(text)
+        return ids
+
+    def _pending_notes_for_alert(self, close_request: ApprovalRequest) -> List[ApprovalRequest]:
+        """Pending add-note requests for the same alert (and cluster, when both are set)."""
+        wanted = self._request_alert_ids(close_request)
+        if not wanted:
+            return []
+        close_cluster = close_request.cluster_id or None
+        matches: List[ApprovalRequest] = []
+        for item in self.store.list():
+            if item.id == close_request.id:
+                continue
+            if item.action_type != "add_alert_note" or item.status != RequestStatus.PENDING:
+                continue
+            if not (self._request_alert_ids(item) & wanted):
+                continue
+            note_cluster = item.cluster_id or None
+            if close_cluster and note_cluster and close_cluster != note_cluster:
+                continue
+            matches.append(item)
+        return matches
+
+    def _approve_associated_notes(self, close_request: ApprovalRequest) -> List[Dict[str, Any]]:
+        """Approve pending notes for this alert so a close cannot land without them."""
+        notes = self._pending_notes_for_alert(close_request)
+        if not notes:
+            return []
+        alert_id = next(iter(self._request_alert_ids(close_request)), "")
+        actor = "analyst"
+        comment = f"Approved with close of alert {alert_id}" if alert_id else "Approved with close alert"
+        if close_request.decision:
+            actor = close_request.decision.actor or actor
+            if close_request.decision.comment:
+                comment = close_request.decision.comment
+        results: List[Dict[str, Any]] = []
+        for note in notes:
+            if close_request.cluster_id and not note.cluster_id:
+                note.cluster_id = close_request.cluster_id
+            payload = dict(note.payload or {})
+            if not payload.get("alert_id"):
+                overlap = self._request_alert_ids(note) & self._request_alert_ids(close_request)
+                fill = next(iter(overlap), None) or alert_id
+                if fill:
+                    payload["alert_id"] = fill
+                    note.payload = payload
+            note.decision = Decision(action="approve", actor=actor, comment=comment)
+            note.updated_at = datetime.now()
+            updated = self._execute(note)
+            if updated.id not in close_request.child_request_ids:
+                close_request.child_request_ids.append(updated.id)
+            results.append(
+                {
+                    "id": updated.id,
+                    "status": updated.status.value,
+                    "success": updated.status == RequestStatus.EXECUTED,
+                    "error": updated.error,
+                    "note": (updated.payload or {}).get("note"),
+                }
+            )
+        return results
+
     def _execute(self, request: ApprovalRequest) -> ApprovalRequest:
+        associated_notes: List[Dict[str, Any]] = []
+        if request.action_type == "close_alert":
+            associated_notes = self._approve_associated_notes(request)
         handler = get_handler(request.action_type)
         clients = resolve_clients(request.cluster_id)
         if clients.cluster_id and not request.cluster_id:
@@ -655,10 +751,14 @@ class ApprovalQueue:
             request.status = RequestStatus.FAILED
             request.error = str(exc)
             request.execution_result = {"success": False, "error": str(exc)}
+            if associated_notes:
+                request.execution_result["associated_notes"] = associated_notes
             self._mark_archived(request)
             return self.store.put(request)
 
         request.execution_result = result if isinstance(result, dict) else {"result": result}
+        if associated_notes:
+            request.execution_result["associated_notes"] = associated_notes
         request.updated_at = datetime.now()
         if isinstance(result, dict) and result.get("needs_integration"):
             request.status = RequestStatus.AWAITING_INTEGRATION

@@ -305,6 +305,51 @@ class RequestsManager {
         return this.catalog.find((item) => item.action_type === actionType) || null;
     }
 
+    requestAlertIds(item) {
+        const ids = new Set();
+        const payload = (item && item.payload) || {};
+        [payload.alert_id, payload.alertId].forEach((value) => {
+            if (value) {
+                ids.add(String(value));
+            }
+        });
+        const alert = payload.alert;
+        if (alert && typeof alert === 'object') {
+            [alert.id, alert.alert_id, alert.alertId].forEach((value) => {
+                if (value) {
+                    ids.add(String(value));
+                }
+            });
+        }
+        return ids;
+    }
+
+    associatedPendingNotes(item) {
+        if (!item || (item.action_type !== 'close_alert' && item.action_type !== 'identity_verify')) {
+            return [];
+        }
+        const wanted = this.requestAlertIds(item);
+        if (!wanted.size) {
+            return [];
+        }
+        return this.requests.filter((other) => {
+            if (other.action_type !== 'add_alert_note' || other.status !== 'pending') {
+                return false;
+            }
+            const noteIds = this.requestAlertIds(other);
+            let overlap = false;
+            wanted.forEach((id) => {
+                if (noteIds.has(id)) {
+                    overlap = true;
+                }
+            });
+            if (!overlap) {
+                return false;
+            }
+            return !item.cluster_id || !other.cluster_id || item.cluster_id === other.cluster_id;
+        });
+    }
+
     selected() {
         if (this.receipt && this.receipt.item && this.receipt.item.id === this.selectedId) {
             return this.receipt.item;
@@ -656,11 +701,17 @@ class RequestsManager {
                 <button type="button" class="btn btn-danger" data-request-action="deny">Deny</button>
             `;
         }
+        const notes = this.associatedPendingNotes(item);
+        const noteCopy = notes.length
+            ? (item.action_type === 'identity_verify'
+                ? `Yes will also approve ${notes.length} pending alert note${notes.length === 1 ? '' : 's'} for this alert.`
+                : `Approve will also write ${notes.length} pending alert note${notes.length === 1 ? '' : 's'} for this alert.`)
+            : 'Review the details below, then approve or deny.';
         return `
             <div class="request-decision-bar">
                 <div class="request-decision-copy">
                     <span class="request-decision-label">Needs approval</span>
-                    <span>Review the details below, then approve or deny.</span>
+                    <span>${noteCopy}</span>
                 </div>
                 <div class="request-actions">${buttons}</div>
                 ${comment}
@@ -819,9 +870,15 @@ class RequestsManager {
         const proposedNote = item.action_type === 'add_alert_note' && payload.note
             ? `<div class="request-section-label">Proposed note</div><div class="request-detail-summary">${escapeHtml(this.formatValue(payload.note))}</div>`
             : '';
+        const associated = this.associatedPendingNotes(item);
+        const associatedHtml = associated.length
+            ? `<div class="request-section-label">Associated notes (approved with this close)</div>
+               ${associated.map((note) => `<div class="request-detail-summary">${escapeHtml(this.formatValue(note.payload && note.payload.note))}</div>`).join('')}`
+            : '';
         return `
             ${this.alertHtml(payload.alert)}
             ${proposedNote}
+            ${associatedHtml}
             ${payloadRows ? `<div class="request-section-label">Action parameters</div><dl class="request-payload">${payloadRows}</dl>` : ''}
         `;
     }

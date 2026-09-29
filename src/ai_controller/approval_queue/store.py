@@ -23,14 +23,20 @@ class RequestStore:
         self._load_all()
 
     def _load_all(self) -> None:
+        on_disk: Dict[str, ApprovalRequest] = {}
         for path in self.requests_dir.glob("*.json"):
             try:
                 with open(path, "r", encoding="utf-8") as handle:
                     data = json.load(handle)
                 request = ApprovalRequest.from_dict(data)
-                self._items[request.id] = request
+                on_disk[request.id] = request
             except Exception as exc:
                 logger.error("Failed to load request from %s: %s", path, exc)
+        self._items = on_disk
+
+    def refresh(self) -> None:
+        """Reload from disk so files written by another process are visible."""
+        self._load_all()
 
     def _path(self, request_id: str) -> Path:
         return self.requests_dir / f"{request_id}.json"
@@ -53,6 +59,7 @@ class RequestStore:
         status: Optional[RequestStatus] = None,
         cluster_id: Optional[str] = None,
     ) -> List[ApprovalRequest]:
+        self.refresh()
         items = list(self._items.values())
         if status is not None:
             items = [item for item in items if item.status == status]

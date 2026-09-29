@@ -2,7 +2,7 @@ import asyncio
 
 from src.ai_controller.approval_queue.catalog import ACTION_CATALOG, get_action_spec
 from src.ai_controller.approval_queue.clients import ClientBundle
-from src.ai_controller.approval_queue.models import RequestStatus
+from src.ai_controller.approval_queue.models import ApprovalRequest, RequestStatus
 from src.ai_controller.approval_queue.service import ApprovalQueue
 
 
@@ -155,6 +155,131 @@ def test_close_alert_enriches_sparse_mcp_payload(tmp_path, monkeypatch):
     assert created.payload.get("username") == "alice"
 
 
+def test_approve_close_also_approves_associated_notes(tmp_path, monkeypatch):
+    queue = ApprovalQueue(str(tmp_path))
+    siem = _FakeSIEM()
+    bundle = lambda cluster_id=None: ClientBundle(cluster_id=cluster_id or "lab", siem=siem)
+    monkeypatch.setattr("src.ai_controller.approval_queue.service.resolve_clients", bundle)
+    monkeypatch.setattr("src.ai_controller.approval_queue.enrichment.resolve_clients", bundle)
+    note = queue.create(
+        "add_alert_note",
+        "Add note",
+        "Host is a scanner; prior notes agree.",
+        payload={"alert_id": "alert-9", "note": "Host is a scanner; prior notes agree."},
+        cluster_id="lab",
+    )
+    other = queue.create(
+        "add_alert_note",
+        "Add note on a different alert",
+        "Leave this pending.",
+        payload={"alert_id": "alert-other", "note": "Leave this pending."},
+        cluster_id="lab",
+    )
+    close = queue.create(
+        "close_alert",
+        "Close noisy DNS alert",
+        "scanner",
+        payload={"alert_id": "alert-9", "reason": "false_positive", "comment": "scanner"},
+        cluster_id="lab",
+    )
+    done = queue.approve(close.id)
+    assert done.status is RequestStatus.EXECUTED
+    assert siem.notes == [("alert-9", "Host is a scanner; prior notes agree.")]
+    assert siem.closed == [("alert-9", "false_positive", "scanner")]
+    assert queue._require(note.id).status is RequestStatus.EXECUTED
+    assert queue._require(other.id).status is RequestStatus.PENDING
+    assert any(item["id"] == note.id for item in (done.execution_result or {}).get("associated_notes") or [])
+
+
+def test_approve_close_matches_note_alert_snapshot_and_inherits_cluster(tmp_path, monkeypatch):
+    queue = ApprovalQueue(str(tmp_path))
+    siem = _FakeSIEM()
+    seen = []
+
+    def _bundle(cluster_id=None):
+        seen.append(cluster_id)
+        return ClientBundle(cluster_id=cluster_id or "lab", siem=siem)
+
+    monkeypatch.setattr("src.ai_controller.approval_queue.service.resolve_clients", _bundle)
+    monkeypatch.setattr("src.ai_controller.approval_queue.enrichment.resolve_clients", _bundle)
+    note = ApprovalRequest(
+        action_type="add_alert_note",
+        title="Add note",
+        summary="Nested id only.",
+        payload={"alert": {"id": "alert-9"}, "note": "Nested id only."},
+        status=RequestStatus.PENDING,
+    )
+    queue.store.put(note)
+    assert note.cluster_id is None
+    close = queue.create(
+        "close_alert",
+        "Close noisy DNS alert",
+        "scanner",
+        payload={"alert_id": "alert-9", "reason": "false_positive", "comment": "scanner"},
+        cluster_id="lab",
+    )
+    done = queue.approve(close.id)
+    assert done.status is RequestStatus.EXECUTED
+    updated_note = queue._require(note.id)
+    assert updated_note.status is RequestStatus.EXECUTED
+    assert updated_note.cluster_id == "lab"
+    assert siem.notes == [("alert-9", "Nested id only.")]
+    assert siem.closed == [("alert-9", "false_positive", "scanner")]
+
+
+def test_approve_close_picks_up_note_filed_by_another_queue(tmp_path, monkeypatch):
+    closer = ApprovalQueue(str(tmp_path))
+    filer = ApprovalQueue(str(tmp_path))
+    siem = _FakeSIEM()
+    bundle = lambda cluster_id=None: ClientBundle(cluster_id=cluster_id or "lab", siem=siem)
+    monkeypatch.setattr("src.ai_controller.approval_queue.service.resolve_clients", bundle)
+    monkeypatch.setattr("src.ai_controller.approval_queue.enrichment.resolve_clients", bundle)
+    note = filer.create(
+        "add_alert_note",
+        "Add note",
+        "Filed in the other process.",
+        payload={"alert_id": "alert-9", "note": "Filed in the other process."},
+        cluster_id="lab",
+    )
+    close = closer.create(
+        "close_alert",
+        "Close noisy DNS alert",
+        "scanner",
+        payload={"alert_id": "alert-9", "reason": "false_positive", "comment": "scanner"},
+        cluster_id="lab",
+    )
+    done = closer.approve(close.id)
+    assert done.status is RequestStatus.EXECUTED
+    assert siem.notes == [("alert-9", "Filed in the other process.")]
+    assert closer._require(note.id).status is RequestStatus.EXECUTED
+
+
+def test_deny_close_leaves_associated_note_pending(tmp_path, monkeypatch):
+    queue = ApprovalQueue(str(tmp_path))
+    siem = _FakeSIEM()
+    monkeypatch.setattr(
+        "src.ai_controller.approval_queue.service.resolve_clients",
+        lambda cluster_id=None: ClientBundle(siem=siem),
+    )
+    note = queue.create(
+        "add_alert_note",
+        "Add note",
+        "should stay pending",
+        payload={"alert_id": "alert-1", "note": "should stay pending"},
+    )
+    close = queue.create(
+        "close_alert",
+        "Close it",
+        "maybe",
+        payload={"alert_id": "alert-1"},
+    )
+    denied = queue.deny(close.id, comment="still investigating")
+    assert denied.status is RequestStatus.DENIED
+    assert queue._require(note.id).status is RequestStatus.PENDING
+    assert siem.notes == []
+    assert siem.closed == []
+
+
 def test_add_alert_note_enriches_and_executes_on_approve(tmp_path, monkeypatch):
     queue = ApprovalQueue(str(tmp_path))
     siem = _FakeSIEM()
@@ -236,6 +361,36 @@ def test_identity_yes_closes_as_benign(tmp_path, monkeypatch):
     child = queue.get(done.child_request_ids[0])
     assert child.action_type == "close_alert"
     assert child.status is RequestStatus.EXECUTED
+
+
+def test_identity_yes_also_approves_associated_note(tmp_path, monkeypatch):
+    queue = ApprovalQueue(str(tmp_path))
+    siem = _FakeSIEM()
+    monkeypatch.setattr(
+        "src.ai_controller.approval_queue.service.resolve_clients",
+        lambda cluster_id=None: ClientBundle(cluster_id="lab", siem=siem),
+    )
+    note = queue.create(
+        "add_alert_note",
+        "Add note",
+        "Confirmed the user.",
+        payload={"alert_id": "alert-22", "note": "Confirmed the user."},
+        cluster_id="lab",
+    )
+    created = queue.create(
+        "identity_verify",
+        "VPN login from 8.8.8.8",
+        "New ASN for this user.",
+        payload={"username": "sami", "alert_id": "alert-22", "source_ip": "8.8.8.8", "activity": "VPN login"},
+        cluster_id="lab",
+    )
+    done = queue.answer(created.id, "yes")
+    assert siem.notes == [("alert-22", "Confirmed the user.")]
+    assert siem.closed[0][0] == "alert-22"
+    assert queue._require(note.id).status is RequestStatus.EXECUTED
+    close = queue.get(done.child_request_ids[0])
+    assert close.action_type == "close_alert"
+    assert any(item["id"] == note.id for item in (close.execution_result or {}).get("associated_notes") or [])
 
 
 def test_identity_no_opens_elastic_case_not_iris(tmp_path, monkeypatch):

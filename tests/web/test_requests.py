@@ -48,6 +48,8 @@ def test_requests_view_is_in_the_shell():
     assert 'data-request-action="approve"' in requests_js
     assert "Needs approval" in requests_js
     assert "Proposed note" in requests_js
+    assert "Associated notes (approved with this close)" in requests_js
+    assert "Approve will also write" in requests_js
     assert "request-bulk-comment" in requests_js
     assert "Technical details" in requests_js
 
