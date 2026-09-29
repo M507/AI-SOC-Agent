@@ -373,6 +373,61 @@ button.chart-hbar:hover .chart-hbar-name {
     color: var(--color-text-strong);
 }
 
+.library-tree {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+}
+
+.library-tree .library-tree {
+    margin-left: 10px;
+    padding-left: 8px;
+    border-left: 1px solid var(--color-border);
+}
+
+.library-tree-folder {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    width: 100%;
+    margin: 2px 0;
+    padding: 6px 8px;
+    border: 0;
+    border-radius: var(--radius);
+    background: transparent;
+    color: var(--color-text-strong);
+    font-size: 12px;
+    font-weight: 600;
+    text-align: left;
+    cursor: pointer;
+    font-family: inherit;
+}
+
+.library-tree-folder::before {
+    content: "";
+    flex: 0 0 auto;
+    border-style: solid;
+    border-width: 4px 0 4px 5px;
+    border-color: transparent transparent transparent var(--color-text-muted);
+}
+
+.library-tree-branch[aria-expanded="true"] > .library-tree-folder::before {
+    border-width: 5px 4px 0 4px;
+    border-color: var(--color-text-muted) transparent transparent transparent;
+}
+
+.library-tree-branch[aria-expanded="false"] > .library-tree {
+    display: none;
+}
+
+.library-tree-folder:hover {
+    background: var(--color-hover);
+}
+
+.library-tree .library-file {
+    width: calc(100% - 0px);
+}
+
 .library-doc {
     flex: 1;
     overflow: auto;

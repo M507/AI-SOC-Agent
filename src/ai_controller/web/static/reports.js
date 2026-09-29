@@ -83,37 +83,16 @@ class ReportsManager {
             host.append(note);
             return;
         }
-        let lastSession = '';
-        visible.forEach((item) => {
-            if (item.session_id !== lastSession) {
-                lastSession = item.session_id;
-                const label = document.createElement('div');
-                label.className = 'library-group-label';
-                label.textContent = item.session_name || 'Session';
-                host.append(label);
-            }
-            const button = document.createElement('button');
-            button.type = 'button';
-            button.className = 'library-file report-file';
-            button.dataset.sessionId = item.session_id;
-            button.dataset.entryId = item.entry_id;
-            const title = document.createElement('span');
-            title.textContent = item.session_name || 'Session';
-            const command = document.createElement('span');
-            command.className = 'report-command';
-            command.textContent = item.command || '';
-            const when = document.createElement('time');
-            when.className = 'report-time';
-            when.dateTime = item.at || '';
-            when.textContent = formatPageWhen(item.at);
-            button.append(title, command, when);
-            if (`${item.session_id}:${item.entry_id}` === this.selected) {
-                button.classList.add('active');
-                button.setAttribute('aria-current', 'true');
-            }
-            button.addEventListener('click', () => this.open(item.session_id, item.entry_id));
-            host.append(button);
-        });
+        mountLinkTree(host, visible.map((item) => ({
+            segments: [{ id: item.session_id, label: item.session_name || 'Session' }],
+            label: item.command || 'Write-up',
+            meta: formatPageWhen(item.at),
+            when: item.at || '',
+            className: 'library-file report-file',
+            dataset: { sessionId: item.session_id, entryId: item.entry_id },
+            active: `${item.session_id}:${item.entry_id}` === this.selected,
+            onSelect: () => this.open(item.session_id, item.entry_id),
+        })), { sortFolders: false, emptyText: 'Nothing matches this search.' });
     }
 
     async open(sessionId, entryId) {
