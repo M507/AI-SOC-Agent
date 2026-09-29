@@ -41,6 +41,11 @@ def test_requests_view_is_in_the_shell():
     assert "bulk-approve" in requests_js
     assert "bulk-ignore" in requests_js
     assert "handleBulk" in requests_js
+    assert "handleAction" in requests_js
+    assert "_inFlight" in requests_js
+    assert "settleLocally" in requests_js
+    assert "this.handleAction(action)" in requests_js
+    assert "await this.handleAction(action)" not in requests_js
     assert "refreshFromTickets" in requests_js
     assert "archived" in requests_js
     assert "Waiting on integration" in requests_js

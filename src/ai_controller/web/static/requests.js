@@ -31,7 +31,10 @@ class RequestsManager {
         this.generation = 0;
         this.receipt = null;
         this._bound = false;
-        this._busy = false;
+        this._inFlight = new Set();
+        this._optimisticById = new Map();
+        this._rollbackById = new Map();
+        this._clickLockUntil = 0;
         this._savedDetailComment = '';
         this._savedBulkComment = '';
         this._skipDetailRebuild = false;
@@ -103,9 +106,12 @@ class RequestsManager {
             event.stopPropagation();
             this.toggleChecked(checkbox.dataset.requestCheck, checkbox.checked);
         });
-        pane.addEventListener('click', async (event) => {
+        pane.addEventListener('click', (event) => {
             const actionBtn = event.target.closest('[data-request-action]');
-            if (!actionBtn || actionBtn.disabled || this._busy) {
+            if (!actionBtn || actionBtn.disabled) {
+                return;
+            }
+            if (Date.now() < this._clickLockUntil) {
                 return;
             }
             const action = actionBtn.dataset.requestAction;
@@ -117,10 +123,10 @@ class RequestsManager {
                         : action === 'bulk-ignore'
                             ? 'ignore'
                             : 'acknowledge';
-                await this.handleBulk(bulkAction);
+                this.handleBulk(bulkAction);
                 return;
             }
-            await this.handleAction(action);
+            this.handleAction(action);
         });
     }
 
@@ -257,7 +263,7 @@ class RequestsManager {
     }
 
     async pollSummary() {
-        if (this._busy || this._externalRefreshing) {
+        if (this._externalRefreshing) {
             return;
         }
         const data = await this.controller.api.getRequestsSummary();
@@ -352,14 +358,20 @@ class RequestsManager {
             this.catalog = catalog.actions;
         }
         if (list && list.success) {
-            this.items = list.requests || [];
+            this.items = this.applyOptimistic(list.requests || []);
             this.counts = list.counts || this.counts;
             this.queueCounts = list.queue_counts || this.queueCounts;
             this.tabCounts = (this.queueCounts && this.queueCounts[this.queueTab]) || list.tab_counts || this.tabCounts;
             if (typeof list.generation === 'number') {
                 this.generation = list.generation;
             }
-            this._fullById = {};
+            const keepFull = {};
+            this._inFlight.forEach((id) => {
+                if (this._fullById[id]) {
+                    keepFull[id] = this._fullById[id];
+                }
+            });
+            this._fullById = keepFull;
         }
         this.applyQueueFilter();
         this.updateNavBadge();
@@ -1263,36 +1275,193 @@ class RequestsManager {
         this.selectedId = item.id;
     }
 
-    async handleAction(action) {
-        const item = this.selected();
-        if (!item) {
-            return;
+    workingMessage(action, count) {
+        const many = Number(count || 1);
+        const suffix = many > 1 ? ` ${many} requests` : '';
+        if (action === 'approve') {
+            return many > 1 ? `Approving${suffix}…` : 'Approving…';
         }
-        const comment = this.comment();
-        this._busy = true;
-        let result;
-        try {
-            if (action === 'approve') {
-                result = await this.controller.api.approveRequest(item.id, comment);
-            } else if (action === 'deny') {
-                result = await this.controller.api.denyRequest(item.id, comment);
-            } else if (action === 'done') {
-                result = await this.controller.api.acknowledgeRequest(item.id, comment);
-            } else if (action === 'ignore') {
-                result = await this.controller.api.ignoreRequest(item.id, comment);
-            } else if (action === 'create-runbook') {
-                result = await this.controller.api.createRunbookFromRequest(item.id, comment);
-            } else if (action === 'yes' || action === 'no') {
-                result = await this.controller.api.answerRequest(item.id, action, comment);
-            } else {
+        if (action === 'deny') {
+            return many > 1 ? `Denying${suffix}…` : 'Denying…';
+        }
+        if (action === 'ignore') {
+            return many > 1 ? `Ignoring${suffix}…` : 'Ignoring…';
+        }
+        if (action === 'done' || action === 'acknowledge') {
+            return many > 1 ? `Marking${suffix} done…` : 'Marking done…';
+        }
+        if (action === 'create-runbook') {
+            return 'Starting runbook session…';
+        }
+        if (action === 'yes') {
+            return 'Recording Yes…';
+        }
+        if (action === 'no') {
+            return 'Recording No…';
+        }
+        return 'Updating request…';
+    }
+
+    optimisticStatus(action) {
+        if (action === 'deny') {
+            return 'denied';
+        }
+        if (action === 'done' || action === 'acknowledge' || action === 'ignore' || action === 'create-runbook') {
+            return 'acknowledged';
+        }
+        return 'executed';
+    }
+
+    optimisticUpdatedItem(item, action) {
+        return {
+            ...item,
+            status: this.optimisticStatus(action),
+            archived: true,
+            _optimistic: true,
+        };
+    }
+
+    applyOptimistic(items) {
+        if (!this._optimisticById.size) {
+            return items;
+        }
+        const result = [];
+        items.forEach((item) => {
+            const overlay = this._optimisticById.get(item.id);
+            if (overlay && this.filter === 'open' && overlay.archived) {
                 return;
             }
-        } finally {
-            this._busy = false;
+            result.push(overlay || item);
+        });
+        return result;
+    }
+
+    replaceItem(id, next) {
+        const index = this.items.findIndex((item) => item.id === id);
+        if (index >= 0) {
+            this.items[index] = next;
+        } else {
+            this.items.unshift(next);
         }
+        if (this._fullById[id]) {
+            this._fullById[id] = { ...next, _full: true, _generation: this.generation };
+        }
+    }
+
+    nudgeCounts(delta, item) {
+        const openDelta = delta;
+        const archivedDelta = -delta;
+        if (this.tabCounts) {
+            this.tabCounts.open = Math.max(0, Number(this.tabCounts.open || 0) + openDelta);
+            this.tabCounts.archived = Math.max(0, Number(this.tabCounts.archived || 0) + archivedDelta);
+        }
+        if (this.queueCounts && this.queueCounts[this.queueTab]) {
+            this.queueCounts[this.queueTab].open = Math.max(
+                0,
+                Number(this.queueCounts[this.queueTab].open || 0) + openDelta,
+            );
+            this.queueCounts[this.queueTab].archived = Math.max(
+                0,
+                Number(this.queueCounts[this.queueTab].archived || 0) + archivedDelta,
+            );
+            this.tabCounts = this.queueCounts[this.queueTab];
+        }
+        if (this.counts) {
+            this.counts.open = Math.max(0, Number(this.counts.open || 0) + openDelta);
+            this.counts.pending = Math.max(0, Number(this.counts.pending || 0) + openDelta);
+            if (this.isActionable(item)) {
+                this.counts.actionable = Math.max(0, Number(this.counts.actionable || 0) + openDelta);
+            }
+        }
+        this.updateNavBadge();
+        this.updateHeaderMeta();
+    }
+
+    settleLocally(item, action) {
+        const snapshot = { ...item };
+        const settled = this.optimisticUpdatedItem(item, action);
+        this._rollbackById.set(item.id, snapshot);
+        this._optimisticById.set(item.id, settled);
+        const nextId = this.nextOpenId(item.id);
+        this.replaceItem(item.id, settled);
+        this.selectedIds.delete(item.id);
+        this.nudgeCounts(-1, snapshot);
+        this.applyQueueFilter();
+        this.receipt = null;
+        this._skipDetailRebuild = false;
+        this.selectedId = nextId;
+        this._clickLockUntil = Date.now() + 400;
+        this.render();
+        if (nextId) {
+            this.ensureFull(nextId);
+        }
+        return snapshot;
+    }
+
+    restoreLocal(id) {
+        const snapshot = this._rollbackById.get(id);
+        this._optimisticById.delete(id);
+        this._rollbackById.delete(id);
+        this._inFlight.delete(id);
+        if (!snapshot) {
+            this.load();
+            return;
+        }
+        this.replaceItem(id, snapshot);
+        this.nudgeCounts(1, snapshot);
+        this.applyQueueFilter();
+        this.render();
+    }
+
+    finishLocal(id) {
+        this._optimisticById.delete(id);
+        this._rollbackById.delete(id);
+        this._inFlight.delete(id);
+    }
+
+    dispatchAction(action, id, comment) {
+        const api = this.controller.api;
+        if (action === 'approve') {
+            return api.approveRequest(id, comment);
+        }
+        if (action === 'deny') {
+            return api.denyRequest(id, comment);
+        }
+        if (action === 'done' || action === 'acknowledge') {
+            return api.acknowledgeRequest(id, comment);
+        }
+        if (action === 'ignore') {
+            return api.ignoreRequest(id, comment);
+        }
+        if (action === 'create-runbook') {
+            return api.createRunbookFromRequest(id, comment);
+        }
+        if (action === 'yes' || action === 'no') {
+            return api.answerRequest(id, action, comment);
+        }
+        return Promise.resolve({ success: false, error: 'Unknown action' });
+    }
+
+    async handleAction(action) {
+        const item = this.selected();
+        if (!item || this._inFlight.has(item.id)) {
+            return;
+        }
+        this._inFlight.add(item.id);
+        const comment = this.comment();
+        const toastKey = `requests-${item.id}`;
+        this.settleLocally(item, action);
+        if (window.toast) {
+            window.toast.info(this.workingMessage(action), { key: toastKey, duration: 0 });
+        }
+        const result = await this.dispatchAction(action, item.id, comment);
         if (!result || !result.success) {
+            this.restoreLocal(item.id);
             if (window.toast) {
-                window.toast.error((result && (result.error || result.detail)) || 'Could not update request', { key: 'requests' });
+                window.toast.error(
+                    (result && (result.error || result.detail)) || 'Could not update request',
+                    { key: toastKey },
+                );
             }
             return;
         }
@@ -1300,19 +1469,15 @@ class RequestsManager {
         const github = updated && updated.execution_result && updated.execution_result.github;
         if (window.toast) {
             if (action === 'ignore' && github && github.attempted && github.success === false) {
-                window.toast.error(github.error || 'Ignored locally, but GitHub close failed.', { key: 'requests' });
+                window.toast.error(github.error || 'Ignored locally, but GitHub close failed.', { key: toastKey });
             } else {
-                window.toast.success(this.receiptMessage(action, updated), { key: 'requests' });
+                window.toast.success(this.receiptMessage(action, updated), { key: toastKey });
             }
         }
-        this.selectedIds.delete(item.id);
-        this._skipDetailRebuild = false;
-        await this.load();
-        this.showReceipt(item, updated, action);
-        this.render();
-
+        this.finishLocal(item.id);
+        this.load();
         if (action === 'create-runbook' && result.session && result.session.id) {
-            await this.openCreateRunbookSession(result.session.id);
+            this.openCreateRunbookSession(result.session.id);
         }
     }
 
@@ -1374,22 +1539,46 @@ class RequestsManager {
         if (!ok) {
             return;
         }
-        this._busy = true;
-        let result;
-        try {
-            result = await this.controller.api.bulkRequests(action, ids, this.comment(true));
-        } finally {
-            this._busy = false;
+        const toastKey = 'requests-bulk';
+        const originals = new Map(selected.map((item) => [item.id, item]));
+        ids.forEach((id) => {
+            const current = originals.get(id);
+            if (!current || this._inFlight.has(id)) {
+                return;
+            }
+            this._inFlight.add(id);
+            this.settleLocally(current, action === 'acknowledge' ? 'done' : action);
+        });
+        if (window.toast) {
+            window.toast.info(this.workingMessage(action, ids.length), { key: toastKey, duration: 0 });
         }
+        const result = await this.controller.api.bulkRequests(action, ids, this.comment(true));
         if (!result || !result.success) {
+            ids.forEach((id) => this.restoreLocal(id));
             if (window.toast) {
-                window.toast.error((result && (result.error || result.detail)) || 'Bulk action failed', { key: 'requests' });
+                window.toast.error((result && (result.error || result.detail)) || 'Bulk action failed', { key: toastKey });
             }
             return;
         }
         const succeeded = Number(result.succeeded || 0);
         const skipped = Number(result.skipped || 0);
         const failed = Number(result.failed || 0);
+        const results = Array.isArray(result.results) ? result.results : [];
+        results.forEach((entry) => {
+            if (!entry || !entry.id) {
+                return;
+            }
+            if (entry.success && !entry.skipped) {
+                this.finishLocal(entry.id);
+                return;
+            }
+            this.restoreLocal(entry.id);
+        });
+        ids.forEach((id) => {
+            if (this._inFlight.has(id)) {
+                this.finishLocal(id);
+            }
+        });
         if (window.toast) {
             const verb = action === 'acknowledge' ? 'marked done' : action === 'ignore' ? 'ignored' : `${label}d`;
             const parts = [`${succeeded} ${verb}`];
@@ -1400,13 +1589,13 @@ class RequestsManager {
                 parts.push(`${failed} failed`);
             }
             if (failed) {
-                window.toast.error(parts.join(' · '), { key: 'requests' });
+                window.toast.error(parts.join(' · '), { key: toastKey });
             } else {
-                window.toast.success(parts.join(' · '), { key: 'requests' });
+                window.toast.success(parts.join(' · '), { key: toastKey });
             }
         }
         this.selectedIds.clear();
         this._skipDetailRebuild = false;
-        await this.load();
+        this.load();
     }
 }

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any, Callable, Dict, Optional
 
 from fastapi import APIRouter, HTTPException
@@ -110,6 +111,16 @@ def _payload(
     return data
 
 
+async def _run_queue(fn, *args, **kwargs):
+    """Run blocking queue work off the event loop so other Requests calls stay responsive."""
+    try:
+        return await asyncio.to_thread(fn, *args, **kwargs)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Request not found")
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 @router.get("/catalog")
 async def request_catalog():
     queue = get_queue()
@@ -175,7 +186,7 @@ async def create_request(body: CreateRequestPayload):
 async def sync_requests(cluster_id: Optional[str] = None):
     """Pull linked GitHub issues and backfill sparse SIEM snapshots onto local tickets."""
     queue = get_queue()
-    result = queue.refresh_external(cluster_id=cluster_id)
+    result = await _run_queue(queue.refresh_external, cluster_id)
     closed = int(result.get("closed") or 0)
     checked = int(result.get("checked") or 0)
     errors = int(result.get("errors") or 0)
@@ -203,7 +214,7 @@ async def sync_requests(cluster_id: Optional[str] = None):
 
 @router.get("/{request_id}")
 async def get_request(request_id: str):
-    request = get_queue().get(request_id)
+    request = await _run_queue(get_queue().get, request_id)
     if request is None:
         raise HTTPException(status_code=404, detail="Request not found")
     return {"success": True, "request": _payload(request)}
@@ -215,7 +226,14 @@ async def bulk_requests(body: BulkPayload):
         raise HTTPException(status_code=400, detail="request_ids is required")
     queue = get_queue()
     try:
-        result = queue.bulk(action=body.action, request_ids=body.request_ids, comment=body.comment)
+        result = await _run_queue(
+            queue.bulk,
+            action=body.action,
+            request_ids=body.request_ids,
+            comment=body.comment,
+        )
+    except HTTPException:
+        raise
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     logger.info(
@@ -232,12 +250,7 @@ async def bulk_requests(body: BulkPayload):
 @router.post("/{request_id}/acknowledge")
 async def acknowledge_request(request_id: str, body: DecisionPayload = DecisionPayload()):
     queue = get_queue()
-    try:
-        request = queue.acknowledge(request_id, comment=body.comment)
-    except KeyError:
-        raise HTTPException(status_code=404, detail="Request not found")
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    request = await _run_queue(queue.acknowledge, request_id, comment=body.comment)
     logger.info("Acknowledged informational request %s", request_id)
     return {"success": True, "request": _payload(request)}
 
@@ -245,12 +258,7 @@ async def acknowledge_request(request_id: str, body: DecisionPayload = DecisionP
 @router.post("/{request_id}/ignore")
 async def ignore_request(request_id: str, body: DecisionPayload = DecisionPayload()):
     queue = get_queue()
-    try:
-        request = queue.ignore(request_id, comment=body.comment)
-    except KeyError:
-        raise HTTPException(status_code=404, detail="Request not found")
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    request = await _run_queue(queue.ignore, request_id, comment=body.comment)
     logger.info("Ignored informational request %s", request_id)
     return {"success": True, "request": _payload(request)}
 
@@ -263,7 +271,7 @@ async def create_runbook_from_request(request_id: str, body: DecisionPayload = D
     from . import server as web_server
 
     queue = get_queue()
-    request = queue.get(request_id)
+    request = await _run_queue(queue.get, request_id)
     if request is None:
         raise HTTPException(status_code=404, detail="Request not found")
     if request.action_type != "runbook_gap":
@@ -288,7 +296,9 @@ async def create_runbook_from_request(request_id: str, body: DecisionPayload = D
     ]
     comment = " — ".join(part for part in comment_bits if part)
     try:
-        updated = queue.acknowledge(request_id, comment=comment)
+        updated = await _run_queue(queue.acknowledge, request_id, comment=comment)
+    except HTTPException:
+        raise
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -302,7 +312,7 @@ async def create_runbook_from_request(request_id: str, body: DecisionPayload = D
             "alert_id": built.get("alert_id"),
         },
     }
-    queue.store.put(updated)
+    await _run_queue(queue.store.put, updated)
 
     logger.info(
         "Create runbook for request %s → session %s path %s",
@@ -322,12 +332,7 @@ async def create_runbook_from_request(request_id: str, body: DecisionPayload = D
 @router.post("/{request_id}/approve")
 async def approve_request(request_id: str, body: DecisionPayload = DecisionPayload()):
     queue = get_queue()
-    try:
-        request = queue.approve(request_id, comment=body.comment)
-    except KeyError:
-        raise HTTPException(status_code=404, detail="Request not found")
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    request = await _run_queue(queue.approve, request_id, comment=body.comment)
     logger.info("Approved request %s -> %s", request_id, request.status.value)
     return {"success": True, "request": _payload(request)}
 
@@ -335,12 +340,7 @@ async def approve_request(request_id: str, body: DecisionPayload = DecisionPaylo
 @router.post("/{request_id}/deny")
 async def deny_request(request_id: str, body: DecisionPayload = DecisionPayload()):
     queue = get_queue()
-    try:
-        request = queue.deny(request_id, comment=body.comment)
-    except KeyError:
-        raise HTTPException(status_code=404, detail="Request not found")
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    request = await _run_queue(queue.deny, request_id, comment=body.comment)
     logger.info("Denied request %s", request_id)
     return {"success": True, "request": _payload(request)}
 
@@ -348,11 +348,6 @@ async def deny_request(request_id: str, body: DecisionPayload = DecisionPayload(
 @router.post("/{request_id}/answer")
 async def answer_request(request_id: str, body: AnswerPayload):
     queue = get_queue()
-    try:
-        request = queue.answer(request_id, answer=body.answer, comment=body.comment)
-    except KeyError:
-        raise HTTPException(status_code=404, detail="Request not found")
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    request = await _run_queue(queue.answer, request_id, answer=body.answer, comment=body.comment)
     logger.info("Answered request %s with %s -> %s", request_id, body.answer, request.status.value)
     return {"success": True, "request": _payload(request)}
