@@ -360,6 +360,16 @@ The following projects helped and inspired us during the literature review:
 
 ## Changelog
 
+### v0.3
+
+- **Operators page**: change the console username and password from the UI (the new password is stored as a new Argon2id hash) and see the actions that account may approve, grouped by SOC, detection engineering, and engineering
+- **Audit view**: append-only record of sign-in, failed sign-in, and sign-out, merged with approval decisions (approved, denied, reviewed, ignored). Passwords and session tokens are never written
+- **Reports view**: finished investigation write-ups from completed session replies, listed newest first and opened as markdown
+- **Library in the console**: runbooks (shared plus SOC1/SOC2/SOC3), standards, and operator documentation, read from the repo and rendered in the UI
+- **Overview dashboard**: landing page with 7-day, 30-day, and all-time charts for open work, what was filed and settled, how closed alerts were decided, how the approval queue was resolved, detection work filed, response actions that ran, and model spend
+- **Session tab bar**: pin sessions, drag to reorder, an overflow menu of every open session, and a new-session shortcut (`Alt+N`)
+- **Appearance**: three palettes (`U-Theme`, `FT-Theme`, `B-Theme`) plus a system mode that follows the browser light/dark preference, stored in this browser
+
 ### v0.2
 
 - **Single entry point (`app.py`)** serving an authenticated, HTTPS-only web UI (session login, auto-generated self-signed cert)
