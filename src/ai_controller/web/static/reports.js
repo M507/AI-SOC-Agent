@@ -3,9 +3,32 @@ class ReportsManager {
         this.controller = controller;
         this.reports = [];
         this.selected = null;
+        this.bound = false;
+    }
+
+    bind() {
+        if (this.bound) return;
+        this.bound = true;
+        const search = document.getElementById('reports-search');
+        if (search) search.addEventListener('input', () => this.showList());
+    }
+
+    query() {
+        const search = document.getElementById('reports-search');
+        return ((search && search.value) || '').trim().toLowerCase();
+    }
+
+    visibleReports() {
+        const query = this.query();
+        if (!query) return this.reports;
+        return this.reports.filter((item) => {
+            const haystack = [item.session_name, item.command].join(' ').toLowerCase();
+            return haystack.includes(query);
+        });
     }
 
     async load() {
+        this.bind();
         const body = document.getElementById('reports-body');
         if (body) body.setAttribute('aria-busy', 'true');
         this.setStatus('Loading reports…');
@@ -22,8 +45,10 @@ class ReportsManager {
             return;
         }
         this.showList();
-        const newest = this.reports[0];
-        await this.open(newest.session_id, newest.entry_id);
+        const visible = this.visibleReports();
+        const still = visible.find((item) => `${item.session_id}:${item.entry_id}` === this.selected);
+        const next = still || visible[0];
+        if (next) await this.open(next.session_id, next.entry_id);
     }
 
     showEmpty() {
@@ -36,6 +61,8 @@ class ReportsManager {
             open.dataset.bound = '1';
             open.addEventListener('click', () => this.controller.setActiveSection('sessions'));
         }
+        const search = document.getElementById('reports-search');
+        if (search) search.hidden = true;
     }
 
     showList() {
@@ -43,11 +70,21 @@ class ReportsManager {
         const empty = document.getElementById('reports-empty');
         if (list) list.hidden = false;
         if (empty) empty.hidden = true;
+        const search = document.getElementById('reports-search');
+        if (search) search.hidden = false;
         const host = document.getElementById('reports-list');
         if (!host) return;
         host.replaceChildren();
+        const visible = this.visibleReports();
+        if (!visible.length) {
+            const note = document.createElement('p');
+            note.className = 'page-status';
+            note.textContent = 'Nothing matches this search.';
+            host.append(note);
+            return;
+        }
         let lastSession = '';
-        this.reports.forEach((item) => {
+        visible.forEach((item) => {
             if (item.session_id !== lastSession) {
                 lastSession = item.session_id;
                 const label = document.createElement('div');
@@ -70,6 +107,10 @@ class ReportsManager {
             when.dateTime = item.at || '';
             when.textContent = formatPageWhen(item.at);
             button.append(title, command, when);
+            if (`${item.session_id}:${item.entry_id}` === this.selected) {
+                button.classList.add('active');
+                button.setAttribute('aria-current', 'true');
+            }
             button.addEventListener('click', () => this.open(item.session_id, item.entry_id));
             host.append(button);
         });

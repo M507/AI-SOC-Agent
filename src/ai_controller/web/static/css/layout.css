@@ -207,6 +207,8 @@ header h1 {
     display: flex;
     justify-content: space-between;
     align-items: center;
+    flex-wrap: wrap;
+    gap: 8px 16px;
 }
 
 .session-header h2 {
@@ -217,8 +219,18 @@ header h1 {
 
 .session-actions {
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
-    gap: 10px;
+    justify-content: flex-end;
+    gap: 8px;
+    margin-left: auto;
+}
+
+.settings-action-group {
+    display: inline-flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
 }
 
 .init-error {

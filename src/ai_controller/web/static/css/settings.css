@@ -14,16 +14,168 @@
 
 .settings-body {
     flex: 1;
+    min-height: 0;
     padding: 20px;
     overflow-y: auto;
 }
 
-#settings-llm-content .settings-body,
-#settings-general-content .settings-body,
-#settings-appearance-content .settings-body,
-#mcp-content .settings-body,
-#integration-configure-host .settings-body {
-    max-width: 760px;
+.settings-body.settings-grid,
+.page-body.settings-grid {
+    display: grid;
+    gap: 12px;
+    align-items: start;
+    align-content: start;
+}
+
+.settings-body.settings-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    padding: 12px 16px 20px;
+}
+
+#settings-llm-content .settings-grid {
+    grid-template-columns: minmax(280px, 1.15fr) minmax(240px, 0.85fr);
+}
+
+#settings-general-content .settings-grid {
+    grid-template-columns: minmax(240px, 0.8fr) minmax(320px, 1.2fr);
+}
+
+#mcp-content .settings-grid {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    grid-template-areas:
+        "health connect"
+        "listener listener";
+}
+
+#mcp-health-card { grid-area: health; }
+#mcp-connect-card { grid-area: connect; }
+#mcp-listener-card { grid-area: listener; }
+
+#integration-configure-elastic .settings-grid {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    grid-template-areas:
+        "clusters clusters"
+        "add add"
+        "vector log";
+}
+
+#elastic-clusters-card { grid-area: clusters; }
+#elastic-add-card { grid-area: add; }
+#elastic-vector-card { grid-area: vector; }
+#elastic-log-card { grid-area: log; }
+
+.page-body.settings-grid {
+    grid-template-columns: minmax(280px, 0.9fr) minmax(0, 1.1fr);
+}
+
+.settings-span {
+    grid-column: 1 / -1;
+}
+
+.settings-grid > [hidden],
+.settings-fields-grid[hidden],
+.settings-field[hidden] {
+    display: none;
+}
+
+.settings-card {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+}
+
+.settings-fields-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px 14px;
+    align-items: start;
+}
+
+.settings-field-wide {
+    grid-column: 1 / -1;
+}
+
+.settings-field {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    min-width: 0;
+}
+
+.settings-fields-grid > .settings-toggle {
+    margin: 0;
+    align-self: end;
+    min-height: 36px;
+}
+
+.settings-field .settings-help {
+    margin: 0;
+}
+
+.settings-body .settings-field input[type="number"] {
+    width: 8.5rem;
+    max-width: 100%;
+}
+
+.settings-actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    margin-top: 10px;
+}
+
+.settings-split {
+    display: grid;
+    grid-template-columns: minmax(0, 1.2fr) minmax(200px, 0.8fr);
+    gap: 12px 16px;
+    align-items: start;
+}
+
+.settings-subsection {
+    margin-top: 12px;
+    padding-top: 12px;
+    border-top: 1px solid var(--color-border);
+}
+
+.settings-toggle-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px 20px;
+    grid-column: 1 / -1;
+}
+
+.settings-toggle-row .settings-toggle {
+    margin: 0;
+}
+
+@media (max-width: 900px) {
+    .settings-body.settings-grid,
+    .page-body.settings-grid,
+    #settings-llm-content .settings-grid,
+    #settings-general-content .settings-grid,
+    #mcp-content .settings-grid,
+    #integration-configure-elastic .settings-grid {
+        grid-template-columns: 1fr;
+        grid-template-areas: none;
+    }
+
+    #mcp-health-card,
+    #mcp-connect-card,
+    #mcp-listener-card,
+    #elastic-clusters-card,
+    #elastic-add-card,
+    #elastic-vector-card,
+    #elastic-log-card {
+        grid-area: auto;
+    }
+}
+
+@media (max-width: 700px) {
+    .settings-fields-grid,
+    .settings-split {
+        grid-template-columns: 1fr;
+    }
 }
 
 .settings-toggle {
@@ -113,15 +265,38 @@
     background: var(--color-surface);
     border: 1px solid var(--color-border);
     border-radius: 8px;
-    padding: 16px 18px;
+    padding: 12px 14px;
     margin-bottom: 16px;
+}
+
+.settings-grid > .settings-card {
+    margin-bottom: 0;
 }
 
 .settings-card h3 {
     font-size: 15px;
     font-weight: 600;
     color: var(--color-text-strong);
-    margin-bottom: 8px;
+    margin: 0 0 10px;
+}
+
+.settings-card h4 {
+    margin: 0 0 8px;
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--color-text-muted);
+}
+
+#llm-instructions-card .settings-field {
+    flex: 1;
+}
+
+#llm-instructions-card textarea {
+    flex: 1;
+    min-height: 140px;
+    width: 100%;
 }
 
 .settings-body label {
@@ -132,13 +307,33 @@
     color: var(--color-text);
 }
 
+.settings-body .settings-field > label,
+.page-body .settings-field > label,
+.settings-fields-grid > .settings-toggle {
+    margin: 0;
+}
+
+.settings-grid > .settings-card {
+    gap: 10px;
+}
+
+.settings-grid > .settings-card > h3,
+.settings-grid > .settings-card > .settings-help {
+    margin-bottom: 0;
+}
+
+.settings-grid .settings-card p,
+.settings-fields-grid > .settings-help {
+    margin: 0;
+}
+
 .settings-body input[type="text"],
 .settings-body input[type="password"],
 .settings-body input[type="number"],
 .settings-body select,
 .settings-body textarea {
     width: 100%;
-    padding: 10px 12px;
+    padding: 8px 10px;
     background: var(--color-sunken);
     border: 1px solid var(--color-border);
     border-radius: 4px;
@@ -163,10 +358,14 @@
     margin-top: 8px;
 }
 
+.settings-fields.settings-fields-grid {
+    margin-top: 0;
+}
+
 .settings-inline-row {
     display: flex;
     gap: 8px;
-    align-items: stretch;
+    align-items: center;
 }
 
 .settings-inline-row select,
@@ -870,9 +1069,9 @@
 
 .theme-picker {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-    gap: 12px;
-    margin-top: 12px;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 10px;
+    margin-top: 0;
 }
 
 .theme-option {
@@ -894,9 +1093,10 @@
 .theme-option-body {
     display: flex;
     flex-direction: column;
-    gap: 10px;
+    gap: 8px;
     width: 100%;
-    padding: 12px;
+    height: 100%;
+    padding: 10px;
     border: 1px solid var(--color-border);
     border-radius: var(--radius-lg);
     background: var(--color-sunken);
@@ -917,7 +1117,7 @@
 .theme-preview-half {
     display: flex;
     flex-direction: column;
-    height: 72px;
+    height: 48px;
     overflow: hidden;
     border: 1px solid var(--color-border);
     border-radius: var(--radius);
@@ -927,7 +1127,7 @@
 .theme-preview-split {
     display: flex;
     flex-direction: row;
-    height: 72px;
+    height: 48px;
     overflow: hidden;
     border: 1px solid var(--color-border);
     border-radius: var(--radius);
@@ -983,10 +1183,19 @@
     font-weight: 400;
 }
 
-@media (max-width: 720px) {
+@media (max-width: 1100px) {
+    .theme-picker {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+}
+
+@media (max-width: 640px) {
     .theme-picker {
         grid-template-columns: 1fr;
     }
+}
+
+@media (max-width: 720px) {
 
     .integration-overview {
         align-items: flex-start;

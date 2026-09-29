@@ -189,6 +189,8 @@ def test_appearance_theme_system_is_wired():
     assert 'id="library-content"' in html
     assert 'id="environment-content"' not in html
     assert 'id="reports-content"' in html
+    assert 'id="reports-search"' in html
+    assert 'Search write-ups' in html
     assert 'id="audit-content"' in html
     assert 'id="operators-content"' in html
     assert "under construction" not in html

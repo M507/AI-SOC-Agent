@@ -14,6 +14,10 @@ For detailed documentation and presentation materials:
 
 [AI Agents Presentation PDF](demo/BHMEA25_AI_Agents.pdf)
 
+SamiGPT's Dashboard:
+
+![SamiGPTs Dashboard](images/main_dashboard.png)
+
 ### Quick Start
 
 SamiGPT is started from a single entry point. That process serves the web UI

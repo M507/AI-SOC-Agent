@@ -408,6 +408,9 @@ class AIController {
             return;
         }
 
+        if (this.settingsManager) {
+            this.settingsManager.revealOpenWebUI = true;
+        }
         this.activeSettingsPage = readiness.action_page || 'llm';
         this.setActiveSection('settings');
         this.setSettingsPage(this.activeSettingsPage);
@@ -415,6 +418,7 @@ class AIController {
         window.setTimeout(() => {
             const target = document.getElementById(anchorId);
             if (target) {
+                target.hidden = false;
                 target.scrollIntoView({ behavior: 'smooth', block: 'start' });
                 target.classList.add('settings-card-attention');
                 window.setTimeout(() => target.classList.remove('settings-card-attention'), 2500);
@@ -589,7 +593,7 @@ class AIController {
         show(reportsContent, section === 'reports' ? 'flex' : 'none');
         show(auditContent, section === 'audit' ? 'flex' : 'none');
         show(operatorsContent, section === 'operators' ? 'flex' : 'none');
-        show(mcpContent, 'none');
+            show(mcpContent, section === 'mcp' ? 'flex' : 'none');
         show(sessionContent, 'none');
         show(noSessionMessage, 'none');
 
@@ -645,7 +649,7 @@ class AIController {
                 this.wsManager.disconnect(this.activeSessionId);
             }
         } else if (section === 'mcp') {
-            show(mcpContent, 'block');
+            show(mcpContent, 'flex');
             this.mcpPanel.load();
             if (this.activeSessionId) {
                 this.wsManager.disconnect(this.activeSessionId);

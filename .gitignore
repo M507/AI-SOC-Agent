@@ -98,3 +98,4 @@ gitleaks
 gitleaks.toml
 leaks.txt
 tmp/*
+images/clean.sh
