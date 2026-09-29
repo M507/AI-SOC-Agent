@@ -6,6 +6,149 @@ class TerminalRenderer {
         this.pendingEntries = new Map(); // entry_id -> pending line element
     }
 
+    _thinkingTrace(result) {
+        const output = result && result.output;
+        const trace = output && output.trace;
+        return Array.isArray(trace) ? trace : [];
+    }
+
+    _renderThinking(trace, live = false) {
+        const root = document.createElement('div');
+        root.className = 'thinking-trace';
+        const label = document.createElement('div');
+        label.className = 'thinking-label';
+        label.textContent = 'Thinking';
+        root.appendChild(label);
+        trace.forEach((step, index) => {
+            const block = document.createElement('div');
+            block.className = 'thinking-step';
+            const active = live && index === trace.length - 1;
+            if (!step || step.kind === 'think') {
+                if (active && step && step.live) {
+                    block.classList.add('is-live');
+                }
+                const prose = document.createElement('div');
+                prose.className = 'thinking-prose';
+                prose.textContent = (step && step.text) || '';
+                block.appendChild(prose);
+            } else if (step.kind === 'status') {
+                block.classList.add('thinking-status');
+                if (active) {
+                    block.classList.add('is-live');
+                }
+                block.textContent = step.text || '';
+            } else if (step.kind === 'tool') {
+                const running = step.phase === 'running';
+                if (running) {
+                    block.classList.add('is-live');
+                }
+                const name = document.createElement('div');
+                name.className = 'thinking-tool-name';
+                const verb = document.createElement('span');
+                verb.textContent = running ? 'Running' : 'Tool';
+                name.appendChild(verb);
+                let detail = ` ${step.name || 'unknown'}`;
+                if (running) {
+                    detail += '…';
+                }
+                if (step.elapsed) {
+                    detail += ` · ${step.elapsed}s`;
+                }
+                name.appendChild(document.createTextNode(detail));
+                block.appendChild(name);
+                const args = document.createElement('pre');
+                args.className = 'thinking-block';
+                try {
+                    args.textContent = JSON.stringify(step.arguments || {}, null, 2);
+                } catch (_unused) {
+                    args.textContent = String(step.arguments || '');
+                }
+                block.appendChild(args);
+                if (step.result) {
+                    const result = document.createElement('pre');
+                    result.className = 'thinking-block';
+                    result.textContent = String(step.result);
+                    block.appendChild(result);
+                }
+            }
+            root.appendChild(block);
+        });
+        return root;
+    }
+
+    _fillResult(resultLine, result, isError, isDebug, live = false) {
+        const partial = live || !!(result && result.output && result.output.partial);
+        const showThinking = this.controller.uiThinkingMode === true || partial;
+        const trace = showThinking ? this._thinkingTrace(result) : [];
+        if (trace.length) {
+            resultLine.appendChild(this._renderThinking(trace, partial));
+        }
+
+        const text = isDebug && !partial
+            ? formatDebugResult(result)
+            : extractResultText(result);
+
+        if (partial && !text) {
+            const narrating = trace.some((step) => step && (
+                step.kind === 'status' || step.phase === 'running' || step.live
+            ));
+            if (!narrating) {
+                const note = document.createElement('div');
+                note.className = 'thinking-live';
+                note.textContent = trace.length ? 'Working…' : 'Executing...';
+                resultLine.appendChild(note);
+            }
+            return;
+        }
+
+        if (text === null && !isDebug) {
+            const pre = document.createElement('pre');
+            pre.textContent = isError
+                ? 'An error occurred (no output received)'
+                : 'The model returned an empty reply.';
+            if (isError) {
+                resultLine.className = 'terminal-line error';
+            }
+            resultLine.appendChild(pre);
+            this._appendUsage(resultLine, result, partial);
+            return;
+        }
+        if (text) {
+            const content = this._renderMarkdown(text);
+            if (content) {
+                resultLine.appendChild(content);
+            } else {
+                const pre = document.createElement('pre');
+                pre.textContent = text;
+                resultLine.appendChild(pre);
+            }
+            this._appendUsage(resultLine, result, partial);
+            return;
+        }
+        if (trace.length) {
+            this._appendUsage(resultLine, result, partial);
+            return;
+        }
+        const pre = document.createElement('pre');
+        pre.textContent = isError ? 'Error (no details returned)' : 'Command completed';
+        resultLine.appendChild(pre);
+        this._appendUsage(resultLine, result, false);
+    }
+
+    _appendUsage(resultLine, result, live) {
+        if (live) {
+            return;
+        }
+        const note = formatUsageFooter(result);
+        if (!note) {
+            return;
+        }
+        const line = document.createElement('div');
+        line.className = 'usage-footer';
+        line.textContent = note;
+        resultLine.appendChild(line);
+    }
+
     /**
      * Resolve the actual scroll container for a given terminal element.
      *
@@ -224,43 +367,25 @@ class TerminalRenderer {
         terminal.appendChild(commandLine);
         
         // Result
-        if (entry.result) {
+        const inProgress = entry.status === 'pending' || entry.status === 'running'
+            || (entry.result && entry.result.output && entry.result.output.partial);
+        if (entry.result && !inProgress) {
             const resultLine = document.createElement('div');
             const isError = entry.status === 'failed' || entry.status === 'stopped';
             resultLine.className = `terminal-line ${isError ? 'error' : 'output'}`;
 
-            const text = isDebug
-                ? formatDebugResult(entry.result)
-                : extractResultText(entry.result);
-
-            // If text is null (empty stdout/stderr) and debug is not enabled, show generic error
-            if (text === null && !isDebug) {
-                const pre = document.createElement('pre');
-                pre.textContent = 'An error occurred (no output received)';
-                resultLine.className = 'terminal-line error';
-                resultLine.appendChild(pre);
-            } else if (text) {
-                // Render markdown if available, otherwise use plain text
-                const content = this._renderMarkdown(text);
-                if (content) {
-                    resultLine.appendChild(content);
-                } else {
-                    const pre = document.createElement('pre');
-                    pre.textContent = text;
-                    resultLine.appendChild(pre);
-                }
-            } else {
-                const pre = document.createElement('pre');
-                pre.textContent = isError ? 'Error (no details returned)' : 'Command completed';
-                resultLine.appendChild(pre);
-            }
+            this._fillResult(resultLine, entry.result, isError, isDebug);
             
             terminal.appendChild(resultLine);
-        } else if (entry.status === 'pending' || entry.status === 'running') {
+        } else if (inProgress) {
             const pendingLine = document.createElement('div');
             pendingLine.className = 'terminal-line output';
-            pendingLine.textContent = 'Executing...';
             pendingLine.dataset.entryId = entry.id;
+            if (entry.result) {
+                this._fillResult(pendingLine, entry.result, false, false, true);
+            } else {
+                pendingLine.textContent = 'Executing...';
+            }
             terminal.appendChild(pendingLine);
             this.pendingEntries.set(entry.id, pendingLine);
         }
@@ -317,6 +442,37 @@ class TerminalRenderer {
     }
 
     /**
+     * Replace the in-progress line with the trace gathered so far.
+     */
+    handleExecutionProgress(message) {
+        if (!message || !message.entry_id) {
+            return;
+        }
+        ['terminal', 'autorun-terminal'].forEach((containerId) => {
+            const terminal = document.getElementById(containerId);
+            if (!terminal) {
+                return;
+            }
+            const wasPinned = this._isPinnedToBottom(terminal);
+            let line = terminal.querySelector(`[data-entry-id="${message.entry_id}"]`);
+            if (!line) {
+                const pending = [...terminal.querySelectorAll('.terminal-line.output')].reverse()
+                    .find((node) => node.textContent === 'Executing...');
+                if (!pending) {
+                    return;
+                }
+                line = pending;
+                line.dataset.entryId = message.entry_id;
+            }
+            line.className = 'terminal-line output';
+            line.textContent = '';
+            this._fillResult(line, message.result, false, false, true);
+            this.pendingEntries.set(message.entry_id, line);
+            this._scrollToBottomIfPinned(terminal, wasPinned);
+        });
+    }
+
+    /**
      * Handle execution completed message from WebSocket.
      */
     handleExecutionCompleted(message) {
@@ -347,32 +503,7 @@ class TerminalRenderer {
             const isError = message.result.success === false;
             resultLine.className = `terminal-line ${isError ? 'error' : 'output'}`;
 
-            const useDebug = this.controller.uiDebugMode === true;
-            const text = useDebug
-                ? formatDebugResult(message.result)
-                : extractResultText(message.result);
-            
-            // If text is null (empty stdout/stderr) and debug is not enabled, show generic error
-            if (text === null && !useDebug) {
-                const pre = document.createElement('pre');
-                pre.textContent = 'An error occurred (no output received)';
-                resultLine.className = 'terminal-line error';
-                resultLine.appendChild(pre);
-            } else if (text) {
-                // Render markdown if available, otherwise use plain text
-                const content = this._renderMarkdown(text);
-                if (content) {
-                    resultLine.appendChild(content);
-                } else {
-                    const pre = document.createElement('pre');
-                    pre.textContent = text;
-                    resultLine.appendChild(pre);
-                }
-            } else {
-                const pre = document.createElement('pre');
-                pre.textContent = isError ? 'Error (no details returned)' : 'Command completed';
-                resultLine.appendChild(pre);
-            }
+            this._fillResult(resultLine, message.result, isError, this.controller.uiDebugMode === true);
             
             terminal.appendChild(resultLine);
         }

@@ -184,6 +184,19 @@ class APIClient {
     /**
      * Delete a session.
      */
+    async renameSession(sessionId, name) {
+        const response = await this._fetch(`/api/sessions/${sessionId}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name }),
+        });
+        if (response.ok) {
+            return await response.json();
+        }
+        const data = await response.json().catch(() => ({}));
+        return { success: false, error: data.detail || 'Failed to rename session' };
+    }
+
     async deleteSession(sessionId) {
         try {
             const response = await this._fetch(`/api/sessions/${sessionId}`, {
@@ -666,7 +679,20 @@ class APIClient {
         }
     }
 
-    async listRequests(status = null, queue = 'all') {
+    async syncRequests(clusterId = null) {
+        try {
+            const params = new URLSearchParams();
+            if (clusterId) {
+                params.set('cluster_id', clusterId);
+            }
+            const query = params.toString() ? `?${params.toString()}` : '';
+            return await this.request(`/api/requests/sync${query}`, { method: 'POST' });
+        } catch (error) {
+            return { success: false, error: error.message, checked: 0, closed: 0, errors: 1 };
+        }
+    }
+
+    async listRequests(status = null, queue = 'all', view = 'summary') {
         try {
             const params = new URLSearchParams();
             if (status) {
@@ -674,6 +700,9 @@ class APIClient {
             }
             if (queue && queue !== 'all') {
                 params.set('queue', queue);
+            }
+            if (view) {
+                params.set('view', view);
             }
             const query = params.toString() ? `?${params.toString()}` : '';
             return await this.request(`/api/requests${query}`);
@@ -683,8 +712,25 @@ class APIClient {
                 requests: [],
                 counts: { pending: 0, open: 0, archived: 0, all: 0, actionable: 0 },
                 tab_counts: { open: 0, archived: 0, all: 0 },
+                queue_counts: {},
                 error: error.message,
             };
+        }
+    }
+
+    async getRequest(requestId) {
+        try {
+            return await this.request(`/api/requests/${encodeURIComponent(requestId)}`);
+        } catch (error) {
+            return { success: false, error: error.message };
+        }
+    }
+
+    async getRequestsSummary() {
+        try {
+            return await this.request('/api/requests/summary');
+        } catch (error) {
+            return { success: false, error: error.message };
         }
     }
 
@@ -726,6 +772,107 @@ class APIClient {
             request_ids: requestIds,
             comment,
         });
+    }
+
+    async loadUsage() {
+        try {
+            return await this.request('/api/usage');
+        } catch (error) {
+            return { success: false, error: error.message };
+        }
+    }
+
+    async getOverview(range) {
+        try {
+            return await this.request(`/api/overview?range=${encodeURIComponent(range || '30d')}`);
+        } catch (error) {
+            return { success: false, error: error.message };
+        }
+    }
+
+    async listLibrary(collection) {
+        try {
+            return await this.request(`/api/library/${encodeURIComponent(collection)}`);
+        } catch (error) {
+            return { success: false, error: error.message, groups: [] };
+        }
+    }
+
+    async readLibraryFile(collection, path) {
+        try {
+            const query = new URLSearchParams({ path: path || '' });
+            return await this.request(`/api/library/${encodeURIComponent(collection)}/file?${query}`);
+        } catch (error) {
+            return { success: false, error: error.message };
+        }
+    }
+
+    async listReports() {
+        try {
+            return await this.request('/api/reports');
+        } catch (error) {
+            return { success: false, error: error.message, reports: [] };
+        }
+    }
+
+    async readReport(sessionId, entryId) {
+        try {
+            return await this.request(
+                `/api/reports/${encodeURIComponent(sessionId)}/${encodeURIComponent(entryId)}`,
+            );
+        } catch (error) {
+            return { success: false, error: error.message };
+        }
+    }
+
+    async getAudit() {
+        try {
+            return await this.request('/api/audit');
+        } catch (error) {
+            return { success: false, error: error.message, events: [] };
+        }
+    }
+
+    async getOperator() {
+        try {
+            return await this.request('/api/operators');
+        } catch (error) {
+            return { success: false, error: error.message };
+        }
+    }
+
+    async updateOperator(payload) {
+        try {
+            const response = await this._fetch('/api/operators', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload || {}),
+            });
+            const data = await response.json();
+            if (!response.ok) {
+                return {
+                    success: false,
+                    errors: (data && data.errors) || {},
+                    detail: data && data.detail,
+                    error: (data && data.detail) || 'Could not save the operator.',
+                };
+            }
+            return data;
+        } catch (error) {
+            return { success: false, error: error.message, errors: {} };
+        }
+    }
+
+    async updateUsagePricing(payload) {
+        try {
+            return await this.request('/api/usage/pricing', {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload),
+            });
+        } catch (error) {
+            return { success: false, error: error.message };
+        }
     }
 
     async _requestDecision(url, body) {

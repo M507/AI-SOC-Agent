@@ -53,6 +53,55 @@ def test_requests_view_is_in_the_shell():
     assert "RequestsManager" in app_js
 
 
+def test_cost_view_is_in_the_shell():
+    html = INDEX.read_text(encoding="utf-8")
+    app_js = APP_JS.read_text(encoding="utf-8")
+    cost_js = (WEB / "static" / "cost.js").read_text(encoding="utf-8")
+    assert 'id="nav-cost"' in html
+    assert 'id="cost-content"' in html
+    assert 'data-cost-page="overview"' in html
+    assert 'data-cost-page="sessions"' in html
+    assert 'data-cost-page="models"' in html
+    assert 'data-cost-page="calls"' in html
+    assert 'data-cost-page="rates"' in html
+    assert "cost.js" in html
+    assert "cost.css" in html
+    assert 'data-nav="cost"' in html
+    assert "section === 'cost'" in app_js
+    assert "CostManager" in app_js
+    assert "class CostManager" in cost_js
+    assert "/api/usage" in (WEB / "static" / "api.js").read_text(encoding="utf-8")
+
+
+def test_session_tab_bar_is_separate_from_section_tabs():
+    html = INDEX.read_text(encoding="utf-8")
+    sessions_js = (WEB / "static" / "sessions.js").read_text(encoding="utf-8")
+    session_css = (WEB / "static" / "css" / "session_tabs.css").read_text(encoding="utf-8")
+    server = (WEB / "server.py").read_text(encoding="utf-8")
+    api = (WEB / "static" / "api.js").read_text(encoding="utf-8")
+    assert 'class="session-tab-bar"' in html
+    assert 'id="session-tab-new"' in html
+    assert 'id="session-tab-overflow"' in html
+    assert 'id="sessions-tabs"' in html
+    assert 'id="autoruns-tabs"' in html
+    assert 'id="autoruns-tab-group"' in html
+    assert 'class="session-tab-bar" id="autoruns-tab-group"' in html
+    autoruns_js = (WEB / "static" / "autoruns.js").read_text(encoding="utf-8")
+    assert "samigpt.autorunTabs" in autoruns_js
+    assert "session-tab" in autoruns_js
+    assert 'data-cost-page="overview"' in html
+    assert "samigpt.sessionTabs" in sessions_js
+    assert "recentlyClosed" in sessions_js
+    assert "auxclick" in sessions_js
+    assert "Close others" in sessions_js
+    assert "deleteSession" not in sessions_js
+    assert "method: 'PATCH'" in api
+    assert '@app.patch("/api/sessions/{session_id}")' in server
+    assert "rename_session" in server
+    hex_color = __import__("re").compile(r"#[0-9a-fA-F]{3,8}\b")
+    assert not hex_color.search(session_css)
+
+
 def test_new_session_modal_seeds_selected_alert_uuid_into_prompt():
     modals = (WEB / "static" / "modals.js").read_text(encoding="utf-8")
     api = (WEB / "static" / "api.js").read_text(encoding="utf-8")
@@ -85,10 +134,83 @@ def test_netbox_settings_page_is_wired():
     app_js = APP_JS.read_text(encoding="utf-8")
     integrations = (WEB / "static" / "integrations_settings.js").read_text(encoding="utf-8")
 
-    assert 'data-settings-page="netbox"' in html
-    assert 'data-settings-page-content="netbox"' in html
     assert 'id="netbox-url"' in html
+    assert 'id="integration-configure"' in html
+    assert 'id="integration-configure-netbox"' in html
+    assert 'id="integration-configure-elastic"' in html
+    assert 'id="nav-elastic"' not in html
+    assert 'id="nav-netbox"' not in html
+    assert "data-integration-configure" in integrations
     assert "netbox_settings.js" in html
     assert "NetBoxSettingsManager" in app_js
     assert "netboxSettings.load()" in app_js
     assert "Asset inventory" in integrations
+
+
+def test_appearance_theme_system_is_wired():
+    html = INDEX.read_text(encoding="utf-8")
+    login = (WEB / "templates" / "login.html").read_text(encoding="utf-8")
+    tokens = (WEB / "static" / "css" / "tokens.css").read_text(encoding="utf-8")
+    theme_js = (WEB / "static" / "theme.js").read_text(encoding="utf-8")
+    css_dir = WEB / "static" / "css"
+
+    assert 'data-settings-page="appearance"' in html
+    assert 'data-settings-page-content="appearance"' in html
+    assert "/static/css/tokens.css" in html
+    assert "/static/theme.js" in html
+    assert "FT-Theme" in html
+    assert "U-Theme" in html
+    assert "B-Theme" in html
+    assert "Match system" in html
+    assert 'id="appearance-theme-ft"' in html
+    assert 'id="appearance-theme-u"' in html
+    assert 'id="appearance-theme-b"' in html
+    assert 'id="appearance-theme-system"' in html
+    assert 'class="sidebar-title">Work</span>' in html
+    assert 'class="sidebar-title">Overview</span>' in html
+    assert 'class="sidebar-title">Library</span>' in html
+    assert 'class="sidebar-title">AI</span>' in html
+    assert 'class="sidebar-title">Connections</span>' in html
+    assert 'class="sidebar-title">Insight</span>' in html
+    assert 'class="sidebar-title">Preferences</span>' in html
+    assert html.index('class="sidebar-title">Insight</span>') < html.index('class="sidebar-title">Library</span>')
+    assert html.index('class="sidebar-title">Library</span>') < html.index('class="sidebar-title">Preferences</span>')
+    assert 'class="sidebar-title">System</span>' not in html
+    assert 'id="nav-overview"' in html
+    assert 'id="nav-sessions"' in html
+    assert 'id="nav-llm"' in html
+    assert 'id="nav-mcp"' in html
+    assert 'data-settings-page="llm"' in html
+    assert 'id="nav-audit"' in html
+    assert 'id="nav-reports"' in html
+    assert 'id="nav-environment"' not in html
+    assert 'id="nav-operators"' in html
+    assert 'id="overview-content"' in html
+    assert 'id="library-content"' in html
+    assert 'id="environment-content"' not in html
+    assert 'id="reports-content"' in html
+    assert 'id="reports-search"' in html
+    assert 'Search write-ups' in html
+    assert 'id="audit-content"' in html
+    assert 'id="operators-content"' in html
+    assert "under construction" not in html
+    assert "Filter this list" in html
+    assert "What this operator may approve" in html
+
+    assert 'html[data-theme="u"]' in tokens
+    assert 'html[data-theme="ft"]' in tokens
+    assert 'html[data-theme="b"]' in tokens
+    assert "samigpt.appearance" in theme_js
+    assert "prefers-color-scheme" in theme_js
+    assert "samigpt.appearance" in html
+    assert "/static/css/tokens.css" in login
+    assert "/static/theme.js" in login
+    assert "samigpt.appearance" in login
+
+    hex_color = __import__("re").compile(r"#[0-9a-fA-F]{3,8}\b")
+    for path in css_dir.glob("*.css"):
+        if path.name == "tokens.css":
+            continue
+        text = path.read_text(encoding="utf-8")
+        assert not hex_color.search(text), path.name
+

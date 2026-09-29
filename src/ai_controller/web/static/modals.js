@@ -246,6 +246,9 @@ class ModalManager {
         
         if (data.success) {
             this.hideNewSession();
+            if (data.session && data.session.id) {
+                this.controller.sessionManager.rememberOpen(data.session.id);
+            }
             await this.controller.loadSessions();
             if (data.session && data.session.id) {
                 await this.controller.sessionManager.switchToSession(data.session.id);

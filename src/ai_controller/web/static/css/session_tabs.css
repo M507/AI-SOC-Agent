@@ -1,0 +1,344 @@
+/* Session workspace tabs. Other sections keep .tab / .tabs. */
+
+.tabs-header > .session-tab-bar {
+    flex: 1 1 auto;
+    width: 100%;
+}
+
+.tabs-container:has(.session-tab-bar:not([style*="display: none"])) {
+    overflow: visible;
+    border-bottom-color: transparent;
+}
+
+.session-tab-bar {
+    --session-tab-active: var(--color-surface);
+    display: flex;
+    align-items: flex-end;
+    min-width: 0;
+    gap: 2px;
+    padding: 6px 6px 0;
+    box-shadow: inset 0 -1px 0 var(--color-border);
+}
+
+.session-tab-pinned,
+.session-tab-strip {
+    display: flex;
+    align-items: flex-end;
+    gap: 0;
+    min-width: 0;
+    flex-wrap: nowrap;
+}
+
+.session-tab-pinned {
+    flex: 0 1 auto;
+    max-width: 40%;
+    overflow-x: auto;
+    scrollbar-width: none;
+    padding: 0 6px;
+}
+
+.session-tab-strip {
+    flex: 1 1 auto;
+    overflow-x: auto;
+    scrollbar-width: none;
+    padding: 0 8px;
+}
+
+.session-tab-strip::-webkit-scrollbar {
+    display: none;
+}
+
+.session-tab-divider {
+    align-self: stretch;
+    width: 1px;
+    margin: 6px 2px 4px;
+    background: var(--color-border);
+    flex: 0 0 1px;
+}
+
+.session-tab {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex: 1 1 160px;
+    min-width: 88px;
+    max-width: 220px;
+    height: 34px;
+    padding: 0 12px;
+    border: 0;
+    border-radius: 12px 12px 0 0;
+    background: transparent;
+    color: var(--color-text-muted);
+    font: inherit;
+    font-size: 13px;
+    cursor: pointer;
+    position: relative;
+    z-index: 0;
+    transition: background 0.12s ease, opacity 0.12s ease, max-width 0.12s ease;
+}
+
+.session-tab:not(.active) + .session-tab:not(.active)::before {
+    content: "";
+    position: absolute;
+    left: 0;
+    top: 9px;
+    width: 1px;
+    height: 16px;
+    background: var(--color-border);
+}
+
+.session-tab:hover:not(.active) {
+    background: color-mix(in srgb, var(--color-text) 8%, transparent);
+    color: var(--color-text);
+}
+
+.session-tab:hover:not(.active)::before,
+.session-tab:hover:not(.active) + .session-tab:not(.active)::before {
+    background: transparent;
+}
+
+.session-tab.active {
+    background: var(--session-tab-active);
+    color: var(--color-text-strong);
+    z-index: 1;
+    margin-bottom: -1px;
+    padding-bottom: 1px;
+    height: 35px;
+}
+
+.session-tab:focus-visible,
+.session-tab-new:focus-visible,
+.session-tab-overflow:focus-visible,
+.session-tab-close:focus-visible,
+.session-tab-menu button:focus-visible,
+.session-tab-menu input:focus-visible {
+    outline: 2px solid var(--color-focus);
+    outline-offset: 2px;
+}
+
+.session-tab.is-pinned {
+    flex: 0 0 36px;
+    min-width: 36px;
+    max-width: 36px;
+    justify-content: center;
+    padding: 0;
+}
+
+.session-tab.is-pinned .session-tab-title,
+.session-tab.is-pinned .session-tab-close {
+    display: none;
+}
+
+.session-tab.is-pinned:hover .session-tab-close,
+.session-tab.is-pinned:focus-within .session-tab-close,
+.session-tab.is-pinned.active .session-tab-close {
+    display: flex;
+}
+
+.session-tab.is-drop-target {
+    box-shadow: inset 0 -2px 0 var(--color-accent);
+}
+
+.session-tab-status {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    flex: 0 0 6px;
+    background: transparent;
+}
+
+.session-tab[data-status="running"] .session-tab-status {
+    background: var(--color-warning);
+    animation: session-tab-pulse 1.2s ease-in-out infinite;
+}
+
+.session-tab[data-status="failed"] .session-tab-status {
+    background: var(--color-danger);
+}
+
+.session-tab-title {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    text-align: left;
+}
+
+.session-tab-close {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 16px;
+    height: 16px;
+    margin-left: auto;
+    border-radius: 50%;
+    opacity: 0;
+    font-size: 14px;
+    line-height: 1;
+    color: var(--color-text-muted);
+}
+
+.session-tab:hover .session-tab-close,
+.session-tab.active .session-tab-close,
+.session-tab:focus-within .session-tab-close {
+    opacity: 1;
+}
+
+.session-tab-close:hover {
+    background: var(--color-hover);
+    color: var(--color-text-strong);
+}
+
+.session-tab-rename {
+    flex: 1 1 auto;
+    min-width: 0;
+    width: 100%;
+    height: 22px;
+    padding: 0 4px;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius);
+    background: var(--color-surface);
+    color: var(--color-text);
+    font: inherit;
+    font-size: 13px;
+}
+
+.session-tab.is-closing {
+    overflow: hidden;
+    pointer-events: none;
+    animation: session-tab-out 0.12s ease forwards;
+}
+
+.session-tab-new,
+.session-tab-overflow {
+    flex: 0 0 28px;
+    width: 28px;
+    height: 28px;
+    margin: 0 2px 3px;
+    border: 0;
+    border-radius: 50%;
+    background: transparent;
+    color: var(--color-text-muted);
+    font: inherit;
+    font-size: 16px;
+    line-height: 1;
+    cursor: pointer;
+}
+
+.session-tab-new:hover,
+.session-tab-overflow:hover,
+.session-tab-overflow.has-overflow {
+    background: color-mix(in srgb, var(--color-text) 10%, transparent);
+    color: var(--color-text);
+}
+
+.session-tab-menu {
+    position: fixed;
+    z-index: 3000;
+    min-width: 240px;
+    max-width: 320px;
+    max-height: min(70vh, 420px);
+    overflow: auto;
+    padding: 4px;
+    background: var(--color-elevated);
+    color: var(--color-text);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+}
+
+.session-tab-menu[hidden] {
+    display: none;
+}
+
+.session-tab-menu button,
+.session-tab-menu-label {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    width: 100%;
+    padding: 6px 8px;
+    border: 0;
+    border-radius: var(--radius);
+    background: transparent;
+    color: inherit;
+    font: inherit;
+    font-size: 13px;
+    text-align: left;
+    cursor: pointer;
+}
+
+.session-tab-menu button:hover,
+.session-tab-menu button:focus,
+.session-tab-menu button.is-active {
+    background: var(--color-hover);
+}
+
+.session-tab-menu button:disabled {
+    opacity: 0.45;
+    cursor: default;
+}
+
+.session-tab-menu kbd {
+    color: var(--color-text-muted);
+    font-family: var(--font-mono);
+    font-size: 11px;
+}
+
+.session-tab-menu-sep {
+    height: 1px;
+    margin: 4px 0;
+    background: var(--color-border);
+}
+
+.session-tab-menu input {
+    width: 100%;
+    margin: 4px 0;
+    padding: 6px 8px;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius);
+    background: var(--color-surface);
+    color: var(--color-text);
+    font: inherit;
+    font-size: 13px;
+}
+
+.session-tab-menu-heading {
+    padding: 6px 8px 2px;
+    color: var(--color-text-muted);
+    font-size: 11px;
+    letter-spacing: var(--font-tracking);
+    text-transform: uppercase;
+}
+
+.session-tab-menu .is-empty {
+    padding: 4px 8px 8px;
+    color: var(--color-text-muted);
+    font-size: 12px;
+}
+
+@keyframes session-tab-pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.35; }
+}
+
+@keyframes session-tab-out {
+    to {
+        opacity: 0;
+        max-width: 0;
+        min-width: 0;
+        padding: 0;
+        margin: 0;
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .session-tab,
+    .session-tab.is-closing,
+    .session-tab[data-status="running"] .session-tab-status {
+        animation: none;
+        transition: none;
+    }
+}

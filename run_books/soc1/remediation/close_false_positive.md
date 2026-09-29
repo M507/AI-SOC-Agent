@@ -38,8 +38,8 @@ Close an alert that SOC1 has confirmed as a false positive or benign true positi
 2. **Confirm alert:** `get_security_alert_by_id` — ensure this is the alert being closed.
 
 3. **Document on the alert:**
-   * `add_alert_note` with SOC1 closure details (`${CLOSURE_DETAILS}`).
-   * Set `${DOCUMENTATION_STATUS}` = "Documented".
+   * `add_alert_note` with SOC1 closure details (`${CLOSURE_DETAILS}`). Queued for Requests — do not claim the note is already written.
+   * Set `${DOCUMENTATION_STATUS}` = "Note requested (pending analyst approval)".
 
 4. **MANDATORY — set final verdict:**
    * Call `update_alert_verdict` with `false_positive` or `benign_true_positive` and a comment summarizing why.

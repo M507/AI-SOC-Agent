@@ -11,11 +11,14 @@ const REQUEST_STATUS_LABELS = {
 };
 
 const DETECTION_CATEGORIES = new Set(['detections', 'runbooks']);
+const SOC_CATEGORIES = new Set(['siem', 'identity', 'edr', 'case', 'iam', 'email', 'network']);
 const ENG_ACTION_TYPES = new Set(['fine_tune', 'visibility', 'runbook_gap']);
+const REQUESTS_POLL_MS = 15000;
 
 class RequestsManager {
     constructor(controller) {
         this.controller = controller;
+        this.items = [];
         this.requests = [];
         this.catalog = [];
         this.selectedId = null;
@@ -24,12 +27,21 @@ class RequestsManager {
         this.queueTab = 'all';
         this.counts = { pending: 0, open: 0, archived: 0, all: 0, actionable: 0 };
         this.tabCounts = { open: 0, archived: 0, all: 0 };
+        this.queueCounts = {};
+        this.generation = 0;
         this.receipt = null;
         this._bound = false;
-        this._busy = false;
+        this._inFlight = new Set();
+        this._optimisticById = new Map();
+        this._rollbackById = new Map();
+        this._clickLockUntil = 0;
         this._savedDetailComment = '';
         this._savedBulkComment = '';
         this._skipDetailRebuild = false;
+        this._loadSeq = 0;
+        this._fullById = {};
+        this._pollTimer = null;
+        this._externalRefreshing = false;
     }
 
     bind() {
@@ -55,6 +67,11 @@ class RequestsManager {
                 this.toggleSelectAll(selectAll.dataset.requestSelectAll === 'actionable');
                 return;
             }
+            const refreshBtn = event.target.closest('[data-request-refresh]');
+            if (refreshBtn) {
+                this.refreshFromTickets();
+                return;
+            }
             const clearSel = event.target.closest('[data-request-clear-selection]');
             if (clearSel) {
                 this.selectedIds.clear();
@@ -68,9 +85,7 @@ class RequestsManager {
             }
             const childLink = event.target.closest('[data-request-open]');
             if (childLink) {
-                this.selectedId = childLink.dataset.requestOpen;
-                this.receipt = null;
-                this.render();
+                this.selectCard(childLink.dataset.requestOpen);
                 return;
             }
             const checkbox = event.target.closest('[data-request-check]');
@@ -80,10 +95,7 @@ class RequestsManager {
             }
             const card = event.target.closest('.request-card');
             if (card) {
-                this.selectedId = card.dataset.requestId;
-                this.receipt = null;
-                this.renderDetail();
-                this.highlightCards();
+                this.selectCard(card.dataset.requestId);
             }
         });
         pane.addEventListener('change', (event) => {
@@ -94,9 +106,12 @@ class RequestsManager {
             event.stopPropagation();
             this.toggleChecked(checkbox.dataset.requestCheck, checkbox.checked);
         });
-        pane.addEventListener('click', async (event) => {
+        pane.addEventListener('click', (event) => {
             const actionBtn = event.target.closest('[data-request-action]');
-            if (!actionBtn || actionBtn.disabled || this._busy) {
+            if (!actionBtn || actionBtn.disabled) {
+                return;
+            }
+            if (Date.now() < this._clickLockUntil) {
                 return;
             }
             const action = actionBtn.dataset.requestAction;
@@ -108,10 +123,10 @@ class RequestsManager {
                         : action === 'bulk-ignore'
                             ? 'ignore'
                             : 'acknowledge';
-                await this.handleBulk(bulkAction);
+                this.handleBulk(bulkAction);
                 return;
             }
-            await this.handleAction(action);
+            this.handleAction(action);
         });
     }
 
@@ -125,7 +140,15 @@ class RequestsManager {
         this.selectedIds.clear();
         this.receipt = null;
         this.syncQueueTabs();
-        this.load();
+        this.applyQueueFilter();
+        this.render();
+        if (this.selectedId) {
+            this.ensureFull(this.selectedId).then((full) => {
+                if (full && this.selectedId === full.id) {
+                    this.renderDetail();
+                }
+            });
+        }
     }
 
     syncQueueTabs() {
@@ -163,36 +186,221 @@ class RequestsManager {
         }
     }
 
+    async refreshFromTickets() {
+        await this.refreshExternal({ quiet: false });
+    }
+
+    async refreshExternal(options) {
+        const quiet = Boolean(options && options.quiet);
+        if (this._externalRefreshing) {
+            return null;
+        }
+        this._externalRefreshing = true;
+        const button = document.getElementById('requests-refresh-btn');
+        if (button && !quiet) {
+            button.disabled = true;
+            button.textContent = 'Refreshing…';
+        }
+        if (!quiet && window.toast) {
+            window.toast.info('Checking linked tickets…', { key: 'requests-sync', duration: 0 });
+        }
+        let result = null;
+        try {
+            result = await this.controller.api.syncRequests();
+            await this.load();
+        } finally {
+            this._externalRefreshing = false;
+            if (button) {
+                button.disabled = false;
+                button.textContent = 'Refresh';
+            }
+        }
+        if (quiet) {
+            return result;
+        }
+        const message = (result && result.message) || 'Could not sync linked tickets.';
+        if (window.toast) {
+            const closed = Number((result && result.closed) || 0);
+            const errors = Number((result && result.errors) || 0);
+            if (!result || !result.success) {
+                window.toast.error(message, { key: 'requests-sync' });
+            } else if (closed > 0) {
+                window.toast.success(message, { key: 'requests-sync' });
+            } else if (errors > 0) {
+                window.toast.error(message, { key: 'requests-sync' });
+            } else {
+                window.toast.info(message, { key: 'requests-sync' });
+            }
+        }
+        return result;
+    }
+
+    show(options) {
+        const justOpened = Boolean(options && options.justOpened);
+        this.startLocalPoll();
+        const painted = this.load();
+        if (justOpened) {
+            painted.then(() => this.refreshExternal({ quiet: true }));
+        }
+    }
+
+    hide() {
+        this.stopLocalPoll();
+    }
+
+    startLocalPoll() {
+        this.stopLocalPoll();
+        this._pollTimer = setInterval(() => {
+            this.pollSummary();
+        }, REQUESTS_POLL_MS);
+    }
+
+    stopLocalPoll() {
+        if (this._pollTimer) {
+            clearInterval(this._pollTimer);
+            this._pollTimer = null;
+        }
+    }
+
+    async pollSummary() {
+        if (this._externalRefreshing) {
+            return;
+        }
+        const data = await this.controller.api.getRequestsSummary();
+        if (!data || !data.success) {
+            return;
+        }
+        this.counts = data.counts || this.counts;
+        if (data.queue_counts) {
+            this.queueCounts = data.queue_counts;
+            this.tabCounts = data.queue_counts[this.queueTab] || this.tabCounts;
+        }
+        this.updateNavBadge();
+        this.updateHeaderMeta();
+        if (typeof data.generation === 'number' && data.generation !== this.generation) {
+            await this.load();
+        }
+    }
+
+    matchesQueue(item, queue) {
+        const key = (queue || this.queueTab || 'all').toLowerCase();
+        if (key === 'all' || key === '' || key === 'pending') {
+            return true;
+        }
+        const category = item && item.category;
+        if (key === 'soc') {
+            return SOC_CATEGORIES.has(category);
+        }
+        if (key === 'detection' || key === 'detections' || key === 'detection_engineering') {
+            return DETECTION_CATEGORIES.has(category);
+        }
+        if (key === 'engineering' || key === 'eng') {
+            return Boolean(this.githubIssue(item));
+        }
+        return true;
+    }
+
+    applyQueueFilter() {
+        this.requests = this.items.filter((item) => this.matchesQueue(item, this.queueTab));
+        if (this.queueCounts && this.queueCounts[this.queueTab]) {
+            this.tabCounts = this.queueCounts[this.queueTab];
+        }
+        const visible = new Set(this.requests.map((item) => item.id));
+        this.selectedIds = new Set([...this.selectedIds].filter((id) => visible.has(id)));
+    }
+
+    async selectCard(id) {
+        this.selectedId = id;
+        this.receipt = null;
+        this.highlightCards();
+        await this.ensureFull(id);
+        if (this.selectedId !== id) {
+            return;
+        }
+        this.renderDetail();
+    }
+
+    async ensureFull(id) {
+        if (!id) {
+            return null;
+        }
+        const cached = this._fullById[id];
+        if (cached && cached._generation === this.generation) {
+            return cached;
+        }
+        const data = await this.controller.api.getRequest(id);
+        if (!data || !data.success || !data.request) {
+            return cached || null;
+        }
+        const full = { ...data.request, _full: true, _generation: this.generation };
+        this._fullById[id] = full;
+        const index = this.items.findIndex((item) => item.id === id);
+        if (index >= 0) {
+            this.items[index] = { ...this.items[index], ...full };
+            this.applyQueueFilter();
+        }
+        return full;
+    }
+
     async load() {
         this.bind();
         this.captureDrafts();
+        const seq = ++this._loadSeq;
         const status = this.filter === 'all' ? 'all' : this.filter;
         const [list, catalog] = await Promise.all([
-            this.controller.api.listRequests(status, this.queueTab),
+            this.controller.api.listRequests(status),
             this.catalog.length ? Promise.resolve({ actions: this.catalog }) : this.controller.api.getRequestCatalog(),
         ]);
+        if (seq !== this._loadSeq) {
+            return;
+        }
         if (catalog && catalog.actions) {
             this.catalog = catalog.actions;
         }
         if (list && list.success) {
-            this.requests = list.requests || [];
+            this.items = this.applyOptimistic(list.requests || []);
             this.counts = list.counts || this.counts;
-            this.tabCounts = list.tab_counts || this.tabCounts;
+            this.queueCounts = list.queue_counts || this.queueCounts;
+            this.tabCounts = (this.queueCounts && this.queueCounts[this.queueTab]) || list.tab_counts || this.tabCounts;
+            if (typeof list.generation === 'number') {
+                this.generation = list.generation;
+            }
+            const keepFull = {};
+            this._inFlight.forEach((id) => {
+                if (this._fullById[id]) {
+                    keepFull[id] = this._fullById[id];
+                }
+            });
+            this._fullById = keepFull;
         }
-        const visible = new Set(this.requests.map((item) => item.id));
-        this.selectedIds = new Set([...this.selectedIds].filter((id) => visible.has(id)));
+        this.applyQueueFilter();
         this.updateNavBadge();
         this.syncQueueTabs();
         if (this.controller.activeSection === 'requests') {
             this.render();
+            if (this.selectedId) {
+                await this.ensureFull(this.selectedId);
+                if (seq !== this._loadSeq) {
+                    return;
+                }
+                if (!this._skipDetailRebuild) {
+                    this.renderDetail();
+                }
+            }
         }
     }
 
     async refreshCounts() {
-        const data = await this.controller.api.listRequests('open', this.queueTab);
+        const data = await this.controller.api.getRequestsSummary();
         if (data && data.success) {
             this.counts = data.counts || this.counts;
-            this.tabCounts = data.tab_counts || this.tabCounts;
+            if (data.queue_counts) {
+                this.queueCounts = data.queue_counts;
+                this.tabCounts = data.queue_counts[this.queueTab] || this.tabCounts;
+            }
+            if (typeof data.generation === 'number') {
+                this.generation = data.generation;
+            }
             this.updateNavBadge();
         }
     }
@@ -260,11 +468,63 @@ class RequestsManager {
         return this.catalog.find((item) => item.action_type === actionType) || null;
     }
 
+    requestAlertIds(item) {
+        const ids = new Set();
+        if (item && item.alert_id) {
+            ids.add(String(item.alert_id));
+        }
+        const payload = (item && item.payload) || {};
+        [payload.alert_id, payload.alertId].forEach((value) => {
+            if (value) {
+                ids.add(String(value));
+            }
+        });
+        const alert = payload.alert;
+        if (alert && typeof alert === 'object') {
+            [alert.id, alert.alert_id, alert.alertId].forEach((value) => {
+                if (value) {
+                    ids.add(String(value));
+                }
+            });
+        }
+        return ids;
+    }
+
+    associatedPendingNotes(item) {
+        if (!item || (item.action_type !== 'close_alert' && item.action_type !== 'identity_verify')) {
+            return [];
+        }
+        const wanted = this.requestAlertIds(item);
+        if (!wanted.size) {
+            return [];
+        }
+        return this.requests.filter((other) => {
+            if (other.action_type !== 'add_alert_note' || other.status !== 'pending') {
+                return false;
+            }
+            const noteIds = this.requestAlertIds(other);
+            let overlap = false;
+            wanted.forEach((id) => {
+                if (noteIds.has(id)) {
+                    overlap = true;
+                }
+            });
+            if (!overlap) {
+                return false;
+            }
+            return !item.cluster_id || !other.cluster_id || item.cluster_id === other.cluster_id;
+        });
+    }
+
     selected() {
         if (this.receipt && this.receipt.item && this.receipt.item.id === this.selectedId) {
             return this.receipt.item;
         }
-        return this.requests.find((item) => item.id === this.selectedId) || this.requests[0] || null;
+        const base = this.requests.find((item) => item.id === this.selectedId) || this.requests[0] || null;
+        if (!base) {
+            return null;
+        }
+        return this._fullById[base.id] || base;
     }
 
     isInformational(item, spec) {
@@ -611,11 +871,17 @@ class RequestsManager {
                 <button type="button" class="btn btn-danger" data-request-action="deny">Deny</button>
             `;
         }
+        const notes = this.associatedPendingNotes(item);
+        const noteCopy = notes.length
+            ? (item.action_type === 'identity_verify'
+                ? `Yes will also approve ${notes.length} pending alert note${notes.length === 1 ? '' : 's'} for this alert.`
+                : `Approve will also write ${notes.length} pending alert note${notes.length === 1 ? '' : 's'} for this alert.`)
+            : 'Review the details below, then approve or deny.';
         return `
             <div class="request-decision-bar">
                 <div class="request-decision-copy">
                     <span class="request-decision-label">Needs approval</span>
-                    <span>Review the details below, then approve or deny.</span>
+                    <span>${noteCopy}</span>
                 </div>
                 <div class="request-actions">${buttons}</div>
                 ${comment}
@@ -760,6 +1026,9 @@ class RequestsManager {
             'alert', 'rule', 'coverage_check', 'rule_found', 'suggestion', 'description',
             'engineering', 'github_issue',
         ]);
+        if (item.action_type === 'add_alert_note') {
+            skip.add('note');
+        }
         const payloadRows = Object.keys(payload).length
             ? Object.entries(payload)
                 .filter(([key, value]) => !skip.has(key) && value != null && value !== '')
@@ -768,8 +1037,18 @@ class RequestsManager {
                     return `<dt>${escapeHtml(label)}</dt><dd>${escapeHtml(this.formatValue(value))}</dd>`;
                 }).join('')
             : '';
+        const proposedNote = item.action_type === 'add_alert_note' && payload.note
+            ? `<div class="request-section-label">Proposed note</div><div class="request-detail-summary">${escapeHtml(this.formatValue(payload.note))}</div>`
+            : '';
+        const associated = this.associatedPendingNotes(item);
+        const associatedHtml = associated.length
+            ? `<div class="request-section-label">Associated notes (approved with this close)</div>
+               ${associated.map((note) => `<div class="request-detail-summary">${escapeHtml(this.formatValue(note.payload && note.payload.note))}</div>`).join('')}`
+            : '';
         return `
             ${this.alertHtml(payload.alert)}
+            ${proposedNote}
+            ${associatedHtml}
             ${payloadRows ? `<div class="request-section-label">Action parameters</div><dl class="request-payload">${payloadRows}</dl>` : ''}
         `;
     }
@@ -996,36 +1275,193 @@ class RequestsManager {
         this.selectedId = item.id;
     }
 
-    async handleAction(action) {
-        const item = this.selected();
-        if (!item) {
-            return;
+    workingMessage(action, count) {
+        const many = Number(count || 1);
+        const suffix = many > 1 ? ` ${many} requests` : '';
+        if (action === 'approve') {
+            return many > 1 ? `Approving${suffix}…` : 'Approving…';
         }
-        const comment = this.comment();
-        this._busy = true;
-        let result;
-        try {
-            if (action === 'approve') {
-                result = await this.controller.api.approveRequest(item.id, comment);
-            } else if (action === 'deny') {
-                result = await this.controller.api.denyRequest(item.id, comment);
-            } else if (action === 'done') {
-                result = await this.controller.api.acknowledgeRequest(item.id, comment);
-            } else if (action === 'ignore') {
-                result = await this.controller.api.ignoreRequest(item.id, comment);
-            } else if (action === 'create-runbook') {
-                result = await this.controller.api.createRunbookFromRequest(item.id, comment);
-            } else if (action === 'yes' || action === 'no') {
-                result = await this.controller.api.answerRequest(item.id, action, comment);
-            } else {
+        if (action === 'deny') {
+            return many > 1 ? `Denying${suffix}…` : 'Denying…';
+        }
+        if (action === 'ignore') {
+            return many > 1 ? `Ignoring${suffix}…` : 'Ignoring…';
+        }
+        if (action === 'done' || action === 'acknowledge') {
+            return many > 1 ? `Marking${suffix} done…` : 'Marking done…';
+        }
+        if (action === 'create-runbook') {
+            return 'Starting runbook session…';
+        }
+        if (action === 'yes') {
+            return 'Recording Yes…';
+        }
+        if (action === 'no') {
+            return 'Recording No…';
+        }
+        return 'Updating request…';
+    }
+
+    optimisticStatus(action) {
+        if (action === 'deny') {
+            return 'denied';
+        }
+        if (action === 'done' || action === 'acknowledge' || action === 'ignore' || action === 'create-runbook') {
+            return 'acknowledged';
+        }
+        return 'executed';
+    }
+
+    optimisticUpdatedItem(item, action) {
+        return {
+            ...item,
+            status: this.optimisticStatus(action),
+            archived: true,
+            _optimistic: true,
+        };
+    }
+
+    applyOptimistic(items) {
+        if (!this._optimisticById.size) {
+            return items;
+        }
+        const result = [];
+        items.forEach((item) => {
+            const overlay = this._optimisticById.get(item.id);
+            if (overlay && this.filter === 'open' && overlay.archived) {
                 return;
             }
-        } finally {
-            this._busy = false;
+            result.push(overlay || item);
+        });
+        return result;
+    }
+
+    replaceItem(id, next) {
+        const index = this.items.findIndex((item) => item.id === id);
+        if (index >= 0) {
+            this.items[index] = next;
+        } else {
+            this.items.unshift(next);
         }
+        if (this._fullById[id]) {
+            this._fullById[id] = { ...next, _full: true, _generation: this.generation };
+        }
+    }
+
+    nudgeCounts(delta, item) {
+        const openDelta = delta;
+        const archivedDelta = -delta;
+        if (this.tabCounts) {
+            this.tabCounts.open = Math.max(0, Number(this.tabCounts.open || 0) + openDelta);
+            this.tabCounts.archived = Math.max(0, Number(this.tabCounts.archived || 0) + archivedDelta);
+        }
+        if (this.queueCounts && this.queueCounts[this.queueTab]) {
+            this.queueCounts[this.queueTab].open = Math.max(
+                0,
+                Number(this.queueCounts[this.queueTab].open || 0) + openDelta,
+            );
+            this.queueCounts[this.queueTab].archived = Math.max(
+                0,
+                Number(this.queueCounts[this.queueTab].archived || 0) + archivedDelta,
+            );
+            this.tabCounts = this.queueCounts[this.queueTab];
+        }
+        if (this.counts) {
+            this.counts.open = Math.max(0, Number(this.counts.open || 0) + openDelta);
+            this.counts.pending = Math.max(0, Number(this.counts.pending || 0) + openDelta);
+            if (this.isActionable(item)) {
+                this.counts.actionable = Math.max(0, Number(this.counts.actionable || 0) + openDelta);
+            }
+        }
+        this.updateNavBadge();
+        this.updateHeaderMeta();
+    }
+
+    settleLocally(item, action) {
+        const snapshot = { ...item };
+        const settled = this.optimisticUpdatedItem(item, action);
+        this._rollbackById.set(item.id, snapshot);
+        this._optimisticById.set(item.id, settled);
+        const nextId = this.nextOpenId(item.id);
+        this.replaceItem(item.id, settled);
+        this.selectedIds.delete(item.id);
+        this.nudgeCounts(-1, snapshot);
+        this.applyQueueFilter();
+        this.receipt = null;
+        this._skipDetailRebuild = false;
+        this.selectedId = nextId;
+        this._clickLockUntil = Date.now() + 400;
+        this.render();
+        if (nextId) {
+            this.ensureFull(nextId);
+        }
+        return snapshot;
+    }
+
+    restoreLocal(id) {
+        const snapshot = this._rollbackById.get(id);
+        this._optimisticById.delete(id);
+        this._rollbackById.delete(id);
+        this._inFlight.delete(id);
+        if (!snapshot) {
+            this.load();
+            return;
+        }
+        this.replaceItem(id, snapshot);
+        this.nudgeCounts(1, snapshot);
+        this.applyQueueFilter();
+        this.render();
+    }
+
+    finishLocal(id) {
+        this._optimisticById.delete(id);
+        this._rollbackById.delete(id);
+        this._inFlight.delete(id);
+    }
+
+    dispatchAction(action, id, comment) {
+        const api = this.controller.api;
+        if (action === 'approve') {
+            return api.approveRequest(id, comment);
+        }
+        if (action === 'deny') {
+            return api.denyRequest(id, comment);
+        }
+        if (action === 'done' || action === 'acknowledge') {
+            return api.acknowledgeRequest(id, comment);
+        }
+        if (action === 'ignore') {
+            return api.ignoreRequest(id, comment);
+        }
+        if (action === 'create-runbook') {
+            return api.createRunbookFromRequest(id, comment);
+        }
+        if (action === 'yes' || action === 'no') {
+            return api.answerRequest(id, action, comment);
+        }
+        return Promise.resolve({ success: false, error: 'Unknown action' });
+    }
+
+    async handleAction(action) {
+        const item = this.selected();
+        if (!item || this._inFlight.has(item.id)) {
+            return;
+        }
+        this._inFlight.add(item.id);
+        const comment = this.comment();
+        const toastKey = `requests-${item.id}`;
+        this.settleLocally(item, action);
+        if (window.toast) {
+            window.toast.info(this.workingMessage(action), { key: toastKey, duration: 0 });
+        }
+        const result = await this.dispatchAction(action, item.id, comment);
         if (!result || !result.success) {
+            this.restoreLocal(item.id);
             if (window.toast) {
-                window.toast.error((result && (result.error || result.detail)) || 'Could not update request', { key: 'requests' });
+                window.toast.error(
+                    (result && (result.error || result.detail)) || 'Could not update request',
+                    { key: toastKey },
+                );
             }
             return;
         }
@@ -1033,19 +1469,15 @@ class RequestsManager {
         const github = updated && updated.execution_result && updated.execution_result.github;
         if (window.toast) {
             if (action === 'ignore' && github && github.attempted && github.success === false) {
-                window.toast.error(github.error || 'Ignored locally, but GitHub close failed.', { key: 'requests' });
+                window.toast.error(github.error || 'Ignored locally, but GitHub close failed.', { key: toastKey });
             } else {
-                window.toast.success(this.receiptMessage(action, updated), { key: 'requests' });
+                window.toast.success(this.receiptMessage(action, updated), { key: toastKey });
             }
         }
-        this.selectedIds.delete(item.id);
-        this._skipDetailRebuild = false;
-        await this.load();
-        this.showReceipt(item, updated, action);
-        this.render();
-
+        this.finishLocal(item.id);
+        this.load();
         if (action === 'create-runbook' && result.session && result.session.id) {
-            await this.openCreateRunbookSession(result.session.id);
+            this.openCreateRunbookSession(result.session.id);
         }
     }
 
@@ -1107,22 +1539,46 @@ class RequestsManager {
         if (!ok) {
             return;
         }
-        this._busy = true;
-        let result;
-        try {
-            result = await this.controller.api.bulkRequests(action, ids, this.comment(true));
-        } finally {
-            this._busy = false;
+        const toastKey = 'requests-bulk';
+        const originals = new Map(selected.map((item) => [item.id, item]));
+        ids.forEach((id) => {
+            const current = originals.get(id);
+            if (!current || this._inFlight.has(id)) {
+                return;
+            }
+            this._inFlight.add(id);
+            this.settleLocally(current, action === 'acknowledge' ? 'done' : action);
+        });
+        if (window.toast) {
+            window.toast.info(this.workingMessage(action, ids.length), { key: toastKey, duration: 0 });
         }
+        const result = await this.controller.api.bulkRequests(action, ids, this.comment(true));
         if (!result || !result.success) {
+            ids.forEach((id) => this.restoreLocal(id));
             if (window.toast) {
-                window.toast.error((result && (result.error || result.detail)) || 'Bulk action failed', { key: 'requests' });
+                window.toast.error((result && (result.error || result.detail)) || 'Bulk action failed', { key: toastKey });
             }
             return;
         }
         const succeeded = Number(result.succeeded || 0);
         const skipped = Number(result.skipped || 0);
         const failed = Number(result.failed || 0);
+        const results = Array.isArray(result.results) ? result.results : [];
+        results.forEach((entry) => {
+            if (!entry || !entry.id) {
+                return;
+            }
+            if (entry.success && !entry.skipped) {
+                this.finishLocal(entry.id);
+                return;
+            }
+            this.restoreLocal(entry.id);
+        });
+        ids.forEach((id) => {
+            if (this._inFlight.has(id)) {
+                this.finishLocal(id);
+            }
+        });
         if (window.toast) {
             const verb = action === 'acknowledge' ? 'marked done' : action === 'ignore' ? 'ignored' : `${label}d`;
             const parts = [`${succeeded} ${verb}`];
@@ -1133,13 +1589,13 @@ class RequestsManager {
                 parts.push(`${failed} failed`);
             }
             if (failed) {
-                window.toast.error(parts.join(' · '), { key: 'requests' });
+                window.toast.error(parts.join(' · '), { key: toastKey });
             } else {
-                window.toast.success(parts.join(' · '), { key: 'requests' });
+                window.toast.success(parts.join(' · '), { key: toastKey });
             }
         }
         this.selectedIds.clear();
         this._skipDetailRebuild = false;
-        await this.load();
+        this.load();
     }
 }

@@ -17,6 +17,8 @@ logger = get_logger("sami.approval_queue")
 _CRITICAL_FOLLOW_UPS = {"isolate_endpoint", "kill_process", "disable_user", "reset_credentials"}
 _OPEN_STATUSES = {RequestStatus.PENDING, RequestStatus.INFORMATIONAL, RequestStatus.AWAITING_INTEGRATION}
 _IGNORE_GITHUB_COMMENT = "Manager decided to ignore this professionally."
+_ENRICHMENT_RETRY_SECONDS = 900
+_QUEUE_KEYS = ("all", "soc", "engineering", "detection")
 
 _queue: Optional["ApprovalQueue"] = None
 
@@ -46,46 +48,47 @@ class ApprovalQueue:
         status: Optional[str] = None,
         cluster_id: Optional[str] = None,
         queue: Optional[str] = None,
-        sync_github: bool = True,
+        sync_github: bool = False,
     ) -> List[ApprovalRequest]:
+        return self.list_bundle(
+            status=status,
+            cluster_id=cluster_id,
+            queue=queue,
+            sync_github=sync_github,
+        )["items"]
+
+    def list_bundle(
+        self,
+        status: Optional[str] = None,
+        cluster_id: Optional[str] = None,
+        queue: Optional[str] = None,
+        sync_github: bool = False,
+    ) -> Dict[str, Any]:
+        """Local snapshot: tickets, badge counts, and generation. No GitHub or SIEM."""
         queue_key = (queue or "all").strip().lower()
-        filter_key = (status or "all").strip().lower()
-        if sync_github and filter_key in {"open", "pending", "all", "informational"} and queue_key in {
-            "all",
-            "engineering",
-            "eng",
-            "detection",
-            "detections",
-            "detection_engineering",
-        }:
+        if sync_github:
             self.sync_github_closed(cluster_id=cluster_id)
-        items = self.store.list(cluster_id=cluster_id)
-        items = [item for item in items if matches_queue(item.action_type, item.payload, queue_key)]
-        if filter_key in {"pending", "open"}:
-            items = [
-                item
-                for item in items
-                if not is_archived(item) and item.status in _OPEN_STATUSES
-            ]
-            items = [self.ensure_enriched(item) for item in items]
-        elif filter_key == "archived":
-            items = [item for item in items if is_archived(item)]
-        elif filter_key == "all":
-            items = [
-                self.ensure_enriched(item)
-                if item.status in {RequestStatus.PENDING, RequestStatus.INFORMATIONAL}
-                else item
-                for item in items
-            ]
-        else:
-            try:
-                parsed = RequestStatus(filter_key)
-            except ValueError as exc:
-                raise ValueError(f"Unknown request filter {status!r}") from exc
-            items = [item for item in items if item.status == parsed]
-            if parsed in {RequestStatus.PENDING, RequestStatus.INFORMATIONAL}:
-                items = [self.ensure_enriched(item) for item in items]
-        return sorted(items, key=lambda item: item.created_at, reverse=True)
+        snapshot = self.store.snapshot()
+        generation = self.store.generation
+        clustered = snapshot
+        if cluster_id:
+            clustered = [item for item in snapshot if item.cluster_id == cluster_id]
+        queued = [
+            item for item in clustered if matches_queue(item.action_type, item.payload, queue_key)
+        ]
+        items = self._apply_status(queued, status)
+        items = sorted(items, key=lambda item: item.created_at, reverse=True)
+        counts = self._counts_from(snapshot)
+        queue_counts = self._queue_counts_from(snapshot)
+        tab_key = queue_key if queue_key in queue_counts else "all"
+        return {
+            "items": items,
+            "counts": counts,
+            "tab_counts": queue_counts[tab_key],
+            "queue_counts": queue_counts,
+            "generation": generation,
+            "queue": queue or "all",
+        }
 
     def get(self, request_id: str) -> Optional[ApprovalRequest]:
         request = self.store.get(request_id)
@@ -96,7 +99,46 @@ class ApprovalQueue:
         return request
 
     def counts(self) -> Dict[str, int]:
-        items = self.store.list()
+        return self._counts_from(self.store.snapshot())
+
+    def tab_counts(self, queue: Optional[str] = None) -> Dict[str, int]:
+        """Open / archived / all counts for the active Requests top tab."""
+        queue_counts = self._queue_counts_from(self.store.snapshot())
+        key = (queue or "all").strip().lower()
+        if key not in queue_counts:
+            key = "all"
+        return queue_counts[key]
+
+    def summary(self) -> Dict[str, Any]:
+        """Cheap badge payload for the Requests poll. Local files only."""
+        snapshot = self.store.snapshot()
+        return {
+            "generation": self.store.generation,
+            "counts": self._counts_from(snapshot),
+            "queue_counts": self._queue_counts_from(snapshot),
+        }
+
+    @staticmethod
+    def _apply_status(items: List[ApprovalRequest], status: Optional[str]) -> List[ApprovalRequest]:
+        filter_key = (status or "all").strip().lower()
+        if filter_key in {"pending", "open"}:
+            return [
+                item
+                for item in items
+                if not is_archived(item) and item.status in _OPEN_STATUSES
+            ]
+        if filter_key == "archived":
+            return [item for item in items if is_archived(item)]
+        if filter_key == "all":
+            return list(items)
+        try:
+            parsed = RequestStatus(filter_key)
+        except ValueError as exc:
+            raise ValueError(f"Unknown request filter {status!r}") from exc
+        return [item for item in items if item.status == parsed]
+
+    @staticmethod
+    def _counts_from(items: List[ApprovalRequest]) -> Dict[str, int]:
         open_items = [item for item in items if not is_archived(item) and item.status in _OPEN_STATUSES]
         archived_count = sum(1 for item in items if is_archived(item))
         informational = sum(1 for item in open_items if item.status == RequestStatus.INFORMATIONAL)
@@ -129,21 +171,22 @@ class ApprovalQueue:
             "all": len(items),
         }
 
-    def tab_counts(self, queue: Optional[str] = None) -> Dict[str, int]:
-        """Open / archived / all counts for the active Requests top tab."""
-        items = [
-            item
-            for item in self.store.list()
-            if matches_queue(item.action_type, item.payload, queue)
-        ]
-        open_items = [
-            item for item in items if not is_archived(item) and item.status in _OPEN_STATUSES
-        ]
-        return {
-            "open": len(open_items),
-            "archived": sum(1 for item in items if is_archived(item)),
-            "all": len(items),
-        }
+    @staticmethod
+    def _queue_counts_from(items: List[ApprovalRequest]) -> Dict[str, Dict[str, int]]:
+        result: Dict[str, Dict[str, int]] = {}
+        for queue_key in _QUEUE_KEYS:
+            matched = [
+                item for item in items if matches_queue(item.action_type, item.payload, queue_key)
+            ]
+            open_items = [
+                item for item in matched if not is_archived(item) and item.status in _OPEN_STATUSES
+            ]
+            result[queue_key] = {
+                "open": len(open_items),
+                "archived": sum(1 for item in matched if is_archived(item)),
+                "all": len(matched),
+            }
+        return result
 
     @staticmethod
     def _mark_archived(request: ApprovalRequest) -> ApprovalRequest:
@@ -214,7 +257,13 @@ class ApprovalQueue:
             raise ValueError(f"Tool {tool_name!r} is not gated through the approval queue")
         args = dict(arguments or {})
         title = args.get("title") or f"{spec.label}: {args.get('alert_id') or args.get('endpoint_id') or 'pending'}"
-        summary = args.get("summary") or args.get("comment") or args.get("description") or spec.description
+        summary = (
+            args.get("summary")
+            or args.get("comment")
+            or args.get("note")
+            or args.get("description")
+            or spec.description
+        )
         rationale = (
             args.get("rationale")
             or args.get("comment")
@@ -241,7 +290,7 @@ class ApprovalQueue:
             source="mcp",
         )
 
-    def ensure_enriched(self, request: ApprovalRequest) -> ApprovalRequest:
+    def ensure_enriched(self, request: ApprovalRequest, *, force: bool = False) -> ApprovalRequest:
         """Backfill SIEM context on older/sparse pending requests and persist."""
         from .enrichment import enrich_request, needs_enrichment
 
@@ -249,8 +298,46 @@ class ApprovalQueue:
             return request
         if not needs_enrichment(request):
             return request
+        if not force and request.enrichment_attempted_at:
+            elapsed = (datetime.now() - request.enrichment_attempted_at).total_seconds()
+            if elapsed < _ENRICHMENT_RETRY_SECONDS:
+                return request
         enriched = enrich_request(request)
+        if needs_enrichment(enriched):
+            enriched.enrichment_attempted_at = datetime.now()
+        else:
+            enriched.enrichment_attempted_at = None
+        enriched.updated_at = datetime.now()
         return self.store.put(enriched)
+
+    def enrich_open(self, cluster_id: Optional[str] = None) -> Dict[str, Any]:
+        """One-pass SIEM backfill for open tickets that still need a snapshot."""
+        from .enrichment import needs_enrichment
+
+        checked = 0
+        enriched = 0
+        failed = 0
+        for item in self.store.snapshot():
+            if cluster_id and item.cluster_id != cluster_id:
+                continue
+            if is_archived(item) or item.status not in {
+                RequestStatus.PENDING,
+                RequestStatus.INFORMATIONAL,
+            }:
+                continue
+            if not needs_enrichment(item):
+                continue
+            checked += 1
+            updated = self.ensure_enriched(item)
+            if needs_enrichment(updated):
+                failed += 1
+            else:
+                enriched += 1
+        return {
+            "enrichment_checked": checked,
+            "enriched": enriched,
+            "enrichment_failed": failed,
+        }
 
     def attach_engineering(self, request_id: str, engineering: Dict[str, Any]) -> ApprovalRequest:
         """Persist a GitHub (or other ENG) mirror onto the request payload."""
@@ -261,18 +348,35 @@ class ApprovalQueue:
         request.updated_at = datetime.now()
         return self.store.put(request)
 
-    def sync_github_closed(self, cluster_id: Optional[str] = None) -> int:
+    def sync_external_closed(self, cluster_id: Optional[str] = None) -> Dict[str, Any]:
+        """Archive open notes whose linked engineering ticket is already closed."""
+        return self.sync_github_closed(cluster_id=cluster_id)
+
+    def refresh_external(self, cluster_id: Optional[str] = None) -> Dict[str, Any]:
+        """GitHub close-sync plus one SIEM backfill pass. Used when Requests opens or Refresh is clicked."""
+        github = self.sync_github_closed(cluster_id=cluster_id)
+        siem = self.enrich_open(cluster_id=cluster_id)
+        return {**github, **siem}
+
+    def sync_github_closed(self, cluster_id: Optional[str] = None) -> Dict[str, Any]:
         """Archive open mirrored notes whose GitHub issue is already closed."""
+        checked = 0
         closed = 0
+        errors = 0
         for item in list(self.store.list(cluster_id=cluster_id)):
             if item.status != RequestStatus.INFORMATIONAL or is_archived(item):
                 continue
             link = github_issue_link(item.payload)
             if not link:
                 continue
+            provider = str(link.get("provider") or "github").lower()
+            if provider not in {"github", ""}:
+                continue
+            checked += 1
             try:
                 issue = self._github_get_issue(item, str(link["number"]))
             except Exception as exc:
+                errors += 1
                 logger.warning("GitHub sync skipped for request %s: %s", item.id, exc)
                 continue
             state = str((issue or {}).get("state") or "").lower()
@@ -287,8 +391,14 @@ class ApprovalQueue:
                 )
                 closed += 1
             except Exception as exc:
+                errors += 1
                 logger.warning("Could not archive request %s after GitHub close: %s", item.id, exc)
-        return closed
+        return {
+            "checked": checked,
+            "closed": closed,
+            "errors": errors,
+            "providers": ["github"],
+        }
 
     def ignore(
         self,
@@ -478,6 +588,23 @@ class ApprovalQueue:
                     }
                 )
                 continue
+            if normalized == "approve" and request.status in {
+                RequestStatus.EXECUTED,
+                RequestStatus.FAILED,
+                RequestStatus.DENIED,
+                RequestStatus.AWAITING_INTEGRATION,
+            }:
+                skipped += 1
+                results.append(
+                    {
+                        "id": request_id,
+                        "success": True,
+                        "skipped": True,
+                        "error": "Already settled",
+                        "status": request.status.value,
+                    }
+                )
+                continue
             if normalized == "approve" and spec and spec.asks_question:
                 skipped += 1
                 results.append(
@@ -620,7 +747,86 @@ class ApprovalQueue:
             self._mark_archived(request)
         return self.store.put(request)
 
+    @staticmethod
+    def _request_alert_ids(request: ApprovalRequest) -> set:
+        """Alert ids on a request: top-level payload and the enriched alert snapshot."""
+        ids = set()
+        payload = request.payload or {}
+        for raw in (payload.get("alert_id"), payload.get("alertId")):
+            text = str(raw or "").strip()
+            if text:
+                ids.add(text)
+        alert = payload.get("alert")
+        if isinstance(alert, dict):
+            for raw in (alert.get("id"), alert.get("alert_id"), alert.get("alertId")):
+                text = str(raw or "").strip()
+                if text:
+                    ids.add(text)
+        return ids
+
+    def _pending_notes_for_alert(self, close_request: ApprovalRequest) -> List[ApprovalRequest]:
+        """Pending add-note requests for the same alert (and cluster, when both are set)."""
+        wanted = self._request_alert_ids(close_request)
+        if not wanted:
+            return []
+        close_cluster = close_request.cluster_id or None
+        matches: List[ApprovalRequest] = []
+        for item in self.store.list():
+            if item.id == close_request.id:
+                continue
+            if item.action_type != "add_alert_note" or item.status != RequestStatus.PENDING:
+                continue
+            if not (self._request_alert_ids(item) & wanted):
+                continue
+            note_cluster = item.cluster_id or None
+            if close_cluster and note_cluster and close_cluster != note_cluster:
+                continue
+            matches.append(item)
+        return matches
+
+    def _approve_associated_notes(self, close_request: ApprovalRequest) -> List[Dict[str, Any]]:
+        """Approve pending notes for this alert so a close cannot land without them."""
+        notes = self._pending_notes_for_alert(close_request)
+        if not notes:
+            return []
+        alert_id = next(iter(self._request_alert_ids(close_request)), "")
+        actor = "analyst"
+        comment = f"Approved with close of alert {alert_id}" if alert_id else "Approved with close alert"
+        if close_request.decision:
+            actor = close_request.decision.actor or actor
+            if close_request.decision.comment:
+                comment = close_request.decision.comment
+        results: List[Dict[str, Any]] = []
+        for note in notes:
+            if close_request.cluster_id and not note.cluster_id:
+                note.cluster_id = close_request.cluster_id
+            payload = dict(note.payload or {})
+            if not payload.get("alert_id"):
+                overlap = self._request_alert_ids(note) & self._request_alert_ids(close_request)
+                fill = next(iter(overlap), None) or alert_id
+                if fill:
+                    payload["alert_id"] = fill
+                    note.payload = payload
+            note.decision = Decision(action="approve", actor=actor, comment=comment)
+            note.updated_at = datetime.now()
+            updated = self._execute(note)
+            if updated.id not in close_request.child_request_ids:
+                close_request.child_request_ids.append(updated.id)
+            results.append(
+                {
+                    "id": updated.id,
+                    "status": updated.status.value,
+                    "success": updated.status == RequestStatus.EXECUTED,
+                    "error": updated.error,
+                    "note": (updated.payload or {}).get("note"),
+                }
+            )
+        return results
+
     def _execute(self, request: ApprovalRequest) -> ApprovalRequest:
+        associated_notes: List[Dict[str, Any]] = []
+        if request.action_type == "close_alert":
+            associated_notes = self._approve_associated_notes(request)
         handler = get_handler(request.action_type)
         clients = resolve_clients(request.cluster_id)
         if clients.cluster_id and not request.cluster_id:
@@ -632,10 +838,14 @@ class ApprovalQueue:
             request.status = RequestStatus.FAILED
             request.error = str(exc)
             request.execution_result = {"success": False, "error": str(exc)}
+            if associated_notes:
+                request.execution_result["associated_notes"] = associated_notes
             self._mark_archived(request)
             return self.store.put(request)
 
         request.execution_result = result if isinstance(result, dict) else {"result": result}
+        if associated_notes:
+            request.execution_result["associated_notes"] = associated_notes
         request.updated_at = datetime.now()
         if isinstance(result, dict) and result.get("needs_integration"):
             request.status = RequestStatus.AWAITING_INTEGRATION

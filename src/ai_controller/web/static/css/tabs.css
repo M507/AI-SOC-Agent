@@ -2,8 +2,8 @@
 
 /* Tabs Container */
 .tabs-container {
-    background: #2d2d30;
-    border-bottom: 1px solid #3e3e42;
+    background: var(--color-elevated);
+    border-bottom: 1px solid var(--color-border);
     overflow-x: auto;
 }
 
@@ -23,24 +23,53 @@
     font-size: 11px;
     font-weight: 600;
     text-transform: uppercase;
-    color: #858585;
+    color: var(--color-text-muted);
     margin-right: 8px;
     padding: 4px 8px;
 }
 
+.tab-subgroup {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    margin-right: 12px;
+}
+
+.tab-subgroup:last-child {
+    margin-right: 0;
+}
+
+.tab-subgroup-label {
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--color-text-muted);
+    margin: 0 6px 0 12px;
+    white-space: nowrap;
+}
+
+.tabs > .tab-subgroup-label:first-child {
+    margin-left: 0;
+}
+
 .tabs {
     display: flex;
+    align-items: center;
+    flex-wrap: wrap;
     gap: 2px;
 }
 
 .tab {
     padding: 8px 16px;
-    background: #2d2d30;
-    color: #858585;
+    background: var(--color-elevated);
+    color: var(--color-text-muted);
     cursor: pointer;
     border: none;
-    border-radius: 4px 4px 0 0;
+    border-radius: var(--radius) var(--radius) 0 0;
     font-size: 13px;
+    font-family: inherit;
+    letter-spacing: inherit;
     white-space: nowrap;
     transition: all 0.2s;
     display: flex;
@@ -49,19 +78,19 @@
 }
 
 .tab:hover {
-    background: #3e3e42;
-    color: #d4d4d4;
+    background: var(--color-active);
+    color: var(--color-text);
 }
 
 .tab.active {
-    background: #1e1e1e;
-    color: #ffffff;
-    border-bottom: 2px solid #007acc;
+    background: var(--color-app);
+    color: var(--color-text-strong);
+    border-bottom: 2px solid var(--color-accent);
 }
 
 .tab-badge {
-    background: #3e3e42;
-    color: #d4d4d4;
+    background: var(--color-active);
+    color: var(--color-text);
     padding: 2px 6px;
     border-radius: 10px;
     font-size: 10px;
@@ -69,13 +98,13 @@
 }
 
 .tab.active .tab-badge {
-    background: #007acc;
-    color: white;
+    background: var(--color-accent);
+    color: var(--color-text-inverse);
 }
 
 .tab-cluster {
     font-size: 10px;
-    color: #89d185;
+    color: var(--color-success-text);
     max-width: 120px;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -86,9 +115,9 @@
     font-weight: 600;
     padding: 4px 8px;
     border-radius: 999px;
-    border: 1px solid #3d6b3d;
-    background: #1e3a1e;
-    color: #89d185;
+    border: 1px solid var(--color-success-border);
+    background: var(--color-success-bg);
+    color: var(--color-success-text);
     max-width: 220px;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -102,6 +131,5 @@
 }
 
 .tab-close:hover {
-    background: rgba(255, 255, 255, 0.1);
+    background: color-mix(in srgb, var(--color-text-strong) 10%, transparent);
 }
-

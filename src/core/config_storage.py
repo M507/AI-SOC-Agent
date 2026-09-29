@@ -20,6 +20,11 @@ from .config import (
     EDRConfig,
     ElasticConfig,
     EngConfig,
+    DEFAULT_MAX_TOOL_ITERATIONS,
+    DEFAULT_REQUEST_TIMEOUT_SECONDS,
+    DEFAULT_TOOL_RESULT_CHARS,
+    DEFAULT_TRACE_CHARS,
+    GeneralConfig,
     GitHubConfig,
     IrisConfig,
     LLMConfig,
@@ -164,6 +169,16 @@ def _config_to_dict(config: SamiConfig) -> Dict[str, Any]:
             "auto_start": config.mcp.auto_start,
             "host": config.mcp.host,
             "port": config.mcp.port,
+        }
+
+    if config.general:
+        result["general"] = {
+            "debug": config.general.debug,
+            "thinking": config.general.thinking,
+            "max_tool_iterations": config.general.max_tool_iterations,
+            "tool_result_chars": config.general.tool_result_chars,
+            "trace_chars": config.general.trace_chars,
+            "request_timeout_seconds": config.general.request_timeout_seconds,
         }
 
     return result
@@ -336,6 +351,18 @@ def _dict_to_config(data: Dict[str, Any]) -> SamiConfig:
             port=int(mcp_data.get("port", 8082)),
         )
 
+    general_cfg: Optional[GeneralConfig] = None
+    if data.get("general"):
+        general_data = data["general"]
+        general_cfg = GeneralConfig(
+            debug=bool(general_data.get("debug", False)),
+            thinking=bool(general_data.get("thinking", False)),
+            max_tool_iterations=int(general_data.get("max_tool_iterations", DEFAULT_MAX_TOOL_ITERATIONS)),
+            tool_result_chars=int(general_data.get("tool_result_chars", DEFAULT_TOOL_RESULT_CHARS)),
+            trace_chars=int(general_data.get("trace_chars", DEFAULT_TRACE_CHARS)),
+            request_timeout_seconds=int(general_data.get("request_timeout_seconds", DEFAULT_REQUEST_TIMEOUT_SECONDS)),
+        )
+
     return SamiConfig(
         thehive=thehive_cfg,
         iris=iris_cfg,
@@ -348,6 +375,7 @@ def _dict_to_config(data: Dict[str, Any]) -> SamiConfig:
         ai_controller=ai_controller_cfg,
         llm=llm_cfg,
         mcp=mcp_cfg,
+        general=general_cfg,
     )
 
 

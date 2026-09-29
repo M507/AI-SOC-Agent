@@ -2953,17 +2953,18 @@ Tag a security alert in the SIEM platform with a classification. Use this to mar
 
 ### `add_alert_note`
 
-Add a note or comment to a security alert in the SIEM platform. Use this to document investigation findings, recommendations for detection rule improvements, case numbers, or other relevant information about the alert.
+Request adding a note or comment to a security alert in the SIEM platform. The call files a request in the SamiGPT Requests view and does **not** write the note until an analyst approves it. Use this to document investigation findings, recommendations for detection rule improvements, case numbers, or other relevant information about the alert. Tell the analyst the note is pending in Requests; do not claim it was written.
 
 **Parameters:**
 - `alert_id` (string, required): The ID of the alert to add a note to
 - `note` (string, required): The note/comment text to add. Should include investigation findings, case numbers (if applicable), and recommendations for detection rule improvements
 
 **Returns:**
-- `success` (boolean): Whether the operation succeeded
-- `alert_id` (string): The ID of the alert that the note was added to
-- `note` (string): The note that was added
-- `alert` (object): Updated alert details
+- `queued` (boolean): `true` when the note was filed for approval
+- `success` (boolean): Whether the request was filed
+- `request_id` (string): Requests-view identifier
+- `status` (string): `pending` until an analyst approves or denies
+- `message` (string): Analyst-facing status (pending, not written)
 
 **Usage Example:**
 ```json
@@ -2985,7 +2986,7 @@ Add a note or comment to a security alert in the SIEM platform. Use this to docu
 - Track investigation steps and decisions
 - Support detection rule fine-tuning with specific recommendations
 
-**Note:** This tool is **mandatory** for SOC1 analysts when closing or escalating alerts per the initial alert triage runbook. Notes should include:
+**Note:** This tool is **mandatory** for SOC1 analysts when closing or escalating alerts per the initial alert triage runbook. The note is **not written** until an analyst approves it in Requests. Notes should include:
 - Investigation summary (what was checked)
 - Assessment (FP/BTP/TP/Suspicious/Uncertain)
 - Case number (if a case was created)

@@ -6,7 +6,7 @@
     left: 0;
     width: 100%;
     height: 100%;
-    background: rgba(0, 0, 0, 0.7);
+    background: var(--color-overlay);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -14,12 +14,12 @@
 }
 
 .modal-content {
-    background: #252526;
-    border: 1px solid #3e3e42;
-    border-radius: 8px;
+    background: var(--color-surface);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-lg);
     width: 90%;
     max-width: 500px;
-    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
+    box-shadow: var(--shadow);
 }
 
 .modal-content.modal-wide {
@@ -36,7 +36,7 @@
 
 .modal-header {
     padding: 16px 20px;
-    border-bottom: 1px solid #3e3e42;
+    border-bottom: 1px solid var(--color-border);
     display: flex;
     justify-content: space-between;
     align-items: center;
@@ -45,11 +45,11 @@
 .modal-header h3 {
     font-size: 16px;
     font-weight: 600;
-    color: #ffffff;
+    color: var(--color-text-strong);
 }
 
 .close {
-    color: #858585;
+    color: var(--color-text-muted);
     font-size: 24px;
     font-weight: bold;
     cursor: pointer;
@@ -57,7 +57,7 @@
 }
 
 .close:hover {
-    color: #d4d4d4;
+    color: var(--color-text);
 }
 
 .modal-body {
@@ -69,7 +69,7 @@
     margin-bottom: 8px;
     font-size: 13px;
     font-weight: 500;
-    color: #d4d4d4;
+    color: var(--color-text);
 }
 
 .modal-label-row {
@@ -88,10 +88,10 @@
 .modal-body textarea {
     width: 100%;
     padding: 10px 12px;
-    background: #1e1e1e;
-    border: 1px solid #3e3e42;
-    border-radius: 4px;
-    color: #d4d4d4;
+    background: var(--color-sunken);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius);
+    color: var(--color-text);
     font-size: 14px;
     font-family: inherit;
     margin-bottom: 16px;
@@ -105,16 +105,17 @@
 .modal-body input:focus,
 .modal-body textarea:focus {
     outline: none;
-    border-color: #007acc;
+    border-color: var(--color-accent);
+    box-shadow: 0 0 0 1px var(--color-focus);
 }
 
 .modal-body select {
     width: 100%;
     padding: 10px 12px;
-    background: #1e1e1e;
-    border: 1px solid #3e3e42;
-    border-radius: 4px;
-    color: #d4d4d4;
+    background: var(--color-sunken);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius);
+    color: var(--color-text);
     font-size: 14px;
     margin-bottom: 16px;
     cursor: pointer;
@@ -122,21 +123,21 @@
 
 .modal-body select:focus {
     outline: none;
-    border-color: #007acc;
+    border-color: var(--color-accent);
+    box-shadow: 0 0 0 1px var(--color-focus);
 }
 
 .modal-body small {
     display: block;
     margin-top: 4px;
     font-size: 12px;
-    color: #858585;
+    color: var(--color-text-muted);
 }
 
 .modal-footer {
     padding: 16px 20px;
-    border-top: 1px solid #3e3e42;
+    border-top: 1px solid var(--color-border);
     display: flex;
     justify-content: flex-end;
     gap: 10px;
 }
-

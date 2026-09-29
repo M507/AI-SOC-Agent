@@ -1,5 +1,6 @@
 """Web UI authentication: unauthenticated requests must not reach the app."""
 
+import pytest
 from fastapi.testclient import TestClient
 
 from src.ai_controller.web.auth import (
@@ -8,11 +9,17 @@ from src.ai_controller.web.auth import (
     WebAuthConfig,
     _login_failures,
     _sessions,
+    hash_password,
 )
 from src.ai_controller.web.server import app, initialize
 from src.ai_controller.web import auth as auth_mod
 
 TEST_PASSWORD = "test-password"
+
+
+@pytest.fixture(autouse=True)
+def _isolate_usage_dir(tmp_path, monkeypatch):
+    monkeypatch.setenv("SAMIGPT_USAGE_DIR", str(tmp_path / "servee-usage"))
 
 
 def _client():
@@ -27,7 +34,7 @@ def _client():
     auth_mod._auth = SessionManagerAuth(
         WebAuthConfig(
             username="admin",
-            password=TEST_PASSWORD,
+            password=hash_password(TEST_PASSWORD),
             session_secret="test-session-secret-value-minimum-32-chars-long",
             session_ttl_seconds=43200,
             cookie_secure=True,
@@ -49,10 +56,29 @@ def test_api_sessions_rejected_without_session():
     assert response.status_code == 401
 
 
+def test_api_usage_rejected_without_session():
+    client = _client()
+    response = client.get("/api/usage")
+    assert response.status_code == 401
+
+
 def test_static_rejected_without_session():
     client = _client()
-    response = client.get("/static/css/base.css", follow_redirects=False)
+    response = client.get("/static/css/layout.css", follow_redirects=False)
     assert response.status_code in (302, 401)
+
+
+def test_login_theme_assets_are_public():
+    client = _client()
+    tokens = client.get("/static/css/tokens.css")
+    login_css = client.get("/static/css/login.css")
+    theme_js = client.get("/static/theme.js")
+    assert tokens.status_code == 200
+    assert "--color-app" in tokens.text
+    assert login_css.status_code == 200
+    assert ".login-page" in login_css.text
+    assert theme_js.status_code == 200
+    assert "samigpt.appearance" in theme_js.text
 
 
 def test_docs_are_disabled():
@@ -96,6 +122,26 @@ def test_login_then_ui_is_reachable():
     sessions = client.get("/api/sessions")
     assert sessions.status_code == 200
     assert sessions.json()["success"] is True
+
+    usage = client.get("/api/usage")
+    assert usage.status_code == 200
+    body = usage.json()
+    assert body["success"] is True
+    assert "overview" in body
+    assert "sessions" in body
+    assert "models" in body
+    assert "calls" in body
+    assert "rates" in body
+    rates = client.get("/api/usage/pricing")
+    assert rates.status_code == 200
+    assert rates.json()["success"] is True
+    saved = client.put(
+        "/api/usage/pricing",
+        json={"auto": {"input": 2.75, "cache_write": 2.75, "cache_read": 0.4, "output": 11}},
+    )
+    assert saved.status_code == 200
+    assert saved.json()["success"] is True
+    assert saved.json()["pricing"]["models"]["auto"]["input"] == 2.75
 
     set_cookie = response.headers.get("set-cookie", "")
     assert "HttpOnly" in set_cookie

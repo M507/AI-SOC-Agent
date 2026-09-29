@@ -39,6 +39,7 @@ This runbook explicitly **excludes**:
 *   **Case Management Tools:** `review_case`, `add_case_comment`, `attach_observable_to_case`, `search_cases`, `add_case_task`
 *   **SIEM Tools:** `get_security_alert_by_id`, `get_alert_notes`, `lookup_entity`, `search_security_events`, `search_kql_query`, `search_lucene_query`, `search_eql_query`, `search_dsl_query`, `search_esql_query`, `search_user_activity`, `get_ip_address_report`, `pivot_on_indicator`, `get_ioc_matches`, `get_alerts_by_entity`, `get_alerts_by_time_window`, `get_rule_detections`, `get_security_alerts`
 *   **Engineering Tools:** `list_fine_tuning_recommendations`, `create_fine_tuning_recommendation`, `add_comment_to_fine_tuning_recommendation`, `create_visibility_recommendation`
+*   **Requests Tools:** `create_approval_request` — optional **Is this you?** (`action_type=identity_verify`) only when a Yes/No would actually decide whether the login was the user
 
 ## Workflow Steps
 
@@ -95,7 +96,8 @@ This runbook explicitly **excludes**:
 
 9.  **Create Case (If Needed) & Synthesize & Document:**
     *   **Only create a case if:** Assessment determined that case creation is needed (uncertain, suspicious, or requires tracking).
-    *   Do **not** create a case. If not closing, use `add_alert_note` / `update_alert_verdict` with comprehensive alert details from `${ALERT_COMPLETE_DETAILS}`.
+    *   Do **not** create a case. If not closing, use `add_alert_note` (queued for Requests — do not claim the note is already written) / `update_alert_verdict` with comprehensive alert details from `${ALERT_COMPLETE_DETAILS}`.
+    *   If a Yes/No from the analyst would actually decide whether the login was them (optional — not required on every uncertain): file **Is this you?** with `create_approval_request` (`action_type=identity_verify`), `question` yes/no (e.g. "Was this login by ${USER_ID} from ${SOURCE_IP} actually you / expected?"), and `payload` `alert_id`, `username=${USER_ID}`, `source_ip`, `hostname`, `activity`. Tell the analyst it is pending in Requests. Otherwise leave the alert note and do not contact them.
     *   Store `${CASE_ID}` for subsequent steps.
     *   Combine findings: User context (`USER_SIEM_SUMMARY`), Source IP context (`IP_REPORT`, `IP_SIEM_SUMMARY`, `IP_RELATED_EVENTS`, `IP_IOC_MATCH`), Hostname context (`HOSTNAME_SIEM_SUMMARY`), Login patterns (`LOGIN_ACTIVITY_SUMMARY`), Related cases (`${RELATED_CASES}`).
     *   Assess the severity and store in `${ASSESSMENT}` (FP, BTP, TP/Suspicious, Uncertain).
@@ -187,6 +189,7 @@ The suspicious login alert has been successfully triaged by SOC1:
     *   **For FP/BTP assessments:** Fine-tuning recommendation created or updated (if applicable) to track false positive patterns and improve detection rules.
     *   **For TP/Suspicious/Uncertain assessments:** Visibility recommendation created (if gaps identified) to improve detection capabilities and triage efficiency.
 *   Appropriate action (closure, escalation to SOC2, or document on the alert without creating a case) has been taken.
+*   An **Is this you?** (`identity_verify`) request was filed only if a Yes/No was actually needed — not on every uncertain login.
 *   **If escalated or left open: Task created for SOC2 with detailed investigation requirements and reference to alert details. If high confidence of compromise: Additional task created for SOC3 account security assessment.**
 *   All findings and alert details have been documented in the case or alert closure.
 
@@ -207,7 +210,7 @@ The suspicious login alert has been successfully triaged by SOC1:
 
 *   **MANDATORY: SOC1 MUST ALWAYS START FROM `${ALERT_ID}`** - never begin from existing cases.
 *   Focus on quick triage - do not perform deep behavioral analysis.
-*   **If uncertain about legitimacy: Write a full alert note with ALL alert details** rather than closing as false positive. **Always** call `update_alert_verdict` with a final value (`uncertain` or `true_positive`) before ending — never leave `in-progress`.
+*   **If uncertain about legitimacy: Write a full alert note with ALL alert details** rather than closing as false positive. **Always** call `update_alert_verdict` with a final value (`uncertain` or `true_positive`) before ending — never leave `in-progress`. **Is this you?** is optional — file it only when a Yes/No would actually decide the login, not on every uncertain.
 *   When in doubt, create case with comprehensive alert details and escalate to SOC2.
 *   Account lockdown requires SOC3 authorization and execution.
 *   Every non-close alert note MUST include comprehensive alert details (alert ID, event data, context, detection rule name, timestamps, host/user info) for SOC2 investigation.

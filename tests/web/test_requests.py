@@ -4,7 +4,7 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 
-from src.ai_controller.web.auth import COOKIE_NAME, SessionManagerAuth, WebAuthConfig, _login_failures, _sessions
+from src.ai_controller.web.auth import COOKIE_NAME, SessionManagerAuth, WebAuthConfig, _login_failures, _sessions, hash_password
 from src.ai_controller.web.server import app, initialize
 from src.ai_controller.web import auth as auth_mod
 
@@ -22,6 +22,8 @@ def test_requests_view_is_in_the_shell():
     assert 'id="requests-content"' in html
     assert 'id="requests-bulk-bar"' in html
     assert 'data-request-select-all' in html
+    assert 'data-request-refresh' in html
+    assert 'requests-refresh-btn' in html
     assert 'data-request-filter="archived"' in html
     assert 'data-request-filter="open"' in html
     assert 'data-request-queue="all"' in html
@@ -39,13 +41,26 @@ def test_requests_view_is_in_the_shell():
     assert "bulk-approve" in requests_js
     assert "bulk-ignore" in requests_js
     assert "handleBulk" in requests_js
+    assert "handleAction" in requests_js
+    assert "_inFlight" in requests_js
+    assert "settleLocally" in requests_js
+    assert "this.handleAction(action)" in requests_js
+    assert "await this.handleAction(action)" not in requests_js
+    assert "refreshFromTickets" in requests_js
     assert "archived" in requests_js
     assert "Waiting on integration" in requests_js
     assert 'data-request-action="ignore"' in requests_js
     assert 'data-request-action="approve"' in requests_js
     assert "Needs approval" in requests_js
+    assert "Proposed note" in requests_js
+    assert "Associated notes (approved with this close)" in requests_js
+    assert "Approve will also write" in requests_js
     assert "request-bulk-comment" in requests_js
     assert "Technical details" in requests_js
+    assert "matchesQueue" in requests_js
+    assert "startLocalPoll" in requests_js
+    assert "justOpened" in app_js
+    assert "getRequestsSummary" in (WEB / "static" / "api.js").read_text(encoding="utf-8")
 
 
 def _client(tmp_path):
@@ -60,7 +75,7 @@ def _client(tmp_path):
     auth_mod._auth = SessionManagerAuth(
         WebAuthConfig(
             username="admin",
-            password=TEST_PASSWORD,
+            password=hash_password(TEST_PASSWORD),
             session_secret="test-session-secret-value-minimum-32-chars-long",
             session_ttl_seconds=43200,
             cookie_secure=True,
@@ -73,12 +88,24 @@ def _client(tmp_path):
     return client
 
 
+def test_requests_sync_reports_linked_tickets(tmp_path):
+    client = _client(tmp_path)
+    synced = client.post("/api/requests/sync")
+    assert synced.status_code == 200, synced.text
+    body = synced.json()
+    assert body["success"] is True
+    assert body["checked"] == 0
+    assert body["closed"] == 0
+    assert "No linked tickets" in body["message"]
+
+
 def test_requests_api_create_list_deny(tmp_path):
     client = _client(tmp_path)
     catalog = client.get("/api/requests/catalog")
     assert catalog.status_code == 200
     types = {item["action_type"] for item in catalog.json()["actions"]}
     assert "close_alert" in types
+    assert "add_alert_note" in types
     assert "identity_verify" in types
     assert "update_verdict" not in types
 
@@ -366,3 +393,110 @@ def test_ignore_archives_informational_request(tmp_path, monkeypatch):
     assert all(item["id"] != request_id for item in open_list.json()["requests"])
     archived = client.get("/api/requests?status=archived&queue=detection")
     assert any(item["id"] == request_id for item in archived.json()["requests"])
+
+
+def test_add_alert_note_request_approve_writes_and_deny_does_not(tmp_path, monkeypatch):
+    from src.ai_controller.approval_queue.clients import ClientBundle
+
+    class _FakeSIEM:
+        def __init__(self):
+            self.notes = []
+
+        def get_security_alert_by_id(self, alert_id, include_detections=True):
+            return {"id": alert_id, "title": "User Account Creation"}
+
+        def add_alert_note(self, alert_id, note):
+            self.notes.append((alert_id, note))
+            return {"alert_id": alert_id, "note": note, "alert": {}}
+
+    siem = _FakeSIEM()
+    bundle = lambda cluster_id=None: ClientBundle(cluster_id="lab", siem=siem)
+    monkeypatch.setattr("src.ai_controller.approval_queue.service.resolve_clients", bundle)
+    monkeypatch.setattr("src.ai_controller.approval_queue.enrichment.resolve_clients", bundle)
+
+    client = _client(tmp_path)
+    created = client.post(
+        "/api/requests",
+        json={
+            "action_type": "add_alert_note",
+            "title": "Add note: User Account Creation",
+            "summary": "Proposed investigation note for review.",
+            "payload": {
+                "alert_id": "alert-ui-1",
+                "note": "Proposed investigation note for review.",
+            },
+        },
+    )
+    assert created.status_code == 200, created.text
+    body = created.json()["request"]
+    assert body["status"] == "pending"
+    assert body["action_type"] == "add_alert_note"
+    assert body["payload"]["note"] == "Proposed investigation note for review."
+    assert siem.notes == []
+
+    approved = client.post(f"/api/requests/{body['id']}/approve", json={})
+    assert approved.status_code == 200, approved.text
+    assert approved.json()["request"]["status"] == "executed"
+    assert siem.notes == [("alert-ui-1", "Proposed investigation note for review.")]
+
+    second = client.post(
+        "/api/requests",
+        json={
+            "action_type": "add_alert_note",
+            "title": "Add note: denied",
+            "summary": "This note must not be written.",
+            "payload": {"alert_id": "alert-ui-2", "note": "This note must not be written."},
+        },
+    )
+    assert second.status_code == 200, second.text
+    denied = client.post(
+        f"/api/requests/{second.json()['request']['id']}/deny",
+        json={"comment": "not yet"},
+    )
+    assert denied.status_code == 200, denied.text
+    assert denied.json()["request"]["status"] == "denied"
+    assert siem.notes == [("alert-ui-1", "Proposed investigation note for review.")]
+
+
+def test_list_defaults_to_summary_cards(tmp_path):
+    client = _client(tmp_path)
+    created = client.post(
+        "/api/requests",
+        json={
+            "action_type": "close_alert",
+            "title": "Close noisy DNS",
+            "summary": "scanner",
+            "payload": {"alert_id": "alert-summary-1", "reason": "false_positive", "comment": "noise"},
+        },
+    )
+    assert created.status_code == 200, created.text
+    request_id = created.json()["request"]["id"]
+    assert "payload" in created.json()["request"]
+
+    listed = client.get("/api/requests?status=open")
+    assert listed.status_code == 200, listed.text
+    body = listed.json()
+    assert body["success"] is True
+    assert "generation" in body
+    assert "queue_counts" in body
+    assert "soc" in body["queue_counts"]
+    match = next(item for item in body["requests"] if item["id"] == request_id)
+    assert "payload" not in match
+    assert match["alert_id"] == "alert-summary-1"
+    assert match["action_type"] == "close_alert"
+    assert match["category"] == "siem"
+
+    summary = client.get("/api/requests/summary")
+    assert summary.status_code == 200, summary.text
+    assert summary.json()["success"] is True
+    assert summary.json()["generation"] == body["generation"]
+    assert "actionable" in summary.json()["counts"]
+
+    full = client.get(f"/api/requests/{request_id}")
+    assert full.status_code == 200, full.text
+    assert full.json()["request"]["payload"]["alert_id"] == "alert-summary-1"
+
+    full_list = client.get("/api/requests?status=open&view=full")
+    assert full_list.status_code == 200
+    full_match = next(item for item in full_list.json()["requests"] if item["id"] == request_id)
+    assert full_match["payload"]["alert_id"] == "alert-summary-1"

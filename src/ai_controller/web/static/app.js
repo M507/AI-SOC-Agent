@@ -6,8 +6,16 @@ class AIController {
         // Core state
         this.activeSessionId = null;
         this.uiDebugMode = false;
-        this.activeSection = 'sessions'; // 'sessions' | 'autoruns' | 'requests' | 'settings' | 'mcp'
+        this.uiThinkingMode = false;
+        this.generalDefaults = {
+            max_tool_iterations: 12,
+            tool_result_chars: 8000,
+            trace_chars: 6000,
+            request_timeout_seconds: 180,
+        };
+        this.activeSection = 'overview';
         this.activeSettingsPage = 'llm';
+        this.activeLibraryPage = 'runbooks';
         this.mcpReadiness = null;
         this.lastMCPAlertCode = null;
         
@@ -24,6 +32,12 @@ class AIController {
         this.integrationsSettings = new IntegrationsSettingsManager(this);
         this.mcpPanel = new MCPPanel(this);
         this.requestsManager = new RequestsManager(this);
+        this.costManager = new CostManager(this);
+        this.overviewManager = new OverviewManager(this);
+        this.libraryManager = new LibraryManager(this);
+        this.reportsManager = new ReportsManager(this);
+        this.auditManager = new AuditManager(this);
+        this.operatorsManager = new OperatorsManager(this);
         
         this.init();
     }
@@ -65,10 +79,11 @@ class AIController {
                 }
             }
 
-            if (this.activeSection === 'requests') {
-                this.requestsManager.load();
-            } else {
-                this.requestsManager.refreshCounts();
+            if (this.activeSection === 'cost' && this.costManager && this.costManager.activePage !== 'rates') {
+                this.costManager.load();
+            }
+            if (this.activeSection === 'overview' && this.overviewManager) {
+                this.overviewManager.load();
             }
         }, 3000);
 
@@ -78,39 +93,22 @@ class AIController {
         this.mcpReadinessInterval = setInterval(() => {
             this.refreshMCPReadiness();
         }, 30000);
+        this.setActiveSection('overview');
     }
     
     setupEventListeners() {
-        // Left navigation
-        const navSessions = document.getElementById('nav-sessions');
-        const navAutoruns = document.getElementById('nav-autoruns');
-        const navRequests = document.getElementById('nav-requests');
-        const navSettings = document.getElementById('nav-settings');
-        const navMcp = document.getElementById('nav-mcp');
-
-        if (navSessions) {
-            navSessions.addEventListener('click', () => {
-                this.setActiveSection('sessions');
-            });
-        }
-        if (navAutoruns) {
-            navAutoruns.addEventListener('click', () => {
-                this.setActiveSection('autoruns');
-            });
-        }
-        if (navRequests) {
-            navRequests.addEventListener('click', () => {
-                this.setActiveSection('requests');
-            });
-        }
-        if (navSettings) {
-            navSettings.addEventListener('click', () => {
-                this.setActiveSection('settings');
-            });
-        }
-        if (navMcp) {
-            navMcp.addEventListener('click', () => {
-                this.setActiveSection('mcp');
+        const sidebar = document.querySelector('.sidebar');
+        if (sidebar) {
+            sidebar.addEventListener('click', (event) => {
+                const item = event.target.closest('.nav-item[data-nav]');
+                if (!item) return;
+                if (item.dataset.settingsPage) {
+                    this.activeSettingsPage = item.dataset.settingsPage;
+                }
+                if (item.dataset.libraryPage) {
+                    this.activeLibraryPage = item.dataset.libraryPage;
+                }
+                this.setActiveSection(item.dataset.nav);
             });
         }
         const readinessAction = document.getElementById('mcp-readiness-action');
@@ -155,6 +153,7 @@ class AIController {
         const settingsBtn = document.getElementById('settings-btn');
         if (settingsBtn) {
             settingsBtn.addEventListener('click', () => {
+                this.activeSettingsPage = 'llm';
                 this.setActiveSection('settings');
             });
         }
@@ -198,16 +197,6 @@ class AIController {
         if (stopSessionBtn) {
             stopSessionBtn.addEventListener('click', () => {
                 this.stopSession();
-            });
-        }
-        
-        // Close session button (deletes the session)
-        const closeSessionBtn = document.getElementById('close-session-btn');
-        if (closeSessionBtn) {
-            closeSessionBtn.addEventListener('click', async () => {
-                if (this.activeSessionId) {
-                    await this.sessionManager.closeCurrent();
-                }
             });
         }
         
@@ -290,26 +279,7 @@ class AIController {
             }
         });
         
-        // Settings sub-tabs (LLM, Elastic, UI, Integrations, and future pages)
-        const settingsTabs = document.getElementById('settings-tabs');
-        if (settingsTabs) {
-            settingsTabs.addEventListener('click', (event) => {
-                const tab = event.target.closest('[data-settings-page]');
-                if (!tab) return;
-                if (this.activeSection !== 'settings') {
-                    this.activeSettingsPage = tab.dataset.settingsPage;
-                    this.setActiveSection('settings');
-                    return;
-                }
-                this.setSettingsPage(tab.dataset.settingsPage);
-            });
-        }
-        const mcpTab = document.getElementById('mcp-tab');
-        if (mcpTab) {
-            mcpTab.addEventListener('click', () => {
-                this.setActiveSection('mcp');
-            });
-        }
+        // Request queue tabs stay in the horizontal strip. Settings pages live in the sidebar.
         const requestsTabs = document.getElementById('requests-tabs');
         if (requestsTabs) {
             requestsTabs.addEventListener('click', (event) => {
@@ -333,15 +303,63 @@ class AIController {
                 this.updateDebugMode(debugToggle.checked);
             });
         }
+        const thinkingToggle = document.getElementById('thinking-toggle');
+        if (thinkingToggle) {
+            thinkingToggle.addEventListener('change', () => {
+                this.updateThinkingMode(thinkingToggle.checked);
+            });
+        }
+        const generalSave = document.getElementById('general-save-btn');
+        if (generalSave) {
+            generalSave.addEventListener('click', () => this.saveGeneralLimits());
+        }
+        const generalReset = document.getElementById('general-reset-btn');
+        if (generalReset) {
+            generalReset.addEventListener('click', () => this.resetGeneralLimits());
+        }
     }
     
     async loadConfig() {
         const data = await this.api.loadConfig();
         if (data && data.success) {
             this.uiDebugMode = data.ui_debug === true;
+            this.uiThinkingMode = data.ui_thinking === true;
             const debugToggle = document.getElementById('debug-toggle');
             if (debugToggle) {
                 debugToggle.checked = this.uiDebugMode;
+            }
+            const thinkingToggle = document.getElementById('thinking-toggle');
+            if (thinkingToggle) {
+                thinkingToggle.checked = this.uiThinkingMode;
+            }
+            this.generalDefaults = data.defaults || this.generalDefaults;
+            this.fillGeneralLimits(data);
+        }
+    }
+
+    fillGeneralLimits(data) {
+        const fields = {
+            'general-max-rounds': data.max_tool_iterations,
+            'general-tool-result-chars': data.tool_result_chars,
+            'general-trace-chars': data.trace_chars,
+            'general-request-timeout': data.request_timeout_seconds,
+        };
+        Object.entries(fields).forEach(([id, value]) => {
+            const input = document.getElementById(id);
+            if (input && value != null && value !== '') {
+                input.value = value;
+            }
+        });
+    }
+
+    async refreshVisibleTranscript() {
+        if (this.activeSection === 'sessions' && this.activeSessionId) {
+            await this.loadSessionDetails(this.activeSessionId);
+        }
+        if (this.activeSection === 'autoruns' && this.autorunManager && this.autorunManager.currentAutorunId) {
+            const autorun = this.autorunManager.autoruns.get(this.autorunManager.currentAutorunId);
+            if (autorun) {
+                await this.loadAutorunSession(autorun);
             }
         }
     }
@@ -390,6 +408,9 @@ class AIController {
             return;
         }
 
+        if (this.settingsManager) {
+            this.settingsManager.revealOpenWebUI = true;
+        }
         this.activeSettingsPage = readiness.action_page || 'llm';
         this.setActiveSection('settings');
         this.setSettingsPage(this.activeSettingsPage);
@@ -397,6 +418,7 @@ class AIController {
         window.setTimeout(() => {
             const target = document.getElementById(anchorId);
             if (target) {
+                target.hidden = false;
                 target.scrollIntoView({ behavior: 'smooth', block: 'start' });
                 target.classList.add('settings-card-attention');
                 window.setTimeout(() => target.classList.remove('settings-card-attention'), 2500);
@@ -516,82 +538,93 @@ class AIController {
     }
     
     setActiveSection(section) {
-        if (!['sessions', 'autoruns', 'requests', 'settings', 'mcp'].includes(section)) {
+        const known = ['overview', 'sessions', 'autoruns', 'cost', 'requests', 'settings', 'mcp', 'library', 'audit', 'reports', 'operators'];
+        if (!known.includes(section)) {
             console.warn('[AIController] Unknown section:', section);
             return;
         }
 
+        const previous = this.activeSection;
         this.activeSection = section;
+        this.syncNav();
 
-        // Update sidebar nav active state
-        const sections = ['sessions', 'autoruns', 'requests', 'settings', 'mcp'];
-        sections.forEach((name) => {
-            const el = document.getElementById(`nav-${name}`);
-            if (el) {
-                if (name === section) {
-                    el.classList.add('active');
-                } else {
-                    el.classList.remove('active');
-                }
-            }
-        });
-
-        // Tab groups
+        const tabbed = ['sessions', 'autoruns', 'cost', 'requests'];
+        const tabsContainer = document.getElementById('tabs-container');
+        if (tabsContainer) {
+            tabsContainer.style.display = tabbed.includes(section) ? '' : 'none';
+        }
         const sessionsGroup = document.getElementById('sessions-tab-group');
         const autorunsGroup = document.getElementById('autoruns-tab-group');
+        const costGroup = document.getElementById('cost-tab-group');
         const requestsGroup = document.getElementById('requests-tab-group');
-        const settingsGroup = document.getElementById('settings-tab-group');
-        const mcpGroup = document.getElementById('mcp-tab-group');
-
-        if (sessionsGroup) {
-            sessionsGroup.style.display = section === 'sessions' ? 'flex' : 'none';
-        }
-        if (autorunsGroup) {
-            autorunsGroup.style.display = section === 'autoruns' ? 'flex' : 'none';
-        }
-        if (requestsGroup) {
-            requestsGroup.style.display = section === 'requests' ? 'flex' : 'none';
-        }
-        if (settingsGroup) {
-            settingsGroup.style.display = section === 'settings' ? 'flex' : 'none';
-        }
-        if (mcpGroup) {
-            mcpGroup.style.display = section === 'mcp' ? 'flex' : 'none';
-        }
+        if (sessionsGroup) sessionsGroup.style.display = section === 'sessions' ? 'flex' : 'none';
+        if (autorunsGroup) autorunsGroup.style.display = section === 'autoruns' ? 'flex' : 'none';
+        if (costGroup) costGroup.style.display = section === 'cost' ? 'flex' : 'none';
+        if (requestsGroup) requestsGroup.style.display = section === 'requests' ? 'flex' : 'none';
 
         this.syncHeaderActions(section);
 
         const sessionContent = document.getElementById('session-content');
         const mcpContent = document.getElementById('mcp-content');
         const requestsContent = document.getElementById('requests-content');
+        const costContent = document.getElementById('cost-content');
         const noSessionMessage = document.getElementById('no-session-message');
+        const overviewContent = document.getElementById('overview-content');
+        const libraryContent = document.getElementById('library-content');
+        const reportsContent = document.getElementById('reports-content');
+        const auditContent = document.getElementById('audit-content');
+        const operatorsContent = document.getElementById('operators-content');
 
         if (section !== 'settings') {
             this.hideSettingsPages();
         }
-
         if (section !== 'autoruns' && this.autorunManager) {
             this.autorunManager.setPanelOpen(false);
             this.autorunManager.setEmptyVisible(false);
         }
 
-        if (requestsContent) {
-            requestsContent.style.display = section === 'requests' ? 'flex' : 'none';
-        }
+        const show = (element, display) => {
+            if (element) element.style.display = display;
+        };
+        show(requestsContent, section === 'requests' ? 'flex' : 'none');
+        show(costContent, section === 'cost' ? 'flex' : 'none');
+        show(overviewContent, section === 'overview' ? 'flex' : 'none');
+        show(libraryContent, section === 'library' ? 'flex' : 'none');
+        show(reportsContent, section === 'reports' ? 'flex' : 'none');
+        show(auditContent, section === 'audit' ? 'flex' : 'none');
+        show(operatorsContent, section === 'operators' ? 'flex' : 'none');
+            show(mcpContent, section === 'mcp' ? 'flex' : 'none');
+        show(sessionContent, 'none');
+        show(noSessionMessage, 'none');
 
         if (section === 'sessions') {
-            if (sessionContent) sessionContent.style.display = this.activeSessionId ? 'flex' : 'none';
-            if (mcpContent) mcpContent.style.display = 'none';
-            if (noSessionMessage) noSessionMessage.style.display = this.activeSessionId ? 'none' : 'flex';
+            show(sessionContent, this.activeSessionId ? 'flex' : 'none');
+            show(noSessionMessage, this.activeSessionId ? 'none' : 'flex');
         } else if (section === 'autoruns') {
-            if (sessionContent) sessionContent.style.display = 'none';
-            if (mcpContent) mcpContent.style.display = 'none';
-            if (noSessionMessage) noSessionMessage.style.display = 'none';
             this.autorunManager.syncView();
+            this.autorunManager.fitStrip();
+        } else if (section === 'overview') {
+            if (this.overviewManager) this.overviewManager.load();
+        } else if (section === 'library') {
+            if (this.libraryManager) this.libraryManager.load(this.activeLibraryPage);
+        } else if (section === 'reports') {
+            if (this.reportsManager) this.reportsManager.load();
+        } else if (section === 'audit') {
+            if (this.auditManager) this.auditManager.load();
+        } else if (section === 'operators') {
+            if (this.operatorsManager) this.operatorsManager.load();
+        } else if (section === 'cost') {
+            document.querySelectorAll('button.tab[data-session-id]').forEach((tab) => {
+                tab.classList.remove('active');
+            });
+            if (this.costManager) {
+                this.costManager.setPage(this.costManager.activePage || 'overview');
+                this.costManager.load();
+            }
+            if (this.activeSessionId) {
+                this.wsManager.disconnect(this.activeSessionId);
+            }
         } else if (section === 'requests') {
-            if (sessionContent) sessionContent.style.display = 'none';
-            if (mcpContent) mcpContent.style.display = 'none';
-            if (noSessionMessage) noSessionMessage.style.display = 'none';
             document.querySelectorAll('button.tab[data-session-id]').forEach((tab) => {
                 tab.classList.remove('active');
             });
@@ -599,50 +632,46 @@ class AIController {
             if (requestsTab) {
                 requestsTab.classList.add('active');
             }
-            this.requestsManager.load();
+            this.requestsManager.show({ justOpened: previous !== 'requests' });
             if (this.activeSessionId) {
                 this.wsManager.disconnect(this.activeSessionId);
             }
         } else if (section === 'settings') {
-            if (sessionContent) sessionContent.style.display = 'none';
-            if (mcpContent) mcpContent.style.display = 'none';
-            if (noSessionMessage) noSessionMessage.style.display = 'none';
-
             document.querySelectorAll('button.tab[data-session-id]').forEach((tab) => {
                 tab.classList.remove('active');
             });
             this.setSettingsPage(this.activeSettingsPage);
             this.settingsManager.load();
-            if (this.elasticClusters) {
-                this.elasticClusters.load();
-            }
-            if (this.netboxSettings) {
-                this.netboxSettings.load();
-            }
-            if (this.integrationsSettings) {
-                this.integrationsSettings.load();
-            }
-
+            if (this.elasticClusters) this.elasticClusters.load();
+            if (this.netboxSettings) this.netboxSettings.load();
+            if (this.integrationsSettings) this.integrationsSettings.load();
             if (this.activeSessionId) {
                 this.wsManager.disconnect(this.activeSessionId);
             }
         } else if (section === 'mcp') {
-            if (sessionContent) sessionContent.style.display = 'none';
-            if (mcpContent) mcpContent.style.display = 'block';
-            if (noSessionMessage) noSessionMessage.style.display = 'none';
-
-            document.querySelectorAll('button.tab[data-session-id]').forEach((tab) => {
-                tab.classList.remove('active');
-            });
-            const mcpTab = document.getElementById('mcp-tab');
-            if (mcpTab) {
-                mcpTab.classList.add('active');
-            }
+            show(mcpContent, 'flex');
             this.mcpPanel.load();
             if (this.activeSessionId) {
                 this.wsManager.disconnect(this.activeSessionId);
             }
         }
+
+        if (previous === 'requests' && section !== 'requests') {
+            this.requestsManager.hide();
+        }
+    }
+
+    syncNav() {
+        document.querySelectorAll('.nav-item[data-nav]').forEach((item) => {
+            let on = item.dataset.nav === this.activeSection;
+            if (on && item.dataset.settingsPage) {
+                on = item.dataset.settingsPage === this.activeSettingsPage;
+            }
+            if (on && item.dataset.libraryPage) {
+                on = item.dataset.libraryPage === this.activeLibraryPage;
+            }
+            item.classList.toggle('active', on);
+        });
     }
 
     syncHeaderActions(section) {
@@ -660,21 +689,16 @@ class AIController {
         document.querySelectorAll('[data-settings-page-content]').forEach((panel) => {
             panel.style.display = 'none';
         });
-        document.querySelectorAll('#settings-tabs [data-settings-page]').forEach((tab) => {
-            tab.classList.remove('active');
-        });
     }
 
     setSettingsPage(pageId) {
-        const tabs = Array.from(document.querySelectorAll('#settings-tabs [data-settings-page]'));
+        const tabs = Array.from(document.querySelectorAll('.nav-item[data-settings-page]'));
         const pages = tabs.map((tab) => tab.dataset.settingsPage);
         if (!pageId || !pages.includes(pageId)) {
             pageId = pages.includes(this.activeSettingsPage) ? this.activeSettingsPage : pages[0];
         }
         this.activeSettingsPage = pageId || 'llm';
-        tabs.forEach((tab) => {
-            tab.classList.toggle('active', tab.dataset.settingsPage === this.activeSettingsPage);
-        });
+        this.syncNav();
         document.querySelectorAll('[data-settings-page-content]').forEach((panel) => {
             panel.style.display = panel.dataset.settingsPageContent === this.activeSettingsPage ? 'flex' : 'none';
         });
@@ -714,6 +738,7 @@ class AIController {
         
         const data = await this.api.updateConfig({ ui_debug: enabled });
         if (data.success) {
+            await this.refreshVisibleTranscript();
             if (window.toast) {
                 window.toast.success(
                     enabled ? 'Debug mode on — full JSON will be shown.' : 'Debug mode off — replies only.',
@@ -726,6 +751,51 @@ class AIController {
                 window.toast.error(data.error || 'Could not save debug mode', { key: 'ui' });
             }
         }
+    }
+
+    async updateThinkingMode(enabled) {
+        this.uiThinkingMode = enabled;
+        const data = await this.api.updateConfig({ ui_thinking: enabled });
+        if (data.success) {
+            await this.refreshVisibleTranscript();
+            if (window.toast) {
+                window.toast.success(
+                    enabled
+                        ? 'Thinking view on — decisions and MCP tools will be shown.'
+                        : 'Thinking view off.',
+                    { key: 'ui' }
+                );
+            }
+        } else if (window.toast) {
+            window.toast.error(data.error || 'Could not save thinking view', { key: 'ui' });
+        }
+    }
+
+    async saveGeneralLimits(message) {
+        const numberValue = (id) => Number((document.getElementById(id) || {}).value);
+        const payload = {
+            max_tool_iterations: numberValue('general-max-rounds'),
+            tool_result_chars: numberValue('general-tool-result-chars'),
+            trace_chars: numberValue('general-trace-chars'),
+            request_timeout_seconds: numberValue('general-request-timeout'),
+        };
+        const data = await this.api.updateConfig(payload);
+        if (data && data.success) {
+            if (data.defaults) {
+                this.generalDefaults = data.defaults;
+            }
+            this.fillGeneralLimits(data);
+            if (window.toast) {
+                window.toast.success(message || 'Investigation limits saved.', { key: 'ui' });
+            }
+        } else if (window.toast) {
+            window.toast.error((data && (data.error || data.detail)) || 'Could not save limits', { key: 'ui' });
+        }
+    }
+
+    async resetGeneralLimits() {
+        this.fillGeneralLimits(this.generalDefaults);
+        await this.saveGeneralLimits('Investigation limits restored to defaults.');
     }
 }
 
@@ -741,7 +811,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const contentArea = document.querySelector('.content-area');
         if (contentArea) {
             contentArea.innerHTML = `
-                <div style="padding: 20px; color: #f48771;">
+                <div class="init-error">
                     <h2>Error Initializing Application</h2>
                     <p>${error.message}</p>
                     <p>Please check the browser console for more details.</p>

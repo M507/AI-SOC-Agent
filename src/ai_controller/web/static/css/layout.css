@@ -9,22 +9,32 @@
 
 .sidebar {
     width: 220px;
-    background: #252526;
-    border-right: 1px solid #3e3e42;
+    background: var(--color-surface);
+    border-right: 1px solid var(--color-border);
     display: flex;
     flex-direction: column;
     padding: 12px 8px;
+    overflow-y: auto;
+}
+
+.sidebar-group {
+    margin-bottom: 4px;
+}
+
+.sidebar-group:last-child {
+    margin-bottom: 0;
 }
 
 .sidebar-header {
-    padding: 4px 8px 10px 8px;
+    padding: 8px 8px 2px 8px;
 }
 
 .sidebar-title {
     font-size: 11px;
     font-weight: 600;
     text-transform: uppercase;
-    color: #858585;
+    letter-spacing: 0.04em;
+    color: var(--color-text-muted);
 }
 
 .nav-item {
@@ -32,25 +42,27 @@
     text-align: left;
     padding: 8px 10px;
     margin-bottom: 4px;
-    border-radius: 4px;
+    border-radius: var(--radius);
     border: none;
     background: transparent;
-    color: #d4d4d4;
+    color: var(--color-text);
     display: flex;
     align-items: center;
     justify-content: space-between;
     cursor: pointer;
     font-size: 13px;
+    font-family: inherit;
+    letter-spacing: inherit;
     transition: background 0.15s ease, color 0.15s ease;
 }
 
 .nav-item:hover {
-    background: #2d2d30;
+    background: var(--color-hover);
 }
 
 .nav-item.active {
-    background: #3e3e42;
-    color: #ffffff;
+    background: var(--color-active);
+    color: var(--color-text-strong);
 }
 
 .nav-label {
@@ -66,8 +78,8 @@
 
 /* Header */
 header {
-    background: #252526;
-    border-bottom: 1px solid #3e3e42;
+    background: var(--color-surface);
+    border-bottom: 1px solid var(--color-border);
     padding: 12px 20px;
     display: flex;
     justify-content: space-between;
@@ -77,7 +89,7 @@ header {
 header h1 {
     font-size: 18px;
     font-weight: 600;
-    color: #ffffff;
+    color: var(--color-text-strong);
 }
 
 .header-actions {
@@ -91,9 +103,9 @@ header h1 {
     justify-content: space-between;
     gap: 18px;
     padding: 10px 20px;
-    border-bottom: 1px solid #8a6d1d;
-    background: #4b3b12;
-    color: #fff4c2;
+    border-bottom: 1px solid var(--color-warning-border);
+    background: var(--color-warning-bg);
+    color: var(--color-warning-text);
 }
 
 .readiness-banner[hidden] {
@@ -101,9 +113,9 @@ header h1 {
 }
 
 .readiness-banner.is-error {
-    border-bottom-color: #a63a3a;
-    background: #4a1f1f;
-    color: #ffd7d7;
+    border-bottom-color: var(--color-danger);
+    background: var(--color-danger-bg);
+    color: var(--color-danger-text);
 }
 
 .readiness-banner-copy {
@@ -114,7 +126,7 @@ header h1 {
 }
 
 .readiness-banner-copy strong {
-    color: #ffffff;
+    color: var(--color-text-strong);
     font-size: 13px;
 }
 
@@ -137,7 +149,7 @@ header h1 {
        while still preventing horizontal overflow. */
     overflow-x: hidden;
     overflow-y: auto;
-    background: #1e1e1e;
+    background: var(--color-app);
     display: flex;
     flex-direction: column;
     min-height: 0; /* Critical for flex children to work properly */
@@ -158,7 +170,7 @@ header h1 {
     align-items: center;
     justify-content: center;
     height: 100%;
-    color: #858585;
+    color: var(--color-text-muted);
     font-size: 16px;
 }
 
@@ -171,14 +183,14 @@ header h1 {
 .empty-state-body h2 {
     font-size: 18px;
     font-weight: 600;
-    color: #ffffff;
+    color: var(--color-text-strong);
     margin-bottom: 8px;
 }
 
 .empty-state-body p {
     font-size: 14px;
     line-height: 1.5;
-    color: #858585;
+    color: var(--color-text-muted);
     margin-bottom: 16px;
 }
 
@@ -189,23 +201,39 @@ header h1 {
 }
 
 .session-header {
-    background: #252526;
-    border-bottom: 1px solid #3e3e42;
+    background: var(--color-surface);
+    border-bottom: 1px solid var(--color-border);
     padding: 12px 20px;
     display: flex;
     justify-content: space-between;
     align-items: center;
+    flex-wrap: wrap;
+    gap: 8px 16px;
 }
 
 .session-header h2 {
     font-size: 16px;
     font-weight: 600;
-    color: #ffffff;
+    color: var(--color-text-strong);
 }
 
 .session-actions {
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
-    gap: 10px;
+    justify-content: flex-end;
+    gap: 8px;
+    margin-left: auto;
 }
 
+.settings-action-group {
+    display: inline-flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+}
+
+.init-error {
+    padding: 20px;
+    color: var(--color-danger-text);
+}

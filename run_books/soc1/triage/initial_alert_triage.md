@@ -12,7 +12,7 @@ Standardized SOC1 triage for SIEM alerts: start from the alert queue, **before a
 - Same-type **and same-key** historical review (closed + acknowledged), including prior verdicts and **`get_alert_notes` note bodies**
 - NetBox identity/role verification
 - Lightweight SIEM/IOC enrichment (3–5 entities)
-- Alert verdicts (**MANDATORY** via `update_alert_verdict`), notes, and `close_alert` requests
+- Alert verdicts (**MANDATORY** via `update_alert_verdict`), notes, `close_alert` requests, and optionally **Is this you?** (`identity_verify`) when a Yes/No is actually needed
 
 **Excluded**
 - Creating cases (`create_case` and all case-write tools)
@@ -37,6 +37,7 @@ Standardized SOC1 triage for SIEM alerts: start from the alert queue, **before a
 **SIEM – alert management**
 - `get_recent_alerts`, `get_security_alert_by_id`, `get_siem_event_by_id`
 - `update_alert_verdict`, `add_alert_note`, `get_alert_notes`, `close_alert`
+- `create_approval_request` — optional **Is this you?** (`action_type=identity_verify`) only when a Yes/No on identity/expected use would decide the alert
 
 **SIEM – past decisions (MANDATORY before assessment)**
 - `get_rule_detections` — same rule; `alert_state=closed|acknowledged`; `hours_back` ≥ 168
@@ -163,7 +164,7 @@ Standardized SOC1 triage for SIEM alerts: start from the alert queue, **before a
 
 ### 6. FP/BTP closure request (no case) — MANDATORY final verdict
 
-1. `add_alert_note` citing `${HISTORICAL_DECISIONS}` (prior verdicts + note takeaways) + NetBox + IOC results.
+1. `add_alert_note` citing `${HISTORICAL_DECISIONS}` (prior verdicts + note takeaways) + NetBox + IOC results. Queued for Requests — do not claim the note is already written.
 2. **MANDATORY:** `update_alert_verdict` → `false_positive` or `benign_true_positive` (set `${FINAL_VERDICT}`).
 3. `close_alert` (queued for Requests). Do not claim the alert is already closed.
 4. Optionally update/create a fine-tuning recommendation for noisy rules.
@@ -175,15 +176,21 @@ Standardized SOC1 triage for SIEM alerts: start from the alert queue, **before a
 1. Targeted SIEM searches / entity enrichment as needed (keep light).
 2. Re-check history if new entities suggest additional past decisions to read.
 3. Choose **final** working verdict: `uncertain` or `true_positive` only (do **not** leave `in-progress` when ending).
-4. `add_alert_note` MUST include:
+4. `add_alert_note` MUST include (queued for Requests — do not claim the note is already written):
    - Rule name/id, key entities
    - `${HISTORICAL_DECISIONS}` (prior verdicts + `get_alert_notes` summary)
    - NetBox match/mismatch
    - IOC/enrichment highlights
    - Why it was not closed and what a human should check next
 5. **MANDATORY:** `update_alert_verdict` with that final assessment (set `${FINAL_VERDICT}`).
-6. **Do not create a case.** Set `${ACTION_TAKEN}` = "Alert documented with final verdict; no case created."
-7. **Post-investigation (non-blocking):** if no case playbook under `soc1/cases` covered this alert type, go to Step 8; otherwise **end**.
+6. **Optionally file Is this you?** — only if a Yes/No from the analyst would actually decide identity/expected use. Uncertain (even with a user on the alert) is **not** enough by itself. Skip this when the note is enough.
+   - If filing: `create_approval_request` with `action_type=identity_verify`
+   - `question` — yes/no the analyst can answer (e.g. "Was this ${activity} by ${username} from ${source_ip} actually you / expected?")
+   - `payload` — `alert_id`, `username`, plus `source_ip` / `hostname` / `timestamp` / `activity` when known
+   - Leave `follow_ups` empty so defaults apply: **Yes** → close as benign true positive; **No** → escalate
+   - Tell the analyst the question is **pending in Requests**. Do not claim they already answered.
+7. **Do not create a case.** Set `${ACTION_TAKEN}` = "Alert note requested; final verdict recorded; no case created." (add that Is this you? is pending only if you filed it.)
+8. **Post-investigation (non-blocking):** if no case playbook under `soc1/cases` covered this alert type, go to the case-runbook gap step below; otherwise **end**.
 
 ### 8. Case-runbook gap request (AFTER investigation — never blocks triage)
 
@@ -208,6 +215,7 @@ Standardized SOC1 triage for SIEM alerts: start from the alert queue, **before a
 - `${FINAL_VERDICT}` is set and is **not** `in-progress`.
 - `${NETBOX_CONTEXT}` evaluated for primary hosts/IPs when present.
 - Either a close request was filed **or** a clear non-close alert note was written.
+- An **Is this you?** (`identity_verify`) request was filed only if a Yes/No was actually needed — not on every `uncertain`.
 - **No case was created.**
 - If no `soc1/cases/*` playbook matched the alert type, a `create_runbook_recommendation` was filed **after** the final verdict (or explicitly noted as not needed because a case playbook was used).
 
@@ -217,7 +225,7 @@ Escalate via **alert note + final verdict** (not a new case) when:
 - Past decisions/notes do not support FP/BTP or conflict
 - Behavior contradicts NetBox role
 - IOC matches or clear TP indicators exist
-- Uncertainty remains after history + NetBox + light enrichment
+- Uncertainty remains after history + NetBox + light enrichment — alert note + final verdict. Optionally file **Is this you?** only if a Yes/No on identity would actually help
 
 ## Notes
 

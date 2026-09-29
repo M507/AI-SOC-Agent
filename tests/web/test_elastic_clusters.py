@@ -4,7 +4,7 @@ import json
 
 from fastapi.testclient import TestClient
 
-from src.ai_controller.web.auth import SessionManagerAuth, WebAuthConfig, _login_failures, _sessions
+from src.ai_controller.web.auth import SessionManagerAuth, WebAuthConfig, _login_failures, _sessions, hash_password
 from src.ai_controller.web.server import app, initialize
 from src.ai_controller.web import auth as auth_mod
 
@@ -19,7 +19,7 @@ def _authed_client(tmp_path, monkeypatch):
                 "elastic": {"clusters": []},
                 "web": {
                     "username": "admin",
-                    "password": TEST_PASSWORD,
+                    "password": hash_password(TEST_PASSWORD),
                     "session_secret": "test-session-secret-value-minimum-32-chars-long",
                 },
             }
@@ -37,7 +37,7 @@ def _authed_client(tmp_path, monkeypatch):
     auth_mod._auth = SessionManagerAuth(
         WebAuthConfig(
             username="admin",
-            password=TEST_PASSWORD,
+            password=hash_password(TEST_PASSWORD),
             session_secret="test-session-secret-value-minimum-32-chars-long",
             session_ttl_seconds=43200,
             cookie_secure=True,
@@ -75,6 +75,26 @@ def test_create_session_stores_cluster_id(tmp_path, monkeypatch):
     assert payload["cluster_id"] == cluster_id
     assert payload["cluster"]["name"] == "Lab"
     assert payload["cluster"]["base_url"] == "https://elastic.example:9200"
+
+
+def test_rename_session_keeps_history(tmp_path, monkeypatch):
+    client, _config_path = _authed_client(tmp_path, monkeypatch)
+    created = client.post("/api/sessions", json={"name": "Before"})
+    assert created.status_code == 200, created.text
+    session_id = created.json()["session"]["id"]
+
+    renamed = client.patch(f"/api/sessions/{session_id}", json={"name": "After"})
+    assert renamed.status_code == 200, renamed.text
+    payload = renamed.json()["session"]
+    assert payload["id"] == session_id
+    assert payload["name"] == "After"
+    assert payload["entries"] == []
+
+    blank = client.patch(f"/api/sessions/{session_id}", json={"name": "  "})
+    assert blank.status_code == 400
+
+    missing = client.patch("/api/sessions/missing-session", json={"name": "Nope"})
+    assert missing.status_code == 404
 
 
 def test_create_session_without_name_uses_uuid(tmp_path, monkeypatch):

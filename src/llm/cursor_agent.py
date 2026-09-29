@@ -94,6 +94,7 @@ class CursorAgentProvider(LLMProvider):
                 error=None if success else (stderr or "cursor-agent failed"),
                 provider=self.provider_id,
                 model="cursor-agent",
+                usage={"usage_reported": False, "input_tokens": 0, "cached_input_tokens": 0, "cache_write_tokens": 0, "output_tokens": 0, "rounds": []},
             )
 
         return await asyncio.get_event_loop().run_in_executor(None, _run)

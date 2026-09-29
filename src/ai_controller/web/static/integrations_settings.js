@@ -14,6 +14,8 @@ class IntegrationsSettingsManager {
     bind() {
         const refresh = document.getElementById('integrations-refresh-btn');
         if (refresh) refresh.addEventListener('click', () => this.load());
+        const back = document.getElementById('integration-configure-back');
+        if (back) back.addEventListener('click', () => this.closeConfigure());
 
         const grid = document.getElementById('integrations-grid');
         if (grid) {
@@ -22,10 +24,12 @@ class IntegrationsSettingsManager {
                 const suite = event.target.closest('[data-integration-skills-test]');
                 const toggle = event.target.closest('[data-integration-skills-toggle]');
                 const single = event.target.closest('[data-skill-test]');
+                const configure = event.target.closest('[data-integration-configure]');
                 if (connection) this.test(connection.dataset.integrationTest, connection);
                 if (suite) this.testSkills(suite.dataset.integrationSkillsTest, suite);
                 if (toggle) this.toggleSkills(toggle.dataset.integrationSkillsToggle, toggle);
                 if (single) this.testSkills(single.dataset.integrationId, single, [single.dataset.skillTest]);
+                if (configure) this.openConfigure(configure.dataset.integrationConfigure);
             });
         }
     }
@@ -228,6 +232,20 @@ class IntegrationsSettingsManager {
             }
             actions.appendChild(button);
 
+            const configureTarget = integration.id === 'netbox'
+                ? 'netbox'
+                : (integration.id === 'elastic' || String(integration.id).startsWith('elastic:'))
+                    ? 'elastic'
+                    : '';
+            if (configureTarget) {
+                const configure = document.createElement('button');
+                configure.type = 'button';
+                configure.className = 'btn btn-primary btn-sm';
+                configure.dataset.integrationConfigure = configureTarget;
+                configure.textContent = 'Configure';
+                actions.appendChild(configure);
+            }
+
             if (integration.has_skill_tests) {
                 const toggleSkills = document.createElement('button');
                 toggleSkills.type = 'button';
@@ -257,6 +275,42 @@ class IntegrationsSettingsManager {
             card.append(header, description, detail, result, actions, skillsPanel);
             grid.appendChild(card);
             this.renderResult(integration.id);
+        });
+    }
+
+    placeConfigurePanels() {
+        const host = document.getElementById('integration-configure-host');
+        if (!host || host.dataset.ready === 'true') return;
+        ['elastic', 'netbox'].forEach((id) => {
+            const panel = document.getElementById(`integration-configure-${id}`);
+            if (panel) host.append(panel);
+        });
+        host.dataset.ready = 'true';
+    }
+
+    openConfigure(id) {
+        this.placeConfigurePanels();
+        const page = document.getElementById('settings-integrations-content');
+        const windowEl = document.getElementById('integration-configure');
+        if (!page || !windowEl) return;
+        page.classList.add('is-configuring');
+        windowEl.hidden = false;
+        ['elastic', 'netbox'].forEach((key) => {
+            const panel = document.getElementById(`integration-configure-${key}`);
+            if (panel) panel.hidden = key !== id;
+        });
+        if (id === 'elastic' && this.controller.elasticClusters) this.controller.elasticClusters.load();
+        if (id === 'netbox' && this.controller.netboxSettings) this.controller.netboxSettings.load();
+    }
+
+    closeConfigure() {
+        const page = document.getElementById('settings-integrations-content');
+        const windowEl = document.getElementById('integration-configure');
+        if (page) page.classList.remove('is-configuring');
+        if (windowEl) windowEl.hidden = true;
+        ['elastic', 'netbox'].forEach((key) => {
+            const panel = document.getElementById(`integration-configure-${key}`);
+            if (panel) panel.hidden = true;
         });
     }
 

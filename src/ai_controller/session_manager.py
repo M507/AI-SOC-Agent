@@ -206,7 +206,21 @@ class SessionManager:
         
         logger.info("Created session: %s (%s, type=%s)", session.id, session.name, session.session_type.value)
         return session
-    
+
+    def rename_session(self, session_id: str, name: str) -> Session:
+        """Rename a session without touching its history."""
+        session = self.get_session(session_id)
+        if not session:
+            raise ValueError(f"Session {session_id} not found")
+        resolved = (name or "").strip()
+        if not resolved:
+            raise ValueError("Session name is required")
+        session.name = resolved
+        session.updated_at = datetime.now()
+        self._save_session(session)
+        logger.info("Renamed session %s to %s", session.id, session.name)
+        return session
+
     def get_session(self, session_id: str) -> Optional[Session]:
         """Get a session by ID."""
         return self._sessions.get(session_id)
@@ -247,7 +261,7 @@ class SessionManager:
         self._save_session(session)
         
         return entry
-    
+
     def update_entry(self, session_id: str, entry_id: str, result: Optional[Dict[str, Any]] = None, status: Optional[SessionStatus] = None):
         """Update an entry in a session."""
         session = self.get_session(session_id)
@@ -414,32 +428,17 @@ class SessionManager:
         self._save_autorun(autorun)
     
     def delete_autorun(self, autorun_id: str):
-        """Delete an autorun and its dedicated session if present."""
+        """Delete an autorun schedule. The linked session chat file is kept."""
         autorun = self.get_autorun(autorun_id)
         if not autorun:
             raise ValueError(f"Autorun {autorun_id} not found")
 
         logger.info(
-            "Deleting autorun config %s (%s) with session_id=%s",
+            "Deleting autorun config %s (%s); keeping session file %s",
             autorun_id,
             autorun.name,
             autorun.session_id,
         )
-
-        # Best-effort: also delete the associated AUTORUN session so it no longer appears in the UI
-        if autorun.session_id:
-            try:
-                logger.info("Deleting associated autorun session %s for autorun %s", autorun.session_id, autorun_id)
-                self.delete_session(autorun.session_id)
-            except Exception as e:
-                logger.error(
-                    "Failed to delete associated autorun session %s for autorun %s: %s",
-                    autorun.session_id,
-                    autorun_id,
-                    e,
-                )
-
-        # Delete autorun file
         autorun_file = self.autoruns_dir / f"{autorun_id}.json"
         if autorun_file.exists():
             try:

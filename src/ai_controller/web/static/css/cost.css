@@ -1,0 +1,82 @@
+.cost-content {
+    display: flex;
+    flex-direction: column;
+    flex: 1 1 auto;
+    height: 100%;
+    min-height: 0;
+    overflow: hidden;
+}
+
+#cost-tab-group,
+#cost-tabs {
+    flex-wrap: wrap;
+}
+
+.cost-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 12px;
+    margin-bottom: 16px;
+}
+
+.cost-card {
+    background: var(--color-surface);
+    border: 1px solid var(--color-border);
+    padding: 14px 16px;
+}
+
+.cost-card h3 {
+    margin: 0 0 8px;
+    font-size: 12px;
+    color: var(--color-syntax-info);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+
+.cost-metric {
+    margin: 0 0 8px;
+    font-size: 22px;
+    color: var(--color-text);
+}
+
+.cost-table-wrap {
+    overflow: auto;
+    max-height: 60vh;
+}
+
+.cost-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+}
+
+.cost-table th,
+.cost-table td {
+    text-align: left;
+    padding: 8px 10px;
+    border-bottom: 1px solid var(--color-border);
+    vertical-align: top;
+}
+
+.cost-table th {
+    color: var(--color-syntax-info);
+    font-weight: 600;
+    position: sticky;
+    top: 0;
+    background: var(--color-surface);
+}
+
+.cost-auto-form {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+    gap: 12px;
+    align-items: end;
+}
+
+.cost-auto-form label {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    color: var(--color-text);
+    font-size: 13px;
+}

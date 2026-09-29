@@ -130,7 +130,7 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     import uvicorn
     print(f"Starting SamiGPT web interface on https://{web_host}:{web_port}")
-    print("Sign-in uses web.username / web.password from config.json")
+    print("Sign-in uses web.username and the Argon2id hash in web.password")
     if not args.no_mcp and mcp_cfg.get("auto_start", True):
         print(
             f"MCP HTTPS server will listen on https://{mcp_cfg.get('host', '127.0.0.1')}:"

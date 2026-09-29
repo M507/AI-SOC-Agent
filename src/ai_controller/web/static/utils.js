@@ -178,3 +178,51 @@ function extractResultText(result) {
 
     return String(result);
 }
+
+function formatPageWhen(iso) {
+    if (!iso) return '';
+    const date = new Date(iso);
+    if (Number.isNaN(date.getTime())) return String(iso).replace('T', ' ');
+    return date.toLocaleString(undefined, {
+        month: 'short',
+        day: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+        timeZoneName: 'short',
+    });
+}
+
+function formatUsageFooter(result) {
+    const output = result && result.output;
+    if (output && output.usage_footer) {
+        return output.usage_footer;
+    }
+    const usage = (output && output.usage) || (result && result.usage);
+    if (!usage) {
+        return '';
+    }
+    if (!usage.usage_reported) {
+        return 'Tokens: usage not reported';
+    }
+    const input = Number(usage.input_tokens || 0);
+    const cached = Number(usage.cached_input_tokens || 0);
+    const outputTokens = Number(usage.output_tokens || 0);
+    const parts = [
+        `Tokens in ${input.toLocaleString()}`,
+        `cached ${cached.toLocaleString()}`,
+        `out ${outputTokens.toLocaleString()}`,
+    ];
+    if (usage.cost_label) {
+        parts.push(usage.cost_label);
+    } else if (usage.priced && usage.cost_usd != null) {
+        parts.push(`$${usage.cost_usd}`);
+    } else if (usage.pricing_ok === false) {
+        parts.push('pricing file unreadable');
+    } else if (usage.usage_reported) {
+        parts.push('unpriced');
+    }
+    if (output && output.usage_saved === false) {
+        parts.push('usage not saved');
+    }
+    return parts.join(' · ');
+}

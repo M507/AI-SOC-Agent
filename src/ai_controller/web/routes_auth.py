@@ -6,6 +6,7 @@ from fastapi import APIRouter, Request, Response
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
+from .audit_log import record_signin
 from .auth import (
     clear_login_failures,
     current_user,
@@ -33,22 +34,29 @@ async def login(payload: LoginRequest, request: Request, response: Response):
         )
     if not verify_credentials(payload.username, payload.password):
         record_login_failure(ip)
+        record_signin("failed", payload.username, ip)
         return JSONResponse(
             status_code=401,
             content={"success": False, "detail": "Invalid username or password"},
         )
     clear_login_failures(ip)
     auth = get_auth()
-    token = auth.create_session(payload.username.strip())
+    username = payload.username.strip()
+    token = auth.create_session(username)
     auth.set_cookie(response, token)
+    record_signin("signed_in", username, ip)
     return {"success": True}
 
 
 @router.post("/logout")
 async def logout(request: Request, response: Response):
     auth = get_auth()
+    user = current_user(request)
     auth.revoke(request.cookies.get("sami_session"))
     auth.clear_cookie(response)
+    if user:
+        ip = request.client.host if request.client else ""
+        record_signin("signed_out", user.get("username") or "", ip)
     return {"success": True}
 
 

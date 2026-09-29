@@ -13,6 +13,7 @@ logger = get_logger("sami.approval_queue.enrichment")
 
 _GENERIC_SUMMARIES = {
     "close a siem alert, typically as a false positive or benign true positive.",
+    "add a note or comment to a siem alert after analyst approval.",
 }
 _MAX_EVENTS = 8
 _MAX_EVENT_CHARS = 600
@@ -232,7 +233,9 @@ def _humanize_text(
     host = str(payload.get("hostname") or "").strip()
     user = str(payload.get("username") or "").strip()
     reason = str(payload.get("reason") or "").strip()
-    comment = str(payload.get("comment") or payload.get("description") or "").strip()
+    comment = str(
+        payload.get("comment") or payload.get("note") or payload.get("description") or ""
+    ).strip()
     activity = str(payload.get("activity") or "").strip()
 
     new_title = (title or "").strip()
@@ -243,6 +246,8 @@ def _humanize_text(
         if action_type == "close_alert":
             reason_bit = f" [{reason}]" if reason else ""
             new_title = f"Close: {subject}{reason_bit}{suffix}"
+        elif action_type == "add_alert_note":
+            new_title = f"Add note: {subject}{suffix}"
         elif action_type == "identity_verify":
             new_title = f"Is this you? {user or subject}{suffix}"
         elif action_type in {"isolate_endpoint", "release_isolation"}:
@@ -327,9 +332,12 @@ def _title_is_generic(title: str, action_type: str, alert_id: Any) -> bool:
     if alert_id and lowered in {
         f"{action_type}: {alert_id}".lower(),
         f"close alert: {alert_id}".lower(),
+        f"add alert note: {alert_id}".lower(),
     }:
         return True
     if lowered.startswith("close alert:") and alert_id and str(alert_id) in title:
+        return True
+    if lowered.startswith("add alert note:") and alert_id and str(alert_id) in title:
         return True
     if lowered in {action_type, action_type.replace("_", " ")}:
         return True

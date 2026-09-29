@@ -14,6 +14,10 @@ For detailed documentation and presentation materials:
 
 [AI Agents Presentation PDF](demo/BHMEA25_AI_Agents.pdf)
 
+SamiGPT's Dashboard:
+
+![SamiGPTs Dashboard](images/main_dashboard.png)
+
 ### Quick Start
 
 SamiGPT is started from a single entry point. That process serves the web UI
@@ -32,16 +36,24 @@ with its own settings and health check.
    pip install -r requirements.txt
    ```
 
-2. **Set the UI password** in `config.json` (copied from `config.json.example` automatically on first run):
+2. **Set the UI password hash** in `config.json` (copied from `config.json.example` automatically on first run). `web.password` is an **Argon2id** hash, the password hash OWASP recommends. This app uses memory 19 MiB, 2 iterations, parallelism 1, a 16-byte salt, and a 32-byte hash. Each stored value gets a new salt. Sign-in accepts only that Argon2id check. The UI does not start when `password` is empty, a plaintext password, or another hash such as Argon2i.
+
+   Generate the hash, then store the printed value:
+
+   ```bash
+   python -c "from src.ai_controller.web.auth import hash_password; print(hash_password('choose-a-strong-password'))"
+   ```
+
    ```json
    "web": {
      "username": "admin",
-     "password": "choose-a-strong-password",
+     "password": "$argon2id$v=19$m=19456,t=2,p=1$<salt>$<hash>",
      "session_secret": "",
      "session_ttl_seconds": 43200
    }
    ```
-   `session_secret` is generated automatically if left empty.
+
+   `session_secret` is generated automatically if left empty. Sign in with the password you hashed, not with the `$argon2id$...` string. Changing the password from **Operators** stores a new hash the same way.
 
 3. **Add tokens/URLs for the integrations you want to enable** in `config.json`.
    You only need to fill in the sections for the tools you actually use
@@ -111,11 +123,17 @@ dependencies, and enables + starts the `servee` unit (`Restart=always`).
 Re-running the script reinstalls cleanly and preserves `config.json`, `certs/`,
 `data/`, and `logs/`.
 
+`systemctl restart servee` (and every start) syncs this source tree into
+`/opt/servee` before launching. `config.json`, `certs/`, `data/`, `logs/`, and
+the virtualenv stay in place. Dependencies are reinstalled only when
+`requirements.txt` changes. A full wipe, including a new virtualenv, is still
+`sudo ./servee/install.sh`.
+
 ```bash
 # Install or reinstall (requires root; stop any manual `python app.py` first)
 sudo ./servee/install.sh
 
-# Service control
+# Service control. Restart syncs code from the tree install.sh was run from.
 sudo systemctl status servee
 sudo systemctl restart servee
 sudo systemctl stop servee
@@ -276,12 +294,14 @@ See `config.json.example` for the complete configuration schema. Key sections:
 - `ai_controller`: Web interface bind address and session storage
 - `llm`: LLM provider used by the web UI (Cursor Agent, OpenAI, OpenRouter, Open WebUI, custom)
 - `mcp`: HTTP MCP listener host/port and auto-start
+- `web`: Console username and password. `password` is an Argon2id hash (19 MiB, 2 iterations, parallelism 1, 16-byte salt). The UI does not start with a plaintext password. See Quick Start.
 - `logging`: Logging configuration
 
 ## Logging
 
 SamiGPT provides comprehensive logging:
 
+- **Session chat transcripts**: one JSON file per session. On the `servee` unit that is `/opt/servee/data/ai_controller/sessions/<session-id>.json`. See [documentation/session-chat-logs.md](documentation/session-chat-logs.md).
 - **MCP Server Logs**: `logs/mcp/mcp_all.log`, `mcp_requests.log`, `mcp_responses.log`, `mcp_errors.log`
 - **Application Logs**: `logs/debug.log`, `logs/error.log`, `logs/warning.log`
 
@@ -339,6 +359,16 @@ The following projects helped and inspired us during the literature review:
 - [ADK Runbooks](https://github.com/dandye/adk_runbooks/tree/main) - Security investigation runbooks and workflows
 
 ## Changelog
+
+### v0.3
+
+- **Operators page**: change the console username and password from the UI (the new password is stored as a new Argon2id hash) and see the actions that account may approve, grouped by SOC, detection engineering, and engineering
+- **Audit view**: append-only record of sign-in, failed sign-in, and sign-out, merged with approval decisions (approved, denied, reviewed, ignored). Passwords and session tokens are never written
+- **Reports view**: finished investigation write-ups from completed session replies, listed newest first and opened as markdown
+- **Library in the console**: runbooks (shared plus SOC1/SOC2/SOC3), standards, and operator documentation, read from the repo and rendered in the UI
+- **Overview dashboard**: landing page with 7-day, 30-day, and all-time charts for open work, what was filed and settled, how closed alerts were decided, how the approval queue was resolved, detection work filed, response actions that ran, and model spend
+- **Session tab bar**: pin sessions, drag to reorder, an overflow menu of every open session, and a new-session shortcut (`Alt+N`)
+- **Appearance**: three palettes (`U-Theme`, `FT-Theme`, `B-Theme`) plus a system mode that follows the browser light/dark preference, stored in this browser
 
 ### v0.2
 

@@ -94,7 +94,9 @@ python app.py
 ```
 
 Open browser to `https://localhost:8081` (or configured port). Sign in with
-`web.username` / `web.password` from `config.json`. The UI is HTTPS-only.
+the username from `config.json` and the password whose Argon2id hash is stored
+in `web.password`. A plaintext password in that field is not accepted (see the
+project README). The UI is HTTPS-only.
 
 Configure the LLM provider under **Settings** (Cursor Agent, OpenAI, OpenRouter, Open WebUI, or custom). The **MCP** button shows MCP server health and listener settings.
 

@@ -13,7 +13,10 @@ class SettingsManager {
     bind() {
         const providerSelect = document.getElementById('llm-provider');
         if (providerSelect) {
-            providerSelect.addEventListener('change', () => this.renderProviderFields());
+            providerSelect.addEventListener('change', () => {
+                this.revealOpenWebUI = false;
+                this.renderProviderFields();
+            });
         }
         const saveBtn = document.getElementById('llm-save-btn');
         if (saveBtn) {
@@ -64,8 +67,6 @@ class SettingsManager {
         this.renderProviderFields();
         const prompt = document.getElementById('llm-system-prompt');
         if (prompt) prompt.value = this.settings.system_prompt || '';
-        const iterations = document.getElementById('llm-max-iterations');
-        if (iterations) iterations.value = this.settings.max_tool_iterations || 12;
         const mcpSettings = await this.api.getMCPSettings();
         const publicUrl = document.getElementById('openwebui-mcp-url');
         if (publicUrl && mcpSettings && mcpSettings.settings) {
@@ -109,8 +110,10 @@ class SettingsManager {
         const fields = this.currentSchema();
         container.innerHTML = fields.map((field) => {
             const value = values[field.key] != null ? values[field.key] : '';
+            const wide = field.type === 'model' ? ' settings-field-wide' : '';
             if (field.type === 'model') {
                 return `
+                    <div class="settings-field${wide}">
                     <label for="llm-field-model">Model</label>
                     <div class="settings-inline-row">
                         <select
@@ -128,10 +131,12 @@ class SettingsManager {
                         >Refresh</button>
                     </div>
                     <p class="settings-help">Choose a model from the provider catalog. Refresh after changing the API key or base URL.</p>
+                    </div>
                 `;
             }
             const inputType = field.type === 'password' ? 'password' : (field.type === 'number' ? 'number' : 'text');
             return `
+                <div class="settings-field${wide}">
                 <label for="llm-field-${field.key}">${this.escapeHtml(field.label)}</label>
                 <input
                     id="llm-field-${field.key}"
@@ -141,8 +146,14 @@ class SettingsManager {
                     placeholder="${this.escapeAttr(field.placeholder || '')}"
                     autocomplete="off"
                 >
+                </div>
             `;
         }).join('');
+
+        const mcpCard = document.getElementById('openwebui-mcp-card');
+        if (mcpCard) {
+            mcpCard.hidden = providerId !== 'openwebui' && !this.revealOpenWebUI;
+        }
 
         const testModelBtn = document.getElementById('llm-test-model-btn');
         if (testModelBtn) {
@@ -174,7 +185,6 @@ class SettingsManager {
         const payload = {
             provider,
             system_prompt: (document.getElementById('llm-system-prompt') || {}).value || '',
-            max_tool_iterations: Number((document.getElementById('llm-max-iterations') || {}).value || 12),
         };
         payload[provider] = this.collectProviderSettings();
         return payload;

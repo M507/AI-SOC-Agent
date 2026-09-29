@@ -64,6 +64,13 @@
     "web_port": 8081,
     "web_host": "0.0.0.0"
   },
+  "general": {
+    "_comment": "Investigation caps edited on the General settings page. Change them there; missing keys fall back to these defaults.",
+    "max_tool_iterations": 12,
+    "tool_result_chars": 8000,
+    "trace_chars": 6000,
+    "request_timeout_seconds": 180
+  },
   "llm": {
     "_comment": "LLM backend used by the web UI for freeform prompts. provider: cursor_agent | openai | openrouter | openwebui | custom. Map OPENWEBUI_URL→base_url, OPENWEBUI_KEY→api_key, OPENWEBUI_MODEL→model.",
     "provider": "openwebui",
@@ -129,9 +136,9 @@
     }
   },
   "web": {
-    "_comment": "Required. The web UI is HTTPS-only and rejects every request without a valid session.",
+    "_comment": "Required. The web UI is HTTPS-only and rejects every request without a valid session. password must be an Argon2id hash generated with hash_password (see README). A plaintext password is not accepted.",
     "username": "admin",
-    "password": "changeme",
+    "password": "",
     "session_secret": "",
     "session_ttl_seconds": 43200
   }
