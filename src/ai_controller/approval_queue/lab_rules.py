@@ -1,13 +1,16 @@
-"""Local Home Lab detection-rule catalog (token-efficient search + lookup).
+"""Local detection-rule catalog (token-efficient search and lookup).
 
-Rules live on disk under Home-Lab-Rules. The model never sees all 1k+ full
-documents: search returns compact hits, and get_rule loads one excerpt.
+The folder is rules_dir(): SAMI_LAB_RULES_DIR, then Settings, then
+DEFAULT_RULES_DIR. The model never sees the full catalog: search returns
+compact hits, and get_rule loads one excerpt. suggested_fields.json in
+that folder is a field catalog for Findings, not a detection, so the
+indexer skips it. Behavior is documented in
+documentation/detection-as-code.md.
 """
 
 from __future__ import annotations
 
 import json
-import os
 import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -36,8 +39,10 @@ _INDEX_CACHE: Dict[str, Any] = {"mtime": None, "path": None, "records": []}
 
 
 def rules_dir() -> Path:
-    override = os.environ.get("SAMI_LAB_RULES_DIR", "").strip()
-    return Path(override) if override else DEFAULT_RULES_DIR
+    """Folder of rule JSON. SAMI_LAB_RULES_DIR wins, then Settings, then the default path."""
+    from ..detection.settings import effective_rules_dir
+
+    return effective_rules_dir(DEFAULT_RULES_DIR)
 
 
 def clear_index_cache() -> None:
@@ -90,6 +95,7 @@ def _record_from_file(path: Path) -> Optional[Dict[str, Any]]:
         rule_id = file_uuid
     name = str(rule.get("name") or dac.get("name") or path.stem)
     enabled = bool(rule.get("enabled") if "enabled" in rule else str(path.name).startswith("[enabled]"))
+    severity = str(rule.get("severity") or "")
     description = str(rule.get("description") or "")
     query = rule.get("query") or ""
     return {
@@ -97,6 +103,7 @@ def _record_from_file(path: Path) -> Optional[Dict[str, Any]]:
         "elastic_id": str(dac.get("elastic_id") or rule.get("id") or ""),
         "name": name,
         "enabled": enabled,
+        "severity": severity,
         "language": str(rule.get("language") or rule.get("type") or ""),
         "tags": tags[:12],
         "data_sources": data_sources[:8],
@@ -137,6 +144,10 @@ def _load_index(force: bool = False) -> List[Dict[str, Any]]:
     records: List[Dict[str, Any]] = []
     if directory.is_dir():
         for path in sorted(directory.glob("*.json")):
+            if path.name == "suggested_fields.json":
+                # Shared suggestion catalog for Findings. Indexing it would
+                # invent a rule named suggested_fields. See detection-as-code.md.
+                continue
             record = _record_from_file(path)
             if record:
                 records.append(record)
@@ -149,7 +160,8 @@ def _load_index(force: bool = False) -> List[Dict[str, Any]]:
 
 def search_rules(query: str, limit: int = 8) -> List[Dict[str, Any]]:
     """Keyword search over the compact index. Default 8 hits to keep tokens low."""
-    limit = max(1, min(int(limit or 8), 15))
+    # Default stays small for the agent. The Rules page passes a larger page size.
+    limit = max(1, min(int(limit or 8), 100))
     tokens = _tokenize(query)
     records = _load_index()
     if not tokens:
@@ -203,6 +215,7 @@ def _public_hit(record: Dict[str, Any], score: int = 0) -> Dict[str, Any]:
         "rule_id": record.get("rule_id"),
         "name": record.get("name"),
         "enabled": record.get("enabled"),
+        "severity": record.get("severity") or "",
         "language": record.get("language"),
         "tags": record.get("tags") or [],
         "data_sources": record.get("data_sources") or [],

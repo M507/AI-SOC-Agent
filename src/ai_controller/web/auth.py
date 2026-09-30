@@ -30,6 +30,15 @@ logger = get_logger("sami.web.auth")
 
 COOKIE_NAME = "sami_session"
 PUBLIC_PATHS = frozenset({"/login", "/api/auth/login", "/api/auth/status"})
+SETUP_PAGE = "/setup"
+SETUP_STATIC_PATHS = frozenset({"/static/setup.js", "/static/css/setup.css"})
+# Reachable without a session only while no console password exists.
+SETUP_OPEN_PATHS = frozenset({
+    "/api/setup/status",
+    "/api/setup/schema",
+    "/api/setup/steps/welcome",
+    "/api/setup/steps/security",
+})
 PUBLIC_STATIC_PATHS = frozenset(
     {
         "/static/css/tokens.css",
@@ -114,6 +123,51 @@ def _require_password_hash(password: str) -> None:
         _HASHER.check_needs_rehash(password)
     except InvalidHashError as exc:
         raise RuntimeError(_PASSWORD_HASH_REQUIRED) from exc
+
+
+def setup_required() -> bool:
+    """True only when the console has no password yet.
+
+    An existing install with an Argon2id hash is not in setup mode, even when
+    the ``setup`` section is missing. A non-empty value that is not a hash
+    still fails startup instead of being treated as a fresh wizard.
+    """
+    raw = get_section("web", {})
+    return not str(raw.get("password") or "").strip()
+
+
+def _bootstrap_setup_auth(cookie_secure: bool) -> WebAuthConfig:
+    """In-memory auth so the wizard can issue a session once a password is set."""
+    raw = get_section(
+        "web",
+        {
+            "username": "admin",
+            "password": "",
+            "session_secret": "",
+            "session_ttl_seconds": 43200,
+        },
+    )
+    username = (raw.get("username") or "admin").strip() or "admin"
+    secret = (raw.get("session_secret") or "").strip()
+    changed = False
+    if secret in PLACEHOLDER_SECRETS or len(secret) < 32:
+        secret = secrets.token_urlsafe(48)
+        changed = True
+    if changed:
+        persisted = dict(raw)
+        persisted["username"] = username
+        persisted["password"] = raw.get("password") or ""
+        persisted["session_secret"] = secret
+        persisted["session_ttl_seconds"] = int(raw.get("session_ttl_seconds") or 43200)
+        update_raw_section("web", persisted)
+    ttl = int(raw.get("session_ttl_seconds") or 43200)
+    return WebAuthConfig(
+        username=username,
+        password="",
+        session_secret=secret,
+        session_ttl_seconds=max(ttl, 300),
+        cookie_secure=cookie_secure,
+    )
 
 
 def load_web_auth_config(cookie_secure: bool = True) -> WebAuthConfig:
@@ -245,6 +299,9 @@ _auth: Optional[SessionManagerAuth] = None
 
 def init_auth(cookie_secure: bool = True) -> SessionManagerAuth:
     global _auth
+    if setup_required():
+        _auth = SessionManagerAuth(_bootstrap_setup_auth(cookie_secure=cookie_secure))
+        return _auth
     _auth = SessionManagerAuth(load_web_auth_config(cookie_secure=cookie_secure))
     return _auth
 
@@ -317,12 +374,29 @@ class AuthMiddleware(BaseHTTPMiddleware):
                 content={"success": False, "detail": "HTTPS is required"},
             )
         path = request.url.path
-        if path in PUBLIC_PATHS or path in PUBLIC_STATIC_PATHS:
-            return await call_next(request)
-
         user = current_user(request)
         if user:
             request.state.user = user
+            return await call_next(request)
+
+        if setup_required():
+            if (
+                path in PUBLIC_STATIC_PATHS
+                or path in SETUP_STATIC_PATHS
+                or path == SETUP_PAGE
+                or path in SETUP_OPEN_PATHS
+            ):
+                return await call_next(request)
+            if path == "/login":
+                return RedirectResponse(url=SETUP_PAGE, status_code=status.HTTP_302_FOUND)
+            if path.startswith("/api/") or path.startswith("/ws/"):
+                return JSONResponse(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    content={"success": False, "detail": "Finish security setup to continue"},
+                )
+            return RedirectResponse(url=SETUP_PAGE, status_code=status.HTTP_302_FOUND)
+
+        if path in PUBLIC_PATHS or path in PUBLIC_STATIC_PATHS:
             return await call_next(request)
 
         if path.startswith("/api/") or path.startswith("/ws/"):

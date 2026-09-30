@@ -45,9 +45,17 @@ def project_root() -> Path:
     return Path(__file__).resolve().parent.parent.parent
 
 
+def config_file_path() -> Path:
+    """Config path for MCP. ``SAMIGPT_CONFIG_FILE`` wins so an isolated instance cannot read the host file."""
+    override = os.getenv("SAMIGPT_CONFIG_FILE")
+    if override:
+        return Path(override)
+    return project_root() / "config.json"
+
+
 def load_runtime_config() -> SamiConfig:
-    """Load config.json from the project root, falling back to empty defaults."""
-    config_file = project_root() / "config.json"
+    """Load config.json, falling back to empty defaults."""
+    config_file = config_file_path()
     try:
         if config_file.exists():
             with open(config_file, "r") as f:
@@ -65,7 +73,7 @@ def load_runtime_config() -> SamiConfig:
 
 
 def _load_raw_config_dict() -> Dict[str, Any]:
-    config_file = os.getenv("SAMIGPT_CONFIG_FILE", str(project_root() / "config.json"))
+    config_file = str(config_file_path())
     try:
         if os.path.exists(config_file):
             with open(config_file, "r") as f:

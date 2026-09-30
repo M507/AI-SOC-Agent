@@ -9,6 +9,7 @@ Default storage is `data/ai_controller/sessions/` under the process working dire
 | How you run SamiGPT | Chat files |
 | --- | --- |
 | systemd `servee` | `/opt/servee/data/ai_controller/sessions/<session-id>.json` |
+| Docker Compose | Inside the container: `/app/data/ai_controller/sessions/<session-id>.json`. This directory is not in a Compose volume, so `down` drops it. Config and certificates are the volumes that stay. |
 | `python app.py` from the repo | `<repo>/data/ai_controller/sessions/<session-id>.json` |
 
 `config.json` can change that path with `ai_controller.storage_dir`. The process also honors `SAMI_STORAGE_DIR`.

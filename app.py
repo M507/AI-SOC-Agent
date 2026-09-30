@@ -2,8 +2,9 @@
 """
 SamiGPT application entry point.
 
-Starts the HTTPS web interface on 0.0.0.0. A password from config.json is
-required; unauthenticated requests never reach the UI, APIs, or static files.
+Starts the HTTPS web interface on 0.0.0.0. An install with no password opens
+the setup wizard. An install that already has an Argon2id password requires
+sign-in before anything else is reachable.
 
 Usage:
     python app.py
@@ -96,16 +97,18 @@ def main(argv: Optional[List[str]] = None) -> int:
     from src.core.config_storage import get_section, load_config_from_file, update_raw_section
     from src.core.logging import configure_logging
     from src.core.tls import uvicorn_ssl_kwargs
-    from src.ai_controller.web.auth import load_web_auth_config
+    from src.ai_controller.web.auth import load_web_auth_config, setup_required
 
     config = load_config_from_file()
     configure_logging(config.logging if config.logging else None)
 
-    try:
-        load_web_auth_config(cookie_secure=True)
-    except RuntimeError as exc:
-        print(str(exc), file=sys.stderr)
-        return 1
+    starting_setup = setup_required()
+    if not starting_setup:
+        try:
+            load_web_auth_config(cookie_secure=True)
+        except RuntimeError as exc:
+            print(str(exc), file=sys.stderr)
+            return 1
 
     ai_cfg = get_section(
         "ai_controller",
@@ -121,7 +124,9 @@ def main(argv: Optional[List[str]] = None) -> int:
     os.environ["SAMI_COOKIE_SECURE"] = "1"
 
     mcp_cfg = get_section("mcp", {"host": "127.0.0.1", "port": 8082, "auto_start": True})
-    if not (mcp_cfg.get("api_token") or "").strip():
+    # A fresh wizard still has the example MCP token. Generating one here would
+    # replace that placeholder before the AI step can keep or replace it.
+    if not starting_setup and not (mcp_cfg.get("api_token") or "").strip():
         import secrets as _secrets
 
         mcp_cfg = dict(mcp_cfg)
@@ -130,7 +135,10 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     import uvicorn
     print(f"Starting SamiGPT web interface on https://{web_host}:{web_port}")
-    print("Sign-in uses web.username and the Argon2id hash in web.password")
+    if starting_setup:
+        print(f"No console password yet. Open https://{web_host}:{web_port}/setup")
+    else:
+        print("Sign-in uses web.username and the Argon2id hash in web.password")
     if not args.no_mcp and mcp_cfg.get("auto_start", True):
         print(
             f"MCP HTTPS server will listen on https://{mcp_cfg.get('host', '127.0.0.1')}:"

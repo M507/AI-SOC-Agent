@@ -20,104 +20,49 @@ SamiGPT's Dashboard:
 
 ### Quick Start
 
-SamiGPT is started from a single entry point. That process serves the web UI
-and, by default, also starts the MCP server as a **separate HTTPS listener**
-with its own settings and health check.
+Two ways to run SamiGPT. Docker Compose starts a separate copy for setup. The production method is the `servee` systemd service on ports 8081 and 8082.
 
-**Steps:**
+#### Docker Compose
 
-1. **Clone the repository and create a virtual environment** (skip if you already have one):
-   ```bash
-   git clone <repository-url>
-   cd SamiGPT
-   python3 -m venv venv
-   source venv/bin/activate  # On Windows: venv\Scripts\activate
-   pip install --upgrade pip
-   pip install -r requirements.txt
-   ```
+SamiGPT runs as its own Docker Compose stack from [onboarding/docker-compose.yml](onboarding/docker-compose.yml). That container is new: the UI is on host port **18081** and MCP is on host port **18082**. It does not bind 8081 or 8082, and it does not use the production service.
 
-2. **Set the UI password hash** in `config.json` (copied from `config.json.example` automatically on first run). `web.password` is an **Argon2id** hash, the password hash OWASP recommends. This app uses memory 19 MiB, 2 iterations, parallelism 1, a 16-byte salt, and a 32-byte hash. Each stored value gets a new salt. Sign-in accepts only that Argon2id check. The UI does not start when `password` is empty, a plaintext password, or another hash such as Argon2i.
+The container starts with a blank config. A setup wizard at `/setup` asks for the console password and the integration tokens. Skipped steps stay at the placeholders from `config.json.example` and are not treated as connected. Certificate checks for Elastic, the local TIP, and NetBox are left off. The MCP listener binds `0.0.0.0`.
 
-   Generate the hash, then store the printed value:
+**Start it:**
 
-   ```bash
-   python -c "from src.ai_controller.web.auth import hash_password; print(hash_password('choose-a-strong-password'))"
-   ```
+```bash
+docker compose -p samigpt-onboarding -f onboarding/docker-compose.yml up --build
+```
 
-   ```json
-   "web": {
-     "username": "admin",
-     "password": "$argon2id$v=19$m=19456,t=2,p=1$<salt>$<hash>",
-     "session_secret": "",
-     "session_ttl_seconds": 43200
-   }
-   ```
+**Open the wizard:**
 
-   `session_secret` is generated automatically if left empty. Sign in with the password you hashed, not with the `$argon2id$...` string. Changing the password from **Operators** stores a new hash the same way.
+`https://127.0.0.1:18081/setup`
 
-3. **Add tokens/URLs for the integrations you want to enable** in `config.json`.
-   You only need to fill in the sections for the tools you actually use
-   (case management, SIEM, EDR, CTI, LLM provider, etc.) — everything else can
-   be left at its placeholder values. For example, to use **Open WebUI** as
-   the LLM provider:
-   ```json
-   "llm": {
-     "provider": "openwebui",
-     "openwebui": {
-       "api_key": "your-openwebui-api-key",
-       "base_url": "https://your-openwebui-host:8080",
-       "model": "auto"
-     }
-   }
-   ```
-   The same pattern applies to other sections, e.g. `thehive.api_key`,
-   `iris.api_key`, `elastic.clusters[].api_key`, `edr.api_key`, `cti.base_url`,
-   and `netbox.api_token`. See the Configuration section below for the full list.
+The browser warns about the self-signed certificate written in the container on first start. Accept it for this host. The wizard order is Security, SIEM (Elastic), case management, EDR, threat intel, knowledge and assets, engineering tickets, then AI and MCP. Each optional step has **Skip for now**. **Finish** writes the config and opens the console at `https://127.0.0.1:18081`. Sign in with the username and password from the Security step.
 
-4. **Start the application:**
-   ```bash
-   python app.py
-   ```
-   The UI binds **HTTPS on `0.0.0.0:8081`**. The first start writes a self-signed certificate to `certs/`. Your browser will warn until you trust that cert or replace it with a real one.
+Config and certificates stay in Compose volumes, so the next `up` keeps what the wizard saved. Stop the stack with:
 
-   Optional flags:
-   ```bash
-   python app.py --port 8081
-   python app.py --no-mcp    # web UI only; start MCP later from the UI
-   python app.py --debug     # auto-reload when files under src/ change
-   ```
+```bash
+docker compose -p samigpt-onboarding -f onboarding/docker-compose.yml down
+```
 
-5. **Open your browser:**
-   Navigate to `https://<host>:8081` and sign in. Nothing in the UI, APIs, or static files is reachable without a valid session.
+Add `-v` only when you want that saved config removed.
 
-6. **Verify the LLM provider:**
-   Open **Settings** to confirm the provider you configured in step 3 (Cursor
-   Agent, OpenAI, OpenRouter, Open WebUI, or any OpenAI-compatible endpoint),
-   or switch providers here instead. Save, then use **Test provider**.
+**After the wizard**
 
-7. **Check the MCP server:**
-   Use the **MCP** button in the header. It shows health, bound host/port,
-   registered tools, and start/stop/restart controls. MCP HTTPS routes require
-   `Authorization: Bearer <mcp.api_token>` from `config.json`.
+Use **Refresh models** on the AI step to list models for the token you entered. MCP is reachable on the host at port **18082** (the process inside the container listens on 8082). The AI step stores the public URL and bearer token. Open WebUI can be registered from that same step.
 
-8. **Confirm Open WebUI is connected:**
-   In SamiGPT, the **MCP** button should show the server as healthy with its
-   registered tools listed:
+In SamiGPT, the **MCP** button shows health and registered tools:
 
-   ![MCP connected on SamiGPT](images/mcp_connected_on_samigpt.png)
+![MCP connected on SamiGPT](images/mcp_connected_on_samigpt.png)
 
-   In Open WebUI, add SamiGPT as a tool server under **Settings → Tools**,
-   pointing it at the MCP HTTPS listener (`https://<host>:<mcp.port>`, e.g.
-   `https://<host>:8082`) with `Authorization: Bearer <mcp.api_token>` from
-   `config.json`, then verify the SamiGPT tools appear in the tool list there
-   too. Note this is separate from the `llm.openwebui` config in step 3, which
-   instead points SamiGPT at Open WebUI as its LLM backend:
+In Open WebUI, add SamiGPT under **Settings → Tools** using the public MCP URL from the wizard and `Authorization: Bearer <mcp token>`. That is separate from the AI provider URL, which points SamiGPT at Open WebUI:
 
-   ![MCP connected on Open WebUI](images/mcp_connected_on_openwebui.png)
+![MCP connected on Open WebUI](images/mcp_connected_on_openwebui.png)
 
-#### Install as a systemd service (`servee`)
+#### Production service
 
-To run SamiGPT as a boot-persistent service, use the installer under `servee/`.
+To run SamiGPT as the boot-persistent production service, use the installer under `servee/`.
 It copies the app to `/opt/servee`, creates a Python 3.10+ venv, installs
 dependencies, and enables + starts the `servee` unit (`Restart=always`).
 Re-running the script reinstalls cleanly and preserves `config.json`, `certs/`,
@@ -150,7 +95,9 @@ sudo PYTHON_BIN=/path/to/python3.11 ./servee/install.sh
 ```
 
 After install, the UI is at `https://<host>:8081` and MCP at `:8082`, with
-runtime files under `/opt/servee`.
+runtime files under `/opt/servee`. An existing `config.json` there is kept, so
+the console opens at sign-in. A host with no password opens the same setup
+wizard at `https://<host>:8081/setup`.
 
 ## Overview
 
@@ -209,36 +156,35 @@ The SOC2 case analysis workflow performs deep investigation, SIEM analysis, CTI 
 
 ### Prerequisites
 
-- Python 3.9 or higher (3.10+ if installing as a systemd service via `servee/`)
-- pip package manager
+- Docker Compose, for the setup stack
+- Python 3.10 or newer, for the production `servee` service
 
 ### Setup
 
-See "Quick Start" above for cloning the repository, creating the virtual
-environment, and installing dependencies. Once `python app.py` is running:
-
-1. **Configure integrations** (see Configuration section below)
+- **Docker Compose:** `docker compose -p samigpt-onboarding -f onboarding/docker-compose.yml up --build`, then `https://127.0.0.1:18081/setup`
+- **Production service:** `sudo ./servee/install.sh`, then `https://<host>:8081`
 
 ### Connect MCP Server to AI Tools
 
 The **official, supported way** to use SamiGPT's tools is to connect them to
-**Open WebUI** via the MCP HTTPS listener (see "Confirm Open WebUI is
-connected" in Quick Start above). Once SamiGPT is registered as a tool server
-in Open WebUI, you can drive it from **any LLM provider Open WebUI
-supports** (OpenAI, OpenRouter, local/self-hosted models, etc.) without any
-further per-client setup.
+**Open WebUI** from the wizard's AI step, or afterward under **Settings → Tools**
+in Open WebUI. Once SamiGPT is registered as a tool server, you can drive it
+from **any LLM provider Open WebUI supports** (OpenAI, OpenRouter,
+local/self-hosted models, etc.) without any further per-client setup.
 
-Other MCP-compatible clients that speak stdio or HTTPS — such as Cursor or
-Claude Desktop — are also supported and can connect directly to
-`python -m src.mcp.mcp_server` (stdio) or the HTTPS listener below, but they
-are not the primary/tested integration path and are not documented in
-detail here.
+Send `Authorization: Bearer` and the MCP token. Use `https` when MCP TLS is on, and `http` when it is left off.
 
-HTTPS endpoints when `app.py` is running (defaults). Send `Authorization: Bearer <mcp.api_token>`:
+Docker Compose (host port **18082**):
 
-- Health: `https://127.0.0.1:8082/health`
-- Tools: `https://127.0.0.1:8082/tools`
-- JSON-RPC: `POST https://127.0.0.1:8082/rpc`
+- Health: `http://127.0.0.1:18082/health`
+- Tools: `http://127.0.0.1:18082/tools`
+- JSON-RPC: `POST http://127.0.0.1:18082/rpc`
+
+Production service (port **8082**):
+
+- Health: `https://<host>:8082/health`
+- Tools: `https://<host>:8082/tools`
+- JSON-RPC: `POST https://<host>:8082/rpc`
 
 ## Architecture
 
@@ -264,7 +210,8 @@ SamiGPT/
 │   ├── mcp/              # MCP server, HTTP transport, supervisor, runbooks
 │   ├── orchestrator/     # Workflow orchestration
 │   └── web/              # Legacy integration config UI
-├── app.py                # Single entry point for the web interface
+├── app.py                # Process entry point inside the Compose image
+├── onboarding/           # Docker Compose wizard (ports 18081 and 18082)
 ├── run_books/            # SOC tier runbooks and workflows
 ├── config/               # Agent profiles and configuration
 └── client_env/           # Client-specific infrastructure data (gitignored except templates)
@@ -294,7 +241,7 @@ See `config.json.example` for the complete configuration schema. Key sections:
 - `ai_controller`: Web interface bind address and session storage
 - `llm`: LLM provider used by the web UI (Cursor Agent, OpenAI, OpenRouter, Open WebUI, custom)
 - `mcp`: HTTP MCP listener host/port and auto-start
-- `web`: Console username and password. `password` is an Argon2id hash (19 MiB, 2 iterations, parallelism 1, 16-byte salt). The UI does not start with a plaintext password. See Quick Start.
+- `web`: Console username and password. The wizard hashes the password with Argon2id. A plaintext password is not accepted.
 - `logging`: Logging configuration
 
 ## Logging
@@ -362,6 +309,8 @@ The following projects helped and inspired us during the literature review:
 
 ### v0.3
 
+- **Setup wizard**: a new install can be configured in the browser, so the console password, integrations, and MCP are ready without hand-editing `config.json`
+- **Docker Compose**: setup in its own container, without touching the production service
 - **Operators page**: change the console username and password from the UI (the new password is stored as a new Argon2id hash) and see the actions that account may approve, grouped by SOC, detection engineering, and engineering
 - **Audit view**: append-only record of sign-in, failed sign-in, and sign-out, merged with approval decisions (approved, denied, reviewed, ignored). Passwords and session tokens are never written
 - **Reports view**: finished investigation write-ups from completed session replies, listed newest first and opened as markdown

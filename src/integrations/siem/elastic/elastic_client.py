@@ -1689,6 +1689,61 @@ class ElasticSIEMClient:
             logger.exception(f"Error getting raw alert document {alert_id}: {e}")
             raise IntegrationError(f"Failed to get raw alert document: {e}") from e
 
+    def search_alert_documents(
+        self,
+        *,
+        rule_id: str,
+        status: str = "open",
+        hours_back: int = 24 * 90,
+        max_alerts: int = 200,
+    ) -> List[Dict[str, Any]]:
+        """Raw alert hits for one rule and workflow status. Used to match checked fields."""
+        rule_id = str(rule_id or "").strip()
+        if not rule_id:
+            raise IntegrationError("rule_id is required")
+        status = self._normalize_alert_status(status) or "open"
+        query = {
+            "query": {
+                "bool": {
+                    "must": [
+                        {"range": {"@timestamp": {"gte": f"now-{int(hours_back)}h"}}},
+                        self._alert_status_clause(status),
+                        self._alert_rule_id_clause(rule_id),
+                    ]
+                }
+            },
+            "size": max(1, min(int(max_alerts or 200), 500)),
+            "sort": [{"@timestamp": {"order": "desc"}}],
+            "_source": True,
+        }
+        response = self._search_with_fallback(_ALERT_INDEX_PATTERNS, query)
+        hits = response.get("hits", {}).get("hits", [])
+        documents = []
+        for hit in hits:
+            documents.append({
+                "id": hit.get("_id", ""),
+                "source": hit.get("_source") if isinstance(hit.get("_source"), dict) else {},
+            })
+        return documents
+
+    def set_alert_workflow_status(self, alert_id: str, status: str) -> Dict[str, Any]:
+        """Set Kibana workflow status for one alert. Close still goes through close_alert."""
+        alert_id = str(alert_id or "").strip()
+        status = str(status or "").strip().lower()
+        if not alert_id:
+            raise IntegrationError("alert_id is required")
+        if status not in {"acknowledged", "open"}:
+            raise IntegrationError("status must be acknowledged or open")
+        kibana = self._cases_http()
+        try:
+            response = kibana.post(
+                "/api/detection_engine/signals/status",
+                json_data={"signal_ids": [alert_id], "status": status},
+            )
+        except IntegrationError as exc:
+            raise IntegrationError(f"Failed to set alert {alert_id} to {status}: {exc}") from exc
+        return {"success": True, "alert_id": alert_id, "status": status, "response": response}
+
     def _cases_http(self) -> ElasticHttpClient:
         if self._kibana_http is not None:
             return self._kibana_http

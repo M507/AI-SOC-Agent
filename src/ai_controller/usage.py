@@ -293,27 +293,29 @@ def record_model_round(
     autorun_id: Optional[str] = None,
     autorun_name: Optional[str] = None,
     command: Optional[str] = None,
+    request_id: Optional[str] = None,
 ) -> Optional[Dict[str, Any]]:
     reported = str(tokens.get("reported_model") or configured_model or "")
-    return append_usage(
-        {
-            "session_id": session_id,
-            "entry_id": entry_id,
-            "session_type": session_type,
-            "session_name": session_name,
-            "autorun_id": autorun_id,
-            "autorun_name": autorun_name,
-            "command": _clip(command, 160),
-            "provider": provider,
-            "model": normalize_model_key(configured_model) or "unknown",
-            "reported_model": reported,
-            "input_tokens": tokens.get("input_tokens"),
-            "cached_input_tokens": tokens.get("cached_input_tokens"),
-            "cache_write_tokens": tokens.get("cache_write_tokens"),
-            "output_tokens": tokens.get("output_tokens"),
-            "usage_reported": tokens.get("usage_reported"),
-        }
-    )
+    row = {
+        "session_id": session_id,
+        "entry_id": entry_id,
+        "session_type": session_type,
+        "session_name": session_name,
+        "autorun_id": autorun_id,
+        "autorun_name": autorun_name,
+        "command": _clip(command, 160),
+        "provider": provider,
+        "model": normalize_model_key(configured_model) or "unknown",
+        "reported_model": reported,
+        "input_tokens": tokens.get("input_tokens"),
+        "cached_input_tokens": tokens.get("cached_input_tokens"),
+        "cache_write_tokens": tokens.get("cache_write_tokens"),
+        "output_tokens": tokens.get("output_tokens"),
+        "usage_reported": tokens.get("usage_reported"),
+    }
+    if request_id:
+        row["request_id"] = request_id
+    return append_usage(row)
 
 
 def read_usage() -> List[Dict[str, Any]]:

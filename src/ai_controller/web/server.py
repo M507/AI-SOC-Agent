@@ -39,6 +39,8 @@ from .routes_library import router as library_router
 from .routes_reports import router as reports_router
 from .routes_audit import router as audit_router
 from .routes_operators import router as operators_router
+from .routes_setup import router as setup_router
+from .routes_detections import router as detections_router
 
 logger = get_logger("sami.ai_controller.web.server")
 
@@ -133,6 +135,8 @@ app.include_router(library_router)
 app.include_router(reports_router)
 app.include_router(audit_router)
 app.include_router(operators_router)
+app.include_router(setup_router)
+app.include_router(detections_router)
 
 # Initialize components
 executor: Optional[AgentExecutor] = None
@@ -1033,6 +1037,15 @@ def _live_progress(session_id: str, entry_id: str):
         })
 
     return on_progress
+
+
+@app.get("/setup", response_class=HTMLResponse)
+async def setup_page():
+    """Serve the setup wizard. Auth middleware decides who may open it."""
+    html_path = TEMPLATES_DIR / "setup.html"
+    if html_path.exists():
+        return HTMLResponse(content=html_path.read_text(encoding="utf-8"))
+    return HTMLResponse(content="<h1>Setup</h1><p>setup.html not found</p>", status_code=500)
 
 
 @app.get("/login", response_class=HTMLResponse)
