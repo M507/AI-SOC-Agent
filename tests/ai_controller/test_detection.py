@@ -12,7 +12,12 @@ from src.ai_controller.detection.apply import write_exceptions
 from src.ai_controller.detection.ask import ask_about_finding
 from src.ai_controller.detection.diff import unified_diff
 from src.ai_controller.detection.errors import DetectionError
-from src.ai_controller.detection.findings import field_rows, suggested_names_for, update_finding_status
+from src.ai_controller.detection.findings import (
+    field_rows,
+    suggested_names_for,
+    summarize_alert,
+    update_finding_status,
+)
 from src.ai_controller.detection.review import create_from_fields, implement
 from src.ai_controller.detection import rules_store
 from src.ai_controller.detection.validation import validate_checked
@@ -100,6 +105,28 @@ def test_disable_writes_the_disabled_file_before_removing_the_enabled_one(rules)
     body = json.loads(written.read_text(encoding="utf-8"))
     assert body["rule"]["enabled"] is False
     assert body["_dac"]["status"] == "disabled"
+
+
+def test_summarize_alert_includes_ntopng_display_lines():
+    source = {
+        "kibana.alert.rule.name": "ntopng Security Alert",
+        "kibana.alert.severity": "medium",
+        "kibana.alert.workflow_status": "open",
+        "@timestamp": "2026-11-07T17:44:24Z",
+        "rule": {"name": "ndpi_http_suspicious_user_agent", "category": "flow"},
+        "ntopng": {
+            "script": "ndpi_http_suspicious_user_agent",
+            "info": "connectivity-check.ubuntu.com/",
+        },
+        "event": {"reason": ["Empty or missing User-Agent"]},
+        "host": {"name": "10.10.10.99"},
+    }
+    summary = summarize_alert("alert-1", source)
+    assert summary["title"] == "ntopng Security Alert"
+    assert summary["subtitle"] == "ndpi_http_suspicious_user_agent"
+    assert summary["reason"] == "Empty or missing User-Agent"
+    assert summary["target"] == "connectivity-check.ubuntu.com/"
+    assert summary["host_name"] == "10.10.10.99"
 
 
 def test_suggested_fields_follow_the_rule_and_the_catalog_file(rules):

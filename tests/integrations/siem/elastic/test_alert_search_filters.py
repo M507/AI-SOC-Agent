@@ -71,6 +71,28 @@ def test_get_security_alerts_filters_by_rule_name_and_acknowledged():
     )
 
 
+def test_get_security_alerts_includes_ntopng_display_lines():
+    hit = _hit("a1", rule_name="ntopng Security Alert", status="open")
+    hit["_source"].update({
+        "rule": {"name": "ndpi_http_suspicious_user_agent", "category": "flow"},
+        "ntopng": {
+            "script": "ndpi_http_suspicious_user_agent",
+            "info": "connectivity-check.ubuntu.com/",
+        },
+        "event": {"reason": ["Empty or missing User-Agent"]},
+        "host": {"name": "10.10.10.99"},
+    })
+    client, _http = _client_with_hits([hit])
+
+    alerts = client.get_security_alerts(hours_back=24, max_alerts=5, include_investigated=True)
+
+    assert alerts[0]["title"] == "ntopng Security Alert"
+    assert alerts[0]["subtitle"] == "ndpi_http_suspicious_user_agent"
+    assert alerts[0]["reason"] == "Empty or missing User-Agent"
+    assert alerts[0]["target"] == "connectivity-check.ubuntu.com/"
+    assert alerts[0]["host_name"] == "10.10.10.99"
+
+
 def test_get_security_alerts_default_excludes_closed_and_investigated():
     client, http = _client_with_hits([])
 

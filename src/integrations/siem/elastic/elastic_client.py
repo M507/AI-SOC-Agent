@@ -1434,6 +1434,7 @@ class ElasticSIEMClient:
                     or source.get("kibana.alert.workflow_status")
                     or "open"
                 )
+                display = self._alert_display_extras(source, title)
 
                 alerts.append({
                     "id": hit.get("_id", ""),
@@ -1444,6 +1445,11 @@ class ElasticSIEMClient:
                     "status": status,
                     "created_at": source.get("@timestamp", ""),
                     "description": self._extract_description_from_alert(source, signal),
+                    "host_name": display["host_name"],
+                    "user_name": display["user_name"],
+                    "subtitle": display["subtitle"],
+                    "reason": display["reason"],
+                    "target": display["target"],
                     "source": "elastic",
                     "related_entities": self._extract_entities_from_alert(source),
                     "verdict": verdict,
@@ -3300,6 +3306,60 @@ class ElasticSIEMClient:
             raise IntegrationError(f"All index patterns failed. Last error: {last_error}") from last_error
         
         return response
+
+    @staticmethod
+    def _alert_field_text(value: Any) -> str:
+        if value is None:
+            return ""
+        if isinstance(value, list):
+            return ", ".join(
+                part for part in (ElasticSIEMClient._alert_field_text(item) for item in value) if part
+            )
+        if isinstance(value, dict):
+            return ""
+        return str(value).strip()
+
+    def _alert_display_extras(self, source: Dict[str, Any], rule_name: str) -> Dict[str, str]:
+        """List-card lines: host, script/subtype, reason, and target when present."""
+        ntopng = source.get("ntopng") if isinstance(source.get("ntopng"), dict) else {}
+        source_rule = source.get("rule") if isinstance(source.get("rule"), dict) else {}
+        event = source.get("event") if isinstance(source.get("event"), dict) else {}
+        host = source.get("host") if isinstance(source.get("host"), dict) else {}
+        user = source.get("user") if isinstance(source.get("user"), dict) else {}
+        url = source.get("url") if isinstance(source.get("url"), dict) else {}
+
+        host_name = self._alert_field_text(
+            host.get("name") or host.get("hostname") or source.get("host.name") or source.get("host.hostname")
+        )
+        user_name = self._alert_field_text(user.get("name") or source.get("user.name"))
+        subtitle = self._alert_field_text(
+            ntopng.get("script")
+            or source.get("ntopng.script")
+            or source_rule.get("name")
+            or source.get("rule.name")
+        )
+        if subtitle and subtitle.casefold() == str(rule_name or "").casefold():
+            subtitle = ""
+        reason = self._alert_field_text(
+            event.get("reason")
+            or source.get("event.reason")
+            or source.get("kibana.alert.original_event.reason")
+        )
+        target = self._alert_field_text(
+            ntopng.get("info")
+            or source.get("ntopng.info")
+            or url.get("full")
+            or url.get("domain")
+            or source.get("url.full")
+            or source.get("url.domain")
+        )
+        return {
+            "host_name": host_name,
+            "user_name": user_name,
+            "subtitle": subtitle,
+            "reason": reason,
+            "target": target,
+        }
 
     def _extract_description_from_alert(self, source: Dict[str, Any], signal: Dict[str, Any]) -> str:
         """

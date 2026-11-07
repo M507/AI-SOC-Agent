@@ -133,6 +133,49 @@ def _lookup(source: Dict[str, Any], *names: str) -> str:
     return ""
 
 
+def _text(value: Any) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, list):
+        return ", ".join(part for part in (_text(item) for item in value) if part)
+    if isinstance(value, dict):
+        return ""
+    return str(value).strip()
+
+
+def _display_extras(source: Dict[str, Any], rule_name: str) -> Dict[str, str]:
+    """Extra list lines when the alert carries script / reason / target detail."""
+    ntopng = source.get("ntopng") if isinstance(source.get("ntopng"), dict) else {}
+    source_rule = source.get("rule") if isinstance(source.get("rule"), dict) else {}
+    event = source.get("event") if isinstance(source.get("event"), dict) else {}
+    url = source.get("url") if isinstance(source.get("url"), dict) else {}
+
+    subtitle = _text(
+        ntopng.get("script")
+        or source.get("ntopng.script")
+        or source_rule.get("name")
+        or source.get("rule.name")
+    )
+    if subtitle and subtitle.casefold() == str(rule_name or "").casefold():
+        subtitle = ""
+
+    reason = _text(
+        event.get("reason")
+        or source.get("event.reason")
+        or source.get("kibana.alert.original_event.reason")
+    )
+
+    target = _text(
+        ntopng.get("info")
+        or source.get("ntopng.info")
+        or url.get("full")
+        or url.get("domain")
+        or source.get("url.full")
+        or source.get("url.domain")
+    )
+    return {"subtitle": subtitle, "reason": reason, "target": target}
+
+
 def summarize_alert(alert_id: str, source: Dict[str, Any]) -> Dict[str, Any]:
     signal = source.get("signal") if isinstance(source.get("signal"), dict) else {}
     rule = signal.get("rule") if isinstance(signal.get("rule"), dict) else {}
@@ -150,6 +193,7 @@ def summarize_alert(alert_id: str, source: Dict[str, Any]) -> Dict[str, Any]:
         or source.get("kibana.alert.rule.rule_id")
         or ""
     )
+    extras = _display_extras(source, str(rule_name))
     return {
         "id": alert_id,
         "title": str(rule_name),
@@ -161,6 +205,9 @@ def summarize_alert(alert_id: str, source: Dict[str, Any]) -> Dict[str, Any]:
         "host_name": _lookup(source, "host.name", "host.hostname"),
         "user_name": _lookup(source, "user.name"),
         "verdict": str(signal_ai.get("verdict") or ""),
+        "subtitle": extras["subtitle"],
+        "reason": extras["reason"],
+        "target": extras["target"],
     }
 
 
@@ -208,7 +255,10 @@ def list_findings(client: Any, *, hours: Optional[int] = None, query: str = "") 
         alert for alert in alerts
         if needle in " ".join(
             str(alert.get(key) or "")
-            for key in ("title", "rule_name", "rule_id", "severity", "host_name")
+            for key in (
+                "title", "rule_name", "rule_id", "severity", "host_name",
+                "subtitle", "reason", "target",
+            )
         ).lower()
     ]
 

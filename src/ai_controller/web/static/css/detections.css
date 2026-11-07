@@ -124,7 +124,23 @@
     font-weight: 600;
     color: var(--color-text-strong);
     line-height: 1.35;
-    margin-bottom: 4px;
+    margin-bottom: 2px;
+}
+
+.dac-card-sub,
+.dac-card-target {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--color-text-muted);
+    line-height: 1.35;
+    word-break: break-word;
+}
+
+.dac-card-reason {
+    font-size: 12px;
+    color: var(--color-warning-text);
+    line-height: 1.35;
+    margin-top: 1px;
 }
 
 .dac-card-meta {
@@ -134,6 +150,13 @@
     align-items: center;
     font-size: 11px;
     color: var(--color-text-muted);
+    margin-top: 4px;
+}
+
+.detections-summary .dac-card-sub,
+.detections-summary .dac-card-reason,
+.detections-summary .dac-card-target {
+    margin: 0;
 }
 
 .dac-sev,

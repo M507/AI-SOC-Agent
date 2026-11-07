@@ -53,7 +53,7 @@ class DetectionsManager {
     show(page) {
         this.page = page || 'findings';
         const titles = {
-            findings: ['Findings', 'Open alerts from the lookback in Settings. Check the evidence you want to keep, then ask, except, or update workflow status.'],
+            findings: ['Alerts', 'Open alerts from the lookback in Settings. Check the evidence you want to keep, then ask, except, or update workflow status.'],
             rules: ['Rules', 'Search the configured rules folder. Disable opens Review and does not write the file until Implement.'],
             review: ['Review', 'Keep the conditions you want. Unchecked conditions are omitted. Draft spends one model call. Implement writes the rule file.'],
         };
@@ -122,10 +122,18 @@ class DetectionsManager {
         }
         const selected = this.finding && this.finding.id;
         findings.forEach((item) => {
+            const rich = Boolean(item.subtitle || item.reason || item.target);
             host.append(this.listButton({
                 id: item.id,
                 title: item.rule_name || item.title || item.id,
-                meta: [item.host_name, item.user_name, this.formatTime(item.created_at)].filter(Boolean),
+                subtitle: item.subtitle || '',
+                reason: item.reason || '',
+                target: item.target || '',
+                meta: [
+                    rich ? null : item.host_name,
+                    item.user_name,
+                    this.formatTime(item.created_at),
+                ].filter(Boolean),
                 badge: item.severity,
                 active: item.id === selected,
                 onClick: () => this.openFinding(item.id),
@@ -170,6 +178,24 @@ class DetectionsManager {
             const heading = document.createElement('h3');
             heading.textContent = finding.rule_name || finding.title || finding.id;
             summary.append(heading);
+            if (finding.subtitle) {
+                const sub = document.createElement('p');
+                sub.className = 'dac-card-sub';
+                sub.textContent = finding.subtitle;
+                summary.append(sub);
+            }
+            if (finding.reason) {
+                const reason = document.createElement('p');
+                reason.className = 'dac-card-reason';
+                reason.textContent = finding.reason;
+                summary.append(reason);
+            }
+            if (finding.target) {
+                const target = document.createElement('p');
+                target.className = 'dac-card-target';
+                target.textContent = finding.target;
+                summary.append(target);
+            }
             summary.append(this.metaLine([
                 finding.severity,
                 finding.host_name,
@@ -593,6 +619,25 @@ class DetectionsManager {
         const title = document.createElement('div');
         title.className = 'dac-card-title';
         title.textContent = options.title || 'Untitled';
+        button.append(title);
+        if (options.subtitle) {
+            const sub = document.createElement('div');
+            sub.className = 'dac-card-sub';
+            sub.textContent = options.subtitle;
+            button.append(sub);
+        }
+        if (options.reason) {
+            const reason = document.createElement('div');
+            reason.className = 'dac-card-reason';
+            reason.textContent = options.reason;
+            button.append(reason);
+        }
+        if (options.target) {
+            const target = document.createElement('div');
+            target.className = 'dac-card-target';
+            target.textContent = options.target;
+            button.append(target);
+        }
         const meta = document.createElement('div');
         meta.className = 'dac-card-meta';
         if (options.badge) {
@@ -606,7 +651,7 @@ class DetectionsManager {
             span.textContent = part;
             meta.append(span);
         });
-        button.append(title, meta);
+        button.append(meta);
         button.addEventListener('click', options.onClick);
         return button;
     }
