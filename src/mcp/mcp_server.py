@@ -50,12 +50,18 @@ logger = get_logger(__name__)
 
 # Appended to irreversible MCP tools. The server queues these for the Requests view.
 _QUEUED_FOR_ANALYST = (
-    " Files a request in the SamiGPT Requests view and does not run until an analyst "
-    "approves it. Tell the analyst it is pending in Requests; do not claim the action already happened."
+    " Files a request under Requests → Approvals and does not run until an analyst "
+    "approves it. Tell the analyst it is pending in Approvals; do not claim the action already happened."
 )
 _INFORMATIONAL_FOR_ANALYST = (
-    " Files an informational note in the SamiGPT Requests view. Nothing is executed "
-    "and there is nothing to approve. Tell the analyst it is a suggestion only."
+    " Files an informational note under Requests → Notes. Nothing is executed "
+    "and there is nothing to approve. Tell the analyst it is a suggestion under Notes only. "
+    "When ENG is GitHub, a linked issue may also be opened."
+)
+_ISOLATION_DISABLED = (
+    " Host isolation is intentionally disabled: the request is filed under Approvals, "
+    "but Approve will not call Kibana Elastic Defend or EDR until isolation is re-enabled. "
+    "Tell the analyst it will not isolate the host."
 )
 
 
@@ -317,12 +323,14 @@ class SamiGPTMCPServer:
             "name": "create_approval_request",
             "description": (
                 "File an action for a human analyst in the SamiGPT Requests view. "
-                "Use this for irreversible or user-gated work: closing alerts, isolating hosts, "
-                "and 'is this you?' identity checks. Do not claim those actions already happened — "
-                "they wait for approval. Fine-tune and visibility notes are informational only "
-                "(no approve button). For identity_verify, set question "
-                "and follow_ups.yes / follow_ups.no to the next action (acknowledge/close vs escalate "
-                "to an Elastic Security case). Do not open IRIS or TheHive cases for this flow."
+                "Closures, alert notes, identity checks, and response actions appear under "
+                "Requests → Approvals and wait for Approve or Yes/No. Fine-tune, visibility, and "
+                "runbook-gap notes appear under Requests → Notes (no Approve; Done/Ignore only; "
+                "may open a linked GitHub issue when ENG is GitHub). Host isolation tools may be "
+                "filed but will not run on the host until isolation is re-enabled. "
+                "For identity_verify, set question and follow_ups.yes / follow_ups.no "
+                "(acknowledge/close vs escalate to an Elastic Security case). "
+                "Do not open IRIS or TheHive cases for this flow."
             ),
             "inputSchema": {
                 "type": "object",
@@ -1955,10 +1963,11 @@ class SamiGPTMCPServer:
         self.tools["isolate_endpoint"] = {
             "name": "isolate_endpoint",
             "description": (
-                "Request isolating an endpoint from the network via Elastic Defend "
+                "Recommend isolating an endpoint from the network via Elastic Defend "
                 "(Kibana Endpoint Security) on the bound cluster. Pass agent.id when known, "
                 "or a hostname to look up."
                 + _QUEUED_FOR_ANALYST
+                + _ISOLATION_DISABLED
             ),
             "inputSchema": {
                 "type": "object",
@@ -1983,8 +1992,9 @@ class SamiGPTMCPServer:
         self.tools["release_endpoint_isolation"] = {
             "name": "release_endpoint_isolation",
             "description": (
-                "Request releasing an endpoint from Elastic Defend isolation on the bound cluster."
+                "Recommend releasing an endpoint from Elastic Defend isolation on the bound cluster."
                 + _QUEUED_FOR_ANALYST
+                + _ISOLATION_DISABLED
             ),
             "inputSchema": {
                 "type": "object",
@@ -2342,9 +2352,10 @@ class SamiGPTMCPServer:
         self.tools["isolate_endpoint"] = {
             "name": "isolate_endpoint",
             "description": (
-                "Request isolating an endpoint from the network via Elastic Defend "
+                "Recommend isolating an endpoint from the network via Elastic Defend "
                 "(Kibana Endpoint Security) on the bound cluster."
                 + _QUEUED_FOR_ANALYST
+                + _ISOLATION_DISABLED
             ),
             "inputSchema": {
                 "type": "object",
@@ -2369,8 +2380,9 @@ class SamiGPTMCPServer:
         self.tools["release_endpoint_isolation"] = {
             "name": "release_endpoint_isolation",
             "description": (
-                "Request releasing an endpoint from network isolation."
+                "Recommend releasing an endpoint from network isolation."
                 + _QUEUED_FOR_ANALYST
+                + _ISOLATION_DISABLED
             ),
             "inputSchema": {
                 "type": "object",

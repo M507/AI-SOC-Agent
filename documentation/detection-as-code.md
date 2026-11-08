@@ -10,9 +10,9 @@ Rule JSON stays in the configured folder. It is not vendored, copied, or importe
 | --- | --- | --- |
 | Findings | Search open alerts, check evidence, Ask, send checked fields to Review, ask the model to suggest an exception, acknowledge or close | Ask and Suggest do not write a rule file. Acknowledge and Close change Elastic workflow status only |
 | Rules | Search the folder, open one rule, start a disable review | Disable does not rename the file until Implement |
-| Review | Keep or drop conditions, Draft, Ask for changes, Implement, Reject | Implement writes the rule JSON. Reject archives the review and leaves the file unchanged |
+| Review | Keep or drop conditions, Draft, Ask for changes, Implement, Reject | Implement writes the rule JSON **and syncs it to Kibana** (exceptions list/items + rule update). Reject archives the review and leaves the file unchanged |
 
-Not implemented: pushing the rule to Kibana, pulling or merging an upstream rules catalog, a Discord notifier, and the setup-wizard step that would store the folder path. The wizard step is still the TODO in [Setup](setup.md). **Settings → General** already saves that same `detection.rules_dir` field.
+Not implemented: pulling or merging an upstream rules catalog, a Discord notifier, and the setup-wizard step that would store the folder path. The wizard step is still the TODO in [Setup](setup.md). **Settings → General** already saves that same `detection.rules_dir` field. Rule sync after Implement matches Home-Lab-Rules Fine-tune & Deploy / `cli.py --sync` for the one changed file.
 
 Filing a **Fine-tune detection** note from the agent still only stores an informational Requests card. It does not call the Detection as Code model and does not edit a file. See [Requests tab](requests.md). Findings actions below are separate from that card.
 
@@ -67,6 +67,7 @@ Each module below has a docstring that points back at this file.
 | `detection/validation.py` | Blocks a write that is empty, wildcarded, off-evidence, duplicated, or against a file that changed |
 | `detection/diff.py` | Unified diff used by the Review **Change** pane |
 | `detection/apply.py` | Builds an exception item and calls the store write |
+| `detection/elastic_sync.py` | After Implement, upserts exception lists/items and PUTs the rule to Kibana, then refreshes `_dac` sync hashes |
 | `detection/usage.py` | One usage-ledger row per model round, `session_type=detection` |
 | `web/routes_detections.py` | `/api/detections`, behind the same session auth as the rest of the console |
 | `web/static/detections.js` | Findings, Rules, and Review UI |
@@ -114,10 +115,12 @@ A field exception card is one AND of the checked fields and starts with `selecte
 
 An unchecked field exception is a normal open review. The page does not treat "nothing selected" as an error. Implement is what refuses that write. Wildcards, duplicate conditions, and fields outside the stored evidence are errors on Implement and warnings or errors on the review when a selected card already has the problem.
 
-- Exceptions: validates the checked cards, appends them to `exception_items`, writes the same path
-- Disable: writes a sibling `[disabled]_...` file first, then removes the `[enabled]_...` file, so a failed write leaves the original in place. Sets `rule.enabled` false and `_dac.status` to `disabled`
-- Does not close the alert and does not push the rule to Kibana
+- Exceptions: validates the checked cards, appends them to `exception_items`, writes the same path, then pushes exception lists/items and the rule to Kibana
+- Disable: writes a sibling `[disabled]_...` file first, then removes the `[enabled]_...` file, so a failed write leaves the original in place. Sets `rule.enabled` false and `_dac.status` to `disabled`, then syncs that disable to Kibana
+- Does not close the alert (Acknowledge / Close on Alerts still do that separately)
+- Updates `_dac.content_hash`, `_dac.last_synced_hash`, and `_dac.last_synced_at` after a successful Elastic push
 - If `file_sha256` no longer matches the bytes on disk, the write is refused (409) and the review must be drafted again
+- If the local write succeeds but Kibana sync fails, Implement returns an error (502) and the review stays open
 
 **Reject** (`POST .../reject`) archives the review.
 

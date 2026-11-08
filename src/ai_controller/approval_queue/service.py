@@ -7,7 +7,16 @@ from typing import Any, Dict, List, Optional
 
 from ...core.logging import get_logger
 from .actions import get_handler
-from .catalog import get_action_spec, list_action_specs, github_issue_link, matches_queue, SOC_CATEGORIES, DETECTION_CATEGORIES
+from .catalog import (
+    get_action_spec,
+    list_action_specs,
+    github_issue_link,
+    matches_queue,
+    wants_github_facet,
+    SOC_CATEGORIES,
+    DETECTION_CATEGORIES,
+    QUEUE_COUNT_KEYS,
+)
 from .clients import resolve_clients
 from .models import ApprovalRequest, Decision, FollowUpPlan, RequestStatus, is_archived
 from .store import RequestStore
@@ -18,7 +27,7 @@ _CRITICAL_FOLLOW_UPS = {"isolate_endpoint", "kill_process", "disable_user", "res
 _OPEN_STATUSES = {RequestStatus.PENDING, RequestStatus.INFORMATIONAL, RequestStatus.AWAITING_INTEGRATION}
 _IGNORE_GITHUB_COMMENT = "Manager decided to ignore this professionally."
 _ENRICHMENT_RETRY_SECONDS = 900
-_QUEUE_KEYS = ("all", "soc", "engineering", "detection")
+_QUEUE_KEYS = QUEUE_COUNT_KEYS
 
 _queue: Optional["ApprovalQueue"] = None
 
@@ -49,12 +58,14 @@ class ApprovalQueue:
         cluster_id: Optional[str] = None,
         queue: Optional[str] = None,
         sync_github: bool = False,
+        github: Optional[str] = None,
     ) -> List[ApprovalRequest]:
         return self.list_bundle(
             status=status,
             cluster_id=cluster_id,
             queue=queue,
             sync_github=sync_github,
+            github=github,
         )["items"]
 
     def list_bundle(
@@ -63,6 +74,7 @@ class ApprovalQueue:
         cluster_id: Optional[str] = None,
         queue: Optional[str] = None,
         sync_github: bool = False,
+        github: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Local snapshot: tickets, badge counts, and generation. No GitHub or SIEM."""
         queue_key = (queue or "all").strip().lower()
@@ -76,11 +88,23 @@ class ApprovalQueue:
         queued = [
             item for item in clustered if matches_queue(item.action_type, item.payload, queue_key)
         ]
+        if wants_github_facet(github):
+            queued = [item for item in queued if github_issue_link(item.payload)]
         items = self._apply_status(queued, status)
         items = sorted(items, key=lambda item: item.created_at, reverse=True)
         counts = self._counts_from(snapshot)
         queue_counts = self._queue_counts_from(snapshot)
-        tab_key = queue_key if queue_key in queue_counts else "all"
+        # Map legacy / alias queue keys onto primary tab count buckets.
+        tab_aliases = {
+            "soc": "approvals",
+            "response": "approvals",
+            "detection": "notes",
+            "detections": "notes",
+            "detection_engineering": "notes",
+        }
+        tab_key = tab_aliases.get(queue_key, queue_key)
+        if tab_key not in queue_counts:
+            tab_key = "all"
         return {
             "items": items,
             "counts": counts,
@@ -88,6 +112,7 @@ class ApprovalQueue:
             "queue_counts": queue_counts,
             "generation": generation,
             "queue": queue or "all",
+            "github": bool(wants_github_facet(github)),
         }
 
     def get(self, request_id: str) -> Optional[ApprovalRequest]:
@@ -144,18 +169,25 @@ class ApprovalQueue:
         informational = sum(1 for item in open_items if item.status == RequestStatus.INFORMATIONAL)
         awaiting = sum(1 for item in open_items if item.status == RequestStatus.AWAITING_INTEGRATION)
         actionable = 0
+        approvals_open = 0
+        notes_open = 0
         detection_open = 0
         engineering_open = 0
         soc_open = 0
         for item in open_items:
             spec = get_action_spec(item.action_type)
             category = spec.category if spec else ""
-            if item.status == RequestStatus.PENDING and category in SOC_CATEGORIES:
+            is_note = category in DETECTION_CATEGORIES
+            # Nav badge: pending Approvals (including verification questions).
+            if item.status == RequestStatus.PENDING and not is_note:
                 actionable += 1
-            if category in SOC_CATEGORIES:
-                soc_open += 1
-            if category in DETECTION_CATEGORIES:
+            if is_note:
+                notes_open += 1
                 detection_open += 1
+            else:
+                approvals_open += 1
+                if category in SOC_CATEGORIES:
+                    soc_open += 1
             if github_issue_link(item.payload):
                 engineering_open += 1
         return {
@@ -165,6 +197,8 @@ class ApprovalQueue:
             "informational": informational,
             "awaiting": awaiting,
             "actionable": actionable,
+            "approvals_open": approvals_open,
+            "notes_open": notes_open,
             "soc_open": soc_open,
             "detection_open": detection_open,
             "engineering_open": engineering_open,

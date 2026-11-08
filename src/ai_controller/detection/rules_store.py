@@ -157,6 +157,23 @@ def render_with_exceptions(data: Dict[str, Any], additions: List[Dict[str, Any]]
     items = list(updated.get("exception_items") or [])
     items.extend(additions)
     updated["exception_items"] = items
+    # Keep rule.exceptions_list in step with Home-Lab-Rules so Kibana can attach the list.
+    if additions:
+        rule = dict(updated.get("rule") or {})
+        refs = list(rule.get("exceptions_list") or [])
+        list_ids = {str(ref.get("list_id") or "") for ref in refs if isinstance(ref, dict)}
+        for item in additions:
+            list_id = str((item or {}).get("list_id") or "")
+            if not list_id or list_id in list_ids:
+                continue
+            refs.append({
+                "list_id": list_id,
+                "type": "detection",
+                "namespace_type": str((item or {}).get("namespace_type") or "single"),
+            })
+            list_ids.add(list_id)
+        rule["exceptions_list"] = refs
+        updated["rule"] = rule
     return updated
 
 

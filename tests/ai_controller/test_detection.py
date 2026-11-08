@@ -156,8 +156,23 @@ def test_suggested_fields_follow_the_rule_and_the_catalog_file(rules):
     assert all(hit.get("name") != "suggested_fields" for hit in search_rules("", limit=50))
 
 
-def test_field_exception_is_not_written_until_implement(rules):
+def test_field_exception_is_not_written_until_implement(rules, monkeypatch):
     from src.ai_controller.detection.review import update_selection
+
+    def fake_sync(client, *, file_path):
+        return {
+            "synced": True,
+            "file": file_path,
+            "file_sha256": "synced",
+            "revision": 1,
+            "rule_id": RULE_ID,
+            "rule_name": "pfSense Successful Login",
+            "enabled": True,
+            "exception_count": 1,
+        }
+
+    monkeypatch.setattr("src.ai_controller.detection.elastic_sync.push_rule_after_implement", fake_sync)
+    monkeypatch.setattr("src.core.elastic_clusters.client_for_id", lambda _cid=None: object())
 
     alert = {"id": "alert-1", "rule_id": RULE_ID, "rule_name": "pfSense Successful Login"}
     created = create_from_fields(

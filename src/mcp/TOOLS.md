@@ -13,11 +13,11 @@ This ensures clear distinction between case management operations and SIEM alert
 
 ## Analyst approval (Requests view)
 
-## Analyst approval (Requests view)
+These tools **file a request** and do not run until an analyst approves them under **Requests → Approvals**: `close_alert`, `add_alert_note`, `isolate_endpoint`, `release_endpoint_isolation`, `kill_process_on_endpoint`, `collect_forensic_artifacts`.
 
-These tools **file a request** and do not run until an analyst approves them in the SamiGPT Requests view: `close_alert`, `isolate_endpoint`, `release_endpoint_isolation`, `kill_process_on_endpoint`, `collect_forensic_artifacts`.
+Informational fine-tune / visibility / runbook-gap tools file under **Requests → Notes** (no Approve). When ENG is GitHub they may also open a linked issue.
 
-`isolate_endpoint` / `release_endpoint_isolation` run against **Elastic Defend on the bound cluster** (Kibana Endpoint Security) after approval. They do not need a separate EDR integration.
+`isolate_endpoint` / `release_endpoint_isolation` may still be **filed**, but host isolation is **intentionally disabled**: Approve will **not** call Kibana Elastic Defend or EDR until isolation is re-enabled.
 
 `create_fine_tuning_recommendation`, `create_visibility_recommendation`, and `create_runbook_recommendation` file **informational** notes only. Fine-tune / visibility pull Home Lab rules under `/root/Home-Lab-Rules/rules/elastic_1/rules/`. Runbook-gap notes request a missing `soc*/cases` playbook **after** investigation. There is no approve button.
 
@@ -2107,7 +2107,9 @@ Retrieve detailed information about a specific detection including type, severit
 
 ### `isolate_endpoint`
 
-Request isolating an endpoint from the network via **Elastic Defend** (Kibana Endpoint Security) on the bound cluster. **Queued for analyst approval** — the host is not isolated until Requests is approved.
+Recommend isolating an endpoint from the network via **Elastic Defend** (Kibana Endpoint Security). **Queued under Requests → Approvals**.
+
+**Host isolation is intentionally disabled:** Approve stores the payload and does **not** call Kibana or EDR until isolation is re-enabled. Tell the analyst the host will not be isolated.
 
 Pass `agent.id` from the alert as `endpoint_id`. A hostname is used to look the agent up when the id is unknown.
 
@@ -2119,9 +2121,7 @@ Pass `agent.id` from the alert as `endpoint_id`. A hostname is used to look the 
 **Returns:**
 - `queued` (boolean): `true` when isolation was filed for approval
 - `request_id` (string): Requests-view id
-- `message` (string): Analyst-facing status (pending approval)
-
-After approval the handler calls Kibana `POST /api/endpoint/action/isolate` (falls back to `/api/endpoint/isolate`).
+- `message` (string): Analyst-facing status (pending; isolation disabled)
 
 **Usage Example:**
 ```json
@@ -2147,7 +2147,9 @@ After approval the handler calls Kibana `POST /api/endpoint/action/isolate` (fal
 
 ### `release_endpoint_isolation`
 
-Request releasing an endpoint from network isolation. **Queued for analyst approval** — connectivity is not restored until Requests is approved.
+Recommend releasing an endpoint from network isolation. **Queued under Requests → Approvals**.
+
+**Host isolation release is intentionally disabled:** Approve will not call Kibana or EDR until isolation is re-enabled.
 
 **Parameters:**
 - `endpoint_id` (string, required): The endpoint ID to release
@@ -2155,7 +2157,7 @@ Request releasing an endpoint from network isolation. **Queued for analyst appro
 **Returns:**
 - `queued` (boolean): `true` when release was filed for approval
 - `request_id` (string): Requests-view id
-- `message` (string): Analyst-facing status (pending approval)
+- `message` (string): Analyst-facing status (pending; isolation disabled)
 
 **Usage Example:**
 ```json
@@ -2255,7 +2257,7 @@ Engineering tools enable creating and managing recommendations for fine-tuning d
 
 ### `create_fine_tuning_recommendation`
 
-Pull the matching Home Lab detection rule and file a **fine-tune suggestion** in the SamiGPT Requests view. **Informational only** — no approve button, nothing is sent to Trello/ClickUp/GitHub.
+Pull the matching Home Lab detection rule and file a **fine-tune suggestion** under Requests → Notes. **Informational only** — no approve button. When ENG is GitHub, a linked issue may also be opened.
 
 **Parameters:**
 - `title` (string, required): Short title
@@ -2284,7 +2286,7 @@ Pull the matching Home Lab detection rule and file a **fine-tune suggestion** in
 
 File an **informational visibility-gap note**. Search Home Lab rules first (`search_lab_detection_rules`, then at most 1–2 `get_lab_detection_rule` calls). Only file this if coverage is still missing. The server re-checks the catalog and stores `coverage_check`.
 
-**Informational only** — no approve button, no engineering board.
+**Informational only** — no approve button under Requests → Notes. When ENG is GitHub, a linked issue may also be opened.
 
 **Parameters:**
 - `title` (string, required): Short title

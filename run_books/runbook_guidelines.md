@@ -14,16 +14,17 @@ This document provides general guidelines for creating, maintaining, and executi
 
 ## Analyst approval (Requests view)
 
-Irreversible MCP tools **file a request** instead of executing:
+Irreversible MCP tools **file a request** instead of executing. Analysts review them under **Requests → Approvals** or **Requests → Notes**.
 
-*   `close_alert`, `add_alert_note`, `isolate_endpoint`, `release_endpoint_isolation`, `kill_process_on_endpoint`, `collect_forensic_artifacts`
-*   `create_fine_tuning_recommendation` and `create_visibility_recommendation` file **informational** notes (Home Lab rule lookup / coverage check). No approve button. No engineering board.
-*   `create_runbook_recommendation` files an **informational** note that a case-specific playbook is missing under `soc*/cases/`. Call it **only after** investigation finishes (final verdict). Never block triage for it. Server attaches existing case-runbook coverage evidence.
-*   Analysts can press **Create runbook** on that Requests note to open an Open WebUI session that authors a new `run_books/soc1/cases/*.md` via `save_case_runbook`.
+*   `close_alert`, `add_alert_note`, `kill_process_on_endpoint`, `collect_forensic_artifacts` — file under **Approvals** and wait for Approve.
+*   `isolate_endpoint` / `release_endpoint_isolation` — may be filed under Approvals, but **host isolation is disabled**: Approve will not call Elastic Defend or EDR. Tell the analyst it will not isolate the host.
+*   `create_fine_tuning_recommendation` and `create_visibility_recommendation` file **informational** notes under **Notes** (Home Lab rule lookup / coverage check). No Approve button. When ENG is GitHub, a linked issue may also be opened.
+*   `create_runbook_recommendation` files an **informational** note under **Notes** that a case-specific playbook is missing under `soc*/cases/`. Call it **only after** investigation finishes (final verdict). Never block triage for it. Server attaches existing case-runbook coverage evidence.
+*   Analysts can press **Create runbook** on that Notes card to open an Open WebUI session that authors a new `run_books/soc1/cases/*.md` via `save_case_runbook`.
 *   Before a visibility note: `search_lab_detection_rules` (1–3 keyword searches) then at most 1–2 `get_lab_detection_rule` calls. Only file a gap if the catalog does not already cover it.
-*   `update_alert_verdict` is **not** gated. It is the AI's working assessment and runs immediately. It does not close the alert. An optional `comment` is filed as `add_alert_note` and waits for approval.
-*   `create_approval_request` with `action_type=identity_verify` is **Is this you?** — an **optional** Yes/No question in Requests. File it only when a Yes/No on identity/expected use would actually decide the alert. Do **not** file it just because the verdict is `uncertain` or a user is present. Yes closes as benign; No escalates to an Elastic Security case. Do not claim the analyst already answered.
-*   After calling a gated tool, tell the analyst the action is **pending in Requests**. Do not claim it already happened. After a fine-tune, visibility, or runbook-gap note, say it is informational in Requests.
+*   `update_alert_verdict` is **not** gated. It is the AI's working assessment and runs immediately. It does not close the alert. An optional `comment` is filed as `add_alert_note` and waits for approval under Approvals.
+*   `create_approval_request` with `action_type=identity_verify` is **Is this you?** — an **optional** Yes/No question under **Approvals**. File it only when a Yes/No on identity/expected use would actually decide the alert. Do **not** file it just because the verdict is `uncertain` or a user is present. Yes closes as benign; No escalates to an Elastic Security case. Do not claim the analyst already answered.
+*   After calling a gated tool, tell the analyst the action is **pending in Requests → Approvals**. Do not claim it already happened. After a fine-tune, visibility, or runbook-gap note, say it is informational under **Requests → Notes**.
 
 ## SOC1 Fundamental Principles
 

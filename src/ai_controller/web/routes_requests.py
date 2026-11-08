@@ -140,10 +140,16 @@ async def list_requests(
     cluster_id: Optional[str] = None,
     queue: Optional[str] = None,
     view: Optional[str] = "summary",
+    github: Optional[str] = None,
 ):
     queue_svc = get_queue()
     try:
-        page = queue_svc.list_bundle(status=status, cluster_id=cluster_id, queue=queue)
+        page = queue_svc.list_bundle(
+            status=status,
+            cluster_id=cluster_id,
+            queue=queue,
+            github=github,
+        )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     cluster_for = _cluster_lookup()
@@ -155,6 +161,7 @@ async def list_requests(
         "tab_counts": page["tab_counts"],
         "queue_counts": page["queue_counts"],
         "queue": page["queue"],
+        "github": page.get("github", False),
         "requests": [_payload(item, view=view_key, cluster_for=cluster_for) for item in page["items"]],
     }
 

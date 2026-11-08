@@ -188,7 +188,7 @@ Standardized SOC1 triage for SIEM alerts: start from the alert queue, **before a
    - `question` — yes/no the analyst can answer (e.g. "Was this ${activity} by ${username} from ${source_ip} actually you / expected?")
    - `payload` — `alert_id`, `username`, plus `source_ip` / `hostname` / `timestamp` / `activity` when known
    - Leave `follow_ups` empty so defaults apply: **Yes** → close as benign true positive; **No** → escalate
-   - Tell the analyst the question is **pending in Requests**. Do not claim they already answered.
+   - Tell the analyst the question is **pending in Requests → Approvals**. Do not claim they already answered.
 7. **Do not create a case.** Set `${ACTION_TAKEN}` = "Alert note requested; final verdict recorded; no case created." (add that Is this you? is pending only if you filed it.)
 8. **Post-investigation (non-blocking):** if no case playbook under `soc1/cases` covered this alert type, go to the case-runbook gap step below; otherwise **end**.
 

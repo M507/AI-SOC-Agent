@@ -556,9 +556,9 @@ class DetectionsManager {
         const hint = document.getElementById('review-action-hint');
         if (hint) {
             if (review.stage === 'proposed') hint.textContent = 'Draft spends one model call. The file stays unchanged.';
-            else if (review.kind === 'disable') hint.textContent = 'Implement renames the rule file to disabled. The alert stays open.';
+            else if (review.kind === 'disable') hint.textContent = 'Implement disables the rule file and syncs that change to Elastic. The alert stays open.';
             else if (noneKept) hint.textContent = 'Check the conditions to keep. The rule file is unchanged until you implement.';
-            else hint.textContent = 'Implement writes only the checked conditions. The alert stays open.';
+            else hint.textContent = 'Implement writes the checked conditions and syncs the rule to Elastic. The alert stays open.';
         }
         this.markActive('review-list', review.id);
         if (detail) detail.scrollTop = scroll;
@@ -600,7 +600,11 @@ class DetectionsManager {
                 data = await this.request('/api/detections/reviews/' + id + '/' + action, { method: 'POST' });
             }
             this.openReview(data.review);
-            this.setStatus(action === 'implement' ? 'Wrote the rule file. The alert is still open.' : '');
+            this.setStatus(
+                action === 'implement'
+                    ? 'Wrote the rule file and synced it to Elastic. The alert is still open.'
+                    : ''
+            );
             if (action === 'reject' || action === 'implement') this.loadReviews();
         } catch (error) {
             this.setStatus(error.message, true);

@@ -1,15 +1,20 @@
 # Requests view — action checklist
 
-Analyst queue in the SamiGPT web UI (**Views → Requests**).
+Analyst queue in the SamiGPT web UI (**Views → Requests**). Top tabs: **Approvals**,
+**Notes**, **All**. Use the **GitHub** facet on Notes/All for mirrored issues.
 
 The AI files a request with the payload needed to run later. Irreversible MCP
 tools (`close_alert`, `add_alert_note`, isolate, kill process, collect forensics)
 are queued here instead of executing immediately. Close, notes, escalate, and
 Elastic Security cases run against the **Elastic cluster bound to the request**.
 
-**Fine-tune**, **Visibility gap**, and **Runbook gap** are **informational only**. They appear in
-Requests so an analyst can read them. There is no Approve/Deny. Fine-tune / visibility
-may also open a GitHub Issue when ENG is GitHub; runbook gaps use the `runbook` label when mirrored.
+**Host isolation** (`isolate_endpoint` / `release_isolation`) is **intentionally
+disabled**: Approve stores the payload and leaves the card Waiting on integration —
+it does **not** call Kibana Elastic Defend or EDR.
+
+**Fine-tune**, **Visibility gap**, and **Runbook gap** are **informational only**. They appear under
+**Notes**. There is no Approve/Deny. Fine-tune / visibility / runbook gaps may also
+open a GitHub Issue when ENG is GitHub; runbook gaps use the `runbook` label when mirrored.
 
 `update_alert_verdict` is **not** an approval item. It is the AI's working
 assessment and runs immediately. Closing the alert still requires approval.
@@ -38,14 +43,14 @@ are **not** auto-run. They become a second pending request.
 | **Close alert** | `alert_id`, reason, comment, cluster | Pending **Add alert note** for the same alert, then Elastic `close_alert` | **Done**. Associated notes are approved and written first |
 | **Add alert note** | `alert_id`, note, cluster | Elastic `add_alert_note` | **Done** |
 | **Is this you?** | `alert_id`, user, IP, host, time, activity, question | **Yes** → ACK (close as benign TP). **No** → escalate: TP tag + verdict + **Elastic Security case** with the full alert | **Done** (case uses Kibana Cases, not IRIS/TheHive) |
-| **Fine-tune** | title, suggestion, `rule_id` / `rule_name`, pulled Home Lab rule (query, tags, exceptions) | **None** — no buttons | **Informational**. Rule is loaded from `/root/Home-Lab-Rules/rules/elastic_1/rules/` (override with `SAMI_LAB_RULES_DIR`). No engineering board. |
+| **Fine-tune** | title, suggestion, `rule_id` / `rule_name`, pulled Home Lab rule (query, tags, exceptions) | **None** — Done / Ignore | **Informational** under Notes. Rule is loaded from `/root/Home-Lab-Rules/rules/elastic_1/rules/` (override with `SAMI_LAB_RULES_DIR`). May open a GitHub issue when ENG is GitHub. |
 | **Visibility gap** | title, suggestion, missing source, `coverage_check` | **None** — no buttons | **Informational**. Catalog is searched first; the note includes whether a Home Lab rule already covers it. |
 | **Runbook gap** | title, description, alert type / rule, suggested path, investigation summary, `coverage_check` (existing case playbooks) | **None** — no buttons | **Informational**. File **after** triage when no `soc*/cases` playbook matched. Does not block investigation. |
 | **Open case (IRIS/TheHive)** | title, description, priority, alert | IRIS / TheHive `create_case` | **Ready if configured** (case management). Not used by **Is this you?** |
 | **Close case** | `case_id`, comment | IRIS / TheHive case status → closed | **Ready if configured** (case management) |
 | **Escalate** | `alert_id`, title, notes, priority, identity fields | TP tag + `true_positive` verdict + `create_elastic_case` (full alert body, alert attached when possible) | **Done**. Needs a Kibana API key with cases privileges (ES `:9200` key alone is not enough). Optional cluster `kibana_url` if Kibana is not `:5601` |
-| **Isolate endpoint** | `endpoint_id` (Elastic Agent id), hostname, reason, cluster | Kibana Elastic Defend `POST /api/endpoint/action/isolate` | **Done**. Same bound cluster as cases. Needs a Kibana API key with host isolation / response-action privileges (ES `:9200` key alone is not enough). Optional cluster `kibana_url` if Kibana is not `:5601`. |
-| **Release isolation** | `endpoint_id`, hostname, reason | Kibana `POST /api/endpoint/action/unisolate` | **Done**. Inverse of isolate. |
+| **Isolate endpoint** | `endpoint_id` (Elastic Agent id), hostname, reason, cluster | **None** — stub | **Needs API (disabled)**. Intentionally does not call Kibana Elastic Defend or EDR. |
+| **Release isolation** | `endpoint_id`, hostname, reason | **None** — stub | **Needs API (disabled)**. Inverse of isolate; also stubbed. |
 | **Kill process** | `endpoint_id`, PID | EDR kill | **Needs API** (EDR) |
 | **Collect forensics** | `endpoint_id`, artifact types | EDR collect | **Needs API** (EDR) |
 | **Block indicator** | indicator, type, reason | Firewall / proxy / EDR block | **Needs API** |

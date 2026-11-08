@@ -37,6 +37,15 @@ class ActionSpec:
     def required_fields(self) -> Tuple[str, ...]:
         return tuple(item.name for item in self.fields if item.required)
 
+    @property
+    def workflow(self) -> str:
+        """Purpose bucket for Requests UI: approval, verification, or note."""
+        if self.execution == "informational":
+            return "note"
+        if self.asks_question:
+            return "verification"
+        return "approval"
+
     def to_dict(self) -> Dict[str, object]:
         return {
             "action_type": self.action_type,
@@ -48,6 +57,7 @@ class ActionSpec:
             "integration": self.integration,
             "asks_question": self.asks_question,
             "gated_mcp_tool": self.gated_mcp_tool,
+            "workflow": self.workflow,
             "notes": self.notes,
             "fields": [
                 {
@@ -130,13 +140,16 @@ ACTION_CATALOG: Tuple[ActionSpec, ...] = (
     ActionSpec(
         action_type="isolate_endpoint",
         label="Isolate endpoint",
-        description="Cut an endpoint off the network via Elastic Defend (Kibana) on the bound cluster.",
+        description="Recommend cutting an endpoint off the network. Host isolation is currently disabled and will not run.",
         category="edr",
         risk="critical",
-        execution="ready",
-        integration="siem",
+        execution="stub",
+        integration="none",
         gated_mcp_tool="isolate_endpoint",
-        notes="Runs Kibana `/api/endpoint/action/isolate` (Elastic Defend). Needs a Kibana API key with host isolation / response-action privileges. Optional cluster kibana_url if Kibana is not :5601.",
+        notes=(
+            "Intentionally disabled: Approve stores the payload and sets Waiting on integration. "
+            "Does not call Kibana Elastic Defend or EDR until isolation is re-enabled."
+        ),
         fields=_fields(
             FieldSpec("endpoint_id", "Endpoint / agent ID", True),
             FieldSpec("hostname", "Hostname", False),
@@ -146,13 +159,16 @@ ACTION_CATALOG: Tuple[ActionSpec, ...] = (
     ActionSpec(
         action_type="release_isolation",
         label="Release isolation",
-        description="Restore network connectivity via Elastic Defend (Kibana) on the bound cluster.",
+        description="Recommend restoring network connectivity. Host isolation release is currently disabled and will not run.",
         category="edr",
         risk="high",
-        execution="ready",
-        integration="siem",
+        execution="stub",
+        integration="none",
         gated_mcp_tool="release_endpoint_isolation",
-        notes="Runs Kibana `/api/endpoint/action/unisolate`. Inverse of isolate_endpoint.",
+        notes=(
+            "Intentionally disabled: Approve stores the payload and sets Waiting on integration. "
+            "Does not call Kibana unisolate or EDR until isolation is re-enabled."
+        ),
         fields=_fields(
             FieldSpec("endpoint_id", "Endpoint / agent ID", True),
             FieldSpec("hostname", "Hostname", False),
@@ -200,7 +216,10 @@ ACTION_CATALOG: Tuple[ActionSpec, ...] = (
         execution="informational",
         integration="none",
         gated_mcp_tool="create_fine_tuning_recommendation",
-        notes="Looks up the rule in Home-Lab-Rules and stores a suggestion. No approve button; no engineering board.",
+        notes=(
+            "Looks up the rule in Home-Lab-Rules and stores a suggestion under Requests → Notes. "
+            "No Approve button. When ENG is GitHub, may also open a linked issue."
+        ),
         fields=_fields(
             FieldSpec("title", "Title", True),
             FieldSpec("description", "Suggestion", True, "What to change and why"),
@@ -218,7 +237,10 @@ ACTION_CATALOG: Tuple[ActionSpec, ...] = (
         execution="informational",
         integration="none",
         gated_mcp_tool="create_visibility_recommendation",
-        notes="Searches the Home Lab rule catalog first. Filed only as info, with coverage evidence. No approve button.",
+        notes=(
+            "Searches the Home Lab rule catalog first. Filed under Requests → Notes with coverage evidence. "
+            "No Approve button. When ENG is GitHub, may also open a linked issue."
+        ),
         fields=_fields(
             FieldSpec("title", "Title", True),
             FieldSpec("description", "Suggestion", True),
@@ -239,7 +261,8 @@ ACTION_CATALOG: Tuple[ActionSpec, ...] = (
         gated_mcp_tool="create_runbook_recommendation",
         notes=(
             "File only AFTER the investigation finishes (final verdict set). "
-            "Server lists existing case runbooks and flags near-matches. No approve button. "
+            "Server lists existing case runbooks and flags near-matches. Filed under Requests → Notes. "
+            "No Approve button. When ENG is GitHub, may also open a linked issue. "
             "Use Create runbook in Requests to author soc*/cases/*.md via Open WebUI."
         ),
         fields=_fields(
@@ -389,7 +412,10 @@ def gated_mcp_tools() -> Tuple[str, ...]:
 
 SOC_CATEGORIES = frozenset({"siem", "identity", "edr", "case", "iam", "email", "network"})
 DETECTION_CATEGORIES = frozenset({"detections", "runbooks"})
-QUEUE_NAMES = ("all", "soc", "engineering", "detection")
+# Primary Requests tabs. Legacy keys stay as API aliases in matches_queue / queue_counts.
+QUEUE_NAMES = ("all", "approvals", "notes")
+_LEGACY_QUEUE_NAMES = ("soc", "engineering", "detection")
+QUEUE_COUNT_KEYS = QUEUE_NAMES + _LEGACY_QUEUE_NAMES
 
 
 def github_issue_link(payload: Optional[Dict[str, object]]) -> Optional[Dict[str, object]]:
@@ -422,10 +448,19 @@ def matches_queue(action_type: str, payload: Optional[Dict[str, object]], queue:
         return True
     spec = get_action_spec(action_type)
     category = spec.category if spec else ""
-    if key in {"soc"}:
-        return category in SOC_CATEGORIES
-    if key in {"detection", "detections", "detection_engineering"}:
+    # Approvals = response / verification / stubs (everything not a detection note).
+    if key in {"approvals", "soc", "response"}:
+        return category not in DETECTION_CATEGORIES
+    # Notes = fine-tune / visibility / runbook gap.
+    if key in {"notes", "detection", "detections", "detection_engineering"}:
         return category in DETECTION_CATEGORIES
+    # Deprecated Engineering tab: GitHub-linked items only (API alias).
     if key in {"engineering", "eng"}:
         return github_issue_link(payload) is not None
     return True
+
+
+def wants_github_facet(value: Optional[str]) -> bool:
+    """True when list/filter should keep only GitHub-mirrored requests."""
+    key = (value or "").strip().lower()
+    return key in {"1", "true", "yes", "github", "linked", "linked=github"}

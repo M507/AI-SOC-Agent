@@ -7,24 +7,34 @@ from typing import Any, Dict, List
 from ..approval_queue.catalog import (
     ACTION_CATALOG,
     DETECTION_CATEGORIES,
-    SOC_CATEGORIES,
     ActionSpec,
 )
 
 _GROUPS = (
-    ("soc", "SOC", SOC_CATEGORIES),
-    ("detection", "Detection engineering", DETECTION_CATEGORIES),
-    ("engineering", "Engineering", DETECTION_CATEGORIES),
+    ("approvals", "Approvals", "not_detection"),
+    ("notes", "Notes", "detection"),
 )
 
 
 def approval_groups() -> List[Dict[str, Any]]:
     groups = []
-    for group_id, label, categories in _GROUPS:
-        actions = [_action(spec) for spec in ACTION_CATALOG if spec.category in categories]
-        note = ""
-        if group_id == "engineering":
-            note = "These notes show on Engineering when they are linked to a GitHub issue."
+    for group_id, label, kind in _GROUPS:
+        if kind == "detection":
+            actions = [
+                _action(spec) for spec in ACTION_CATALOG if spec.category in DETECTION_CATEGORIES
+            ]
+            note = (
+                "Informational fine-tune, visibility, and runbook notes. "
+                "No Approve — Done / Ignore only. Linked GitHub issues show via the GitHub facet."
+            )
+        else:
+            actions = [
+                _action(spec) for spec in ACTION_CATALOG if spec.category not in DETECTION_CATEGORIES
+            ]
+            note = (
+                "Closures, alert notes, identity checks, and response actions that wait for "
+                "Approve or Yes/No. Host isolation is currently disabled and will not run on Approve."
+            )
         groups.append({
             "id": group_id,
             "label": label,

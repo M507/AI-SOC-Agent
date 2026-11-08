@@ -115,8 +115,8 @@ class OverviewManager {
             failed: 'danger',
             acknowledged: 'info',
         });
-        this.renderBars('overview-detection', data.detection || [], { '*': 'info' }, () => this.openQueue('detection'));
-        this.renderBars('overview-response', data.response || [], { '*': 'accent' }, () => this.openQueue('soc'));
+        this.renderBars('overview-detection', data.detection || [], { '*': 'info' }, () => this.openQueue('notes'));
+        this.renderBars('overview-response', data.response || [], { '*': 'accent' }, () => this.openQueue('approvals'));
         this.renderSpend(data);
         this.renderRecent(data.recent || []);
     }
@@ -448,10 +448,10 @@ class OverviewManager {
         const requests = this.controller.requestsManager;
         if (requests) {
             requests.filter = 'open';
-            requests.queueTab = queue || 'all';
             requests.selectedId = null;
             requests.selectedIds = new Set();
             requests.receipt = null;
+            requests.setQueueTab(queue || 'approvals');
         }
         this.controller.setActiveSection('requests');
     }
@@ -460,10 +460,10 @@ class OverviewManager {
         const requests = this.controller.requestsManager;
         if (requests) {
             requests.filter = 'all';
-            requests.queueTab = 'all';
             requests.selectedId = id;
             requests.selectedIds = new Set();
             requests.receipt = null;
+            requests.setQueueTab('all');
         }
         this.controller.setActiveSection('requests');
     }

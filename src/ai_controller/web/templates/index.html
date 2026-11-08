@@ -205,10 +205,9 @@
                         <div class="tab-group" id="requests-tab-group" style="display: none;">
                             <span class="tab-group-label">Requests</span>
                             <div class="tabs" id="requests-tabs">
-                                <button class="tab active" type="button" id="requests-tab" data-request-queue="all">Approval queue (ALL)</button>
-                                <button class="tab" type="button" data-request-queue="soc">SOC</button>
-                                <button class="tab" type="button" data-request-queue="engineering">Engineering</button>
-                                <button class="tab" type="button" data-request-queue="detection">Detection engineering</button>
+                                <button class="tab active" type="button" id="requests-tab" data-request-queue="approvals">Approvals</button>
+                                <button class="tab" type="button" data-request-queue="notes">Notes</button>
+                                <button class="tab" type="button" data-request-queue="all">All</button>
                             </div>
                         </div>
                     </div>
@@ -813,6 +812,7 @@
                                     <button type="button" class="requests-filter active" data-request-filter="open">Open</button>
                                     <button type="button" class="requests-filter" data-request-filter="archived">Archived</button>
                                     <button type="button" class="requests-filter" data-request-filter="all">All</button>
+                                    <button type="button" class="requests-filter requests-facet" data-request-github-facet hidden title="Show only items linked to a GitHub issue">GitHub</button>
                                 </div>
                                 <div id="requests-bulk-bar" class="requests-bulk-bar" hidden></div>
                                 <div id="requests-list" class="requests-list" role="list"></div>

@@ -692,7 +692,7 @@ class APIClient {
         }
     }
 
-    async listRequests(status = null, queue = 'all', view = 'summary') {
+    async listRequests(status = null, queue = 'all', view = 'summary', options = {}) {
         try {
             const params = new URLSearchParams();
             if (status) {
@@ -703,6 +703,9 @@ class APIClient {
             }
             if (view) {
                 params.set('view', view);
+            }
+            if (options && (options.github === true || options.github === '1' || options.github === 'github')) {
+                params.set('github', '1');
             }
             const query = params.toString() ? `?${params.toString()}` : '';
             return await this.request(`/api/requests${query}`);

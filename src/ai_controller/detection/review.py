@@ -456,33 +456,94 @@ async def revise(request_id: str, feedback: str, exceptions: Optional[List[Dict[
     return _save(request, dac)
 
 
+def _card_signature(card: Dict[str, Any]) -> frozenset:
+    return frozenset(
+        (str(entry.get("field") or "").strip(), str(entry.get("value")))
+        for entry in (card.get("entries") or [])
+        if isinstance(entry, dict) and str(entry.get("field") or "").strip()
+    )
+
+
+def _item_signature(item: Dict[str, Any]) -> frozenset:
+    return frozenset(
+        (str(entry.get("field") or "").strip(), str(entry.get("value")))
+        for entry in (item.get("entries") or [])
+        if isinstance(entry, dict) and str(entry.get("field") or "").strip()
+    )
+
+
+def _additions_already_on_disk(data: Dict[str, Any], cards: List[Dict[str, Any]]) -> bool:
+    existing = {
+        _item_signature(item)
+        for item in (data.get("exception_items") or [])
+        if isinstance(item, dict)
+    }
+    selected = [card for card in cards if isinstance(card, dict) and card.get("selected") is not False]
+    if not selected:
+        return False
+    return all(_card_signature(card) in existing for card in selected)
+
+
 def implement(request_id: str) -> ApprovalRequest:
     request = get_review(request_id)
     if request.status != RequestStatus.INFORMATIONAL:
         raise DetectionError("Implement is only available while the review is open.")
     dac = _dac(request)
-    path, data, _digest = rules_store.load_rule_file(rule_id=str(dac.get("rule_id") or ""))
+    path, data, digest = rules_store.load_rule_file(rule_id=str(dac.get("rule_id") or ""))
     expected = str(dac.get("file_sha256") or "")
     rule_id = str(dac.get("rule_id") or "")
     if dac.get("kind") == "disable":
-        result = write_disabled(path, data, expected)
+        if str((data.get("_dac") or {}).get("status") or "") == "disabled" and not str(path.name).startswith("[enabled]_"):
+            result = {"file": str(path), "file_sha256": digest, "status": "disabled", "skipped_write": True}
+        else:
+            result = write_disabled(path, data, expected)
     else:
         revision = current_revision(dac)
         cards = revision.get("exceptions") or []
         items = data.get("exception_items") if isinstance(data.get("exception_items"), list) else []
-        validate_checked(cards, existing_items=items, evidence_fields=list(dac.get("evidence_fields") or []))
-        result = write_exceptions(path, data, cards, expected, rule_id)
-    comment = f"Implemented into {result.get('file')}"
+        validate_checked(
+            cards,
+            existing_items=[] if _additions_already_on_disk(data, cards) else items,
+            evidence_fields=list(dac.get("evidence_fields") or []),
+        )
+        if _additions_already_on_disk(data, cards):
+            result = {"file": str(path), "file_sha256": digest, "added": 0, "skipped_write": True}
+        else:
+            result = write_exceptions(path, data, cards, expected, rule_id)
+
+    # Persist the post-write digest so a failed Elastic push can be retried.
+    dac["file_sha256"] = str(result.get("file_sha256") or digest)
+    dac["file"] = str(result.get("file") or path)
+    request = _save(request, dac)
+
+    # Same deploy step as Home-Lab-Rules Fine-tune & Deploy: local write, then push to Kibana.
+    from ...core.elastic_clusters import client_for_id
+    from .elastic_sync import push_rule_after_implement
+
+    client = client_for_id(request.cluster_id)
+    try:
+        sync = push_rule_after_implement(client, file_path=str(result.get("file") or path))
+    except DetectionError as exc:
+        dac["sync_error"] = str(exc)
+        _save(request, dac)
+        raise
+    result = {**result, **sync, "file": sync.get("file") or result.get("file")}
+
+    comment = f"Implemented into {result.get('file')} and synced to Elastic"
     archived = get_queue().acknowledge(request.id, comment=comment)
     stored = _dac(archived)
     stored["stage"] = "implemented"
+    stored["file_sha256"] = result.get("file_sha256") or stored.get("file_sha256")
+    stored.pop("sync_error", None)
     stored["result"] = {key: value for key, value in result.items() if key != "exception_items"}
     saved = _save(archived, stored)
     saved.execution_result = {
         "success": True,
         "implemented": True,
+        "synced": True,
         "message": comment,
         "file": result.get("file"),
+        "revision": result.get("revision"),
     }
     return get_queue().store.put(saved)
 

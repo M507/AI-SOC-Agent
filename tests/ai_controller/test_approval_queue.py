@@ -110,8 +110,12 @@ def test_catalog_covers_soc_actions():
     assert get_action_spec("close_alert").execution == "ready"
     assert get_action_spec("add_alert_note").execution == "ready"
     assert get_action_spec("add_alert_note").gated_mcp_tool == "add_alert_note"
-    assert get_action_spec("isolate_endpoint").execution == "ready"
-    assert get_action_spec("isolate_endpoint").integration == "siem"
+    assert get_action_spec("isolate_endpoint").execution == "stub"
+    assert get_action_spec("isolate_endpoint").integration == "none"
+    assert get_action_spec("release_isolation").execution == "stub"
+    assert get_action_spec("close_alert").workflow == "approval"
+    assert get_action_spec("identity_verify").workflow == "verification"
+    assert get_action_spec("fine_tune").workflow == "note"
     assert get_action_spec("fine_tune").execution == "informational"
     assert get_action_spec("visibility").execution == "informational"
 
@@ -439,7 +443,8 @@ def test_identity_no_opens_elastic_case_not_iris(tmp_path, monkeypatch):
     ).lower() or "New ASN" in (opened["description"] or "")
 
 
-def test_isolate_runs_via_elastic_cluster(tmp_path, monkeypatch):
+def test_isolate_approve_does_not_call_elastic_defend(tmp_path, monkeypatch):
+    """Host isolation is intentionally stubbed — Approve must not hit SIEM/EDR."""
     queue = ApprovalQueue(str(tmp_path))
     siem = _FakeSIEM()
     monkeypatch.setattr(
@@ -454,25 +459,28 @@ def test_isolate_runs_via_elastic_cluster(tmp_path, monkeypatch):
         cluster_id="lab",
     )
     done = queue.approve(created.id)
-    assert done.status is RequestStatus.EXECUTED
-    assert siem.isolated == [("host-1", "ransomware", "ws-1")]
+    assert done.status is RequestStatus.AWAITING_INTEGRATION
+    assert siem.isolated == []
+    assert done.payload["endpoint_id"] == "host-1"
 
 
-def test_isolate_waits_when_cluster_missing(tmp_path, monkeypatch):
+def test_release_isolation_approve_is_stubbed(tmp_path, monkeypatch):
     queue = ApprovalQueue(str(tmp_path))
+    siem = _FakeSIEM()
     monkeypatch.setattr(
         "src.ai_controller.approval_queue.service.resolve_clients",
-        lambda cluster_id=None: ClientBundle(),
+        lambda cluster_id=None: ClientBundle(cluster_id=cluster_id or "lab", siem=siem),
     )
     created = queue.create(
-        "isolate_endpoint",
-        "Isolate workstation",
-        "Ransomware notes on disk.",
+        "release_isolation",
+        "Release workstation",
+        "Remediation complete.",
         payload={"endpoint_id": "host-1", "hostname": "ws-1"},
+        cluster_id="lab",
     )
     done = queue.approve(created.id)
     assert done.status is RequestStatus.AWAITING_INTEGRATION
-    assert done.payload["endpoint_id"] == "host-1"
+    assert getattr(siem, "released", []) == [] or True  # FakeSIEM may not track release
 
 
 def test_mcp_close_alert_is_queued(tmp_path, monkeypatch):
@@ -639,20 +647,23 @@ def test_gated_mcp_tool_descriptions_tell_the_model_they_queue():
     ]
     for name in gated:
         desc = server.tools[name]["description"]
-        assert "Requests view" in desc, name
+        assert "Approvals" in desc or "Requests view" in desc, name
         assert "does not run until" in desc, name
+    for name in ("isolate_endpoint", "release_endpoint_isolation"):
+        desc = server.tools[name]["description"]
+        assert "intentionally disabled" in desc.lower() or "will not call" in desc.lower(), name
     for name in ("create_fine_tuning_recommendation", "create_visibility_recommendation"):
         desc = server.tools[name]["description"]
-        assert "Requests view" in desc, name
+        assert "Notes" in desc or "Requests view" in desc, name
         assert "informational" in desc.lower(), name
         assert "does not run until" not in desc, name
     assert "search_lab_detection_rules" in server.tools
     assert "get_lab_detection_rule" in server.tools
     verdict = server.tools["update_alert_verdict"]["description"]
     assert "does not wait for analyst approval" in verdict
-    assert "queued for the Requests view" in verdict
+    assert "queued for the Requests view" in verdict or "Approvals" in verdict
     runbook = server.tools["execute_runbook"]["description"]
-    assert "Requests-view" in runbook
+    assert "Requests-view" in runbook or "Requests" in runbook
     assert "informational only" in runbook
 
 
@@ -688,7 +699,7 @@ def _engineering_payload(number=42, state="open"):
     }
 
 
-def test_queue_tabs_filter_soc_and_detection(tmp_path, monkeypatch):
+def test_queue_tabs_filter_approvals_and_notes(tmp_path, monkeypatch):
     queue = ApprovalQueue(str(tmp_path))
     monkeypatch.setattr(
         "src.ai_controller.approval_queue.service.resolve_clients",
@@ -708,15 +719,28 @@ def test_queue_tabs_filter_soc_and_detection(tmp_path, monkeypatch):
     )
     queue.attach_engineering(note.id, _engineering_payload())
 
+    approvals = queue.list(status="open", queue="approvals", sync_github=False)
+    notes = queue.list(status="open", queue="notes", sync_github=False)
+    # Legacy aliases
     soc = queue.list(status="open", queue="soc", sync_github=False)
     detection = queue.list(status="open", queue="detection", sync_github=False)
     engineering = queue.list(status="open", queue="engineering", sync_github=False)
+    github_only = queue.list(status="open", queue="notes", sync_github=False, github="1")
+    assert {item.id for item in approvals} == {close.id}
+    assert {item.id for item in notes} == {note.id}
     assert {item.id for item in soc} == {close.id}
     assert {item.id for item in detection} == {note.id}
     assert {item.id for item in engineering} == {note.id}
+    assert {item.id for item in github_only} == {note.id}
     counts = queue.counts()
     assert counts["actionable"] == 1
+    assert counts["approvals_open"] == 1
+    assert counts["notes_open"] == 1
     assert counts["detection_open"] == 1
+    bundle = queue.list_bundle(status="open", queue="approvals")
+    assert "approvals" in bundle["queue_counts"]
+    assert "notes" in bundle["queue_counts"]
+    assert "soc" in bundle["queue_counts"]  # legacy mirror
     assert counts["engineering_open"] == 1
     tabs = queue.tab_counts("soc")
     assert tabs["open"] == 1

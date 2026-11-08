@@ -27,11 +27,16 @@ def test_requests_view_is_in_the_shell():
     assert 'data-request-filter="archived"' in html
     assert 'data-request-filter="open"' in html
     assert 'data-request-queue="all"' in html
-    assert 'data-request-queue="soc"' in html
-    assert 'data-request-queue="engineering"' in html
-    assert 'data-request-queue="detection"' in html
-    assert "Approval queue (ALL)" in html
-    assert "Detection engineering" in html
+    assert 'data-request-queue="approvals"' in html
+    assert 'data-request-queue="notes"' in html
+    assert 'data-request-queue="soc"' not in html
+    assert 'data-request-queue="engineering"' not in html
+    assert 'data-request-queue="detection"' not in html
+    assert "Approval queue (ALL)" not in html
+    assert "Detection engineering" not in html
+    assert ">Approvals<" in html or "Approvals" in html
+    assert ">Notes<" in html or "Notes" in html
+    assert "data-request-github-facet" in html
     assert "requests.js" in html
     assert "requests.css" in html
     assert "setActiveSection('requests')" in app_js
@@ -52,12 +57,15 @@ def test_requests_view_is_in_the_shell():
     assert 'data-request-action="ignore"' in requests_js
     assert 'data-request-action="approve"' in requests_js
     assert "Needs approval" in requests_js
+    assert "Verify identity" in requests_js
     assert "Proposed note" in requests_js
     assert "Associated notes (approved with this close)" in requests_js
     assert "Approve will also write" in requests_js
     assert "request-bulk-comment" in requests_js
     assert "Technical details" in requests_js
     assert "matchesQueue" in requests_js
+    assert "queueTab = 'approvals'" in requests_js
+    assert "kind-badge" in requests_js
     assert "startLocalPoll" in requests_js
     assert "justOpened" in app_js
     assert "getRequestsSummary" in (WEB / "static" / "api.js").read_text(encoding="utf-8")
@@ -281,6 +289,13 @@ def test_fine_tune_api_is_informational(tmp_path, monkeypatch):
     assert approve.status_code == 400
     listed = client.get("/api/requests?status=pending")
     assert any(item["id"] == request_id for item in listed.json()["requests"])
+    approvals = client.get("/api/requests?status=open&queue=approvals")
+    assert approvals.status_code == 200
+    assert all(item["id"] != request_id for item in approvals.json()["requests"])
+    notes = client.get("/api/requests?status=open&queue=notes")
+    assert notes.status_code == 200
+    assert any(item["id"] == request_id for item in notes.json()["requests"])
+    # Legacy aliases
     soc = client.get("/api/requests?status=open&queue=soc")
     assert soc.status_code == 200
     assert all(item["id"] != request_id for item in soc.json()["requests"])
@@ -288,11 +303,12 @@ def test_fine_tune_api_is_informational(tmp_path, monkeypatch):
     assert detection.status_code == 200
     assert any(item["id"] == request_id for item in detection.json()["requests"])
     assert "actionable" in listed.json()["counts"]
-    assert "tab_counts" in detection.json()
+    assert "tab_counts" in notes.json()
+    assert "approvals" in notes.json()["queue_counts"]
+    assert "notes" in notes.json()["queue_counts"]
     js = Path(__file__).resolve().parents[2] / "src" / "ai_controller" / "web" / "static" / "requests.js"
     text = js.read_text(encoding="utf-8")
     assert "isInformational" in text
-    assert "Informational only" in text
     assert 'data-request-action="approve"' in text
     assert "queueTab" in text
     assert 'data-request-action="ignore"' in text

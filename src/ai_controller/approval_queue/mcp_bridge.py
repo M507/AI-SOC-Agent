@@ -116,7 +116,7 @@ def enqueue_gated_tool(
 
     if informational:
         message = (
-            f"{spec.label} was filed as informational in the SamiGPT Requests view "
+            f"{spec.label} was filed under Requests → Notes "
             f"(id {request.id}). There is nothing to approve — it is a suggestion only."
         )
         if engineering and engineering.get("success") and engineering.get("issue"):
@@ -128,9 +128,14 @@ def enqueue_gated_tool(
             message += f" GitHub Issues mirror failed: {engineering.get('error')}."
     else:
         message = (
-            f"{spec.label} was filed for analyst approval in the SamiGPT Requests view "
+            f"{spec.label} was filed under Requests → Approvals "
             f"(id {request.id}). It will not run until it is approved."
         )
+        if request.action_type in {"isolate_endpoint", "release_isolation"}:
+            message += (
+                " Host isolation is currently disabled — Approve will not call "
+                "Elastic Defend or EDR."
+            )
     result = {
         "queued": True,
         "success": True,
@@ -194,14 +199,24 @@ def create_request_from_tool_args(args: Dict[str, Any], cluster_id: Optional[str
                 logger.warning("Could not persist GitHub mirror on request %s: %s", request.id, exc)
     if informational:
         message = (
-            f"Filed {request.title} as informational in the SamiGPT Requests view "
+            f"Filed {request.title} under Requests → Notes "
             f"(id {request.id}). There is nothing to approve — it is a suggestion only."
         )
+        if engineering and engineering.get("success") and engineering.get("issue"):
+            message += (
+                f" Also opened GitHub issue #{engineering['issue'].get('number')} "
+                f"({engineering['issue'].get('url')})."
+            )
     else:
         message = (
-            f"Filed {request.title} for analyst approval in the SamiGPT Requests view "
+            f"Filed {request.title} under Requests → Approvals "
             f"(id {request.id})."
         )
+        if request.action_type in {"isolate_endpoint", "release_isolation"}:
+            message += (
+                " Host isolation is currently disabled — Approve will not call "
+                "Elastic Defend or EDR."
+            )
     result = {
         "success": True,
         "queued": True,
