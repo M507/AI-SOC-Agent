@@ -13,19 +13,23 @@ This ensures clear distinction between case management operations and SIEM alert
 
 ## Analyst approval (Requests view)
 
-## Analyst approval (Requests view)
+These tools **file a request** and do not run until an analyst approves them under **Requests → Approvals**: `close_alert`, `add_alert_note`, `isolate_endpoint`, `release_endpoint_isolation`, `kill_process_on_endpoint`, `collect_forensic_artifacts`.
 
-These tools **file a request** and do not run until an analyst approves them in the SamiGPT Requests view: `close_alert`, `isolate_endpoint`, `release_endpoint_isolation`, `kill_process_on_endpoint`, `collect_forensic_artifacts`.
+Informational fine-tune / visibility / runbook-gap tools file under **Requests → Notes** (no Approve). When ENG is GitHub they may also open a linked issue.
 
-`isolate_endpoint` / `release_endpoint_isolation` run against **Elastic Defend on the bound cluster** (Kibana Endpoint Security) after approval. They do not need a separate EDR integration.
+`isolate_endpoint` / `release_endpoint_isolation` may still be **filed**, but host isolation is **intentionally disabled**: Approve will **not** call Kibana Elastic Defend or EDR until isolation is re-enabled.
 
-`create_fine_tuning_recommendation`, `create_visibility_recommendation`, and `create_runbook_recommendation` file **informational** notes only. Fine-tune / visibility pull Home Lab rules under `/root/Home-Lab-Rules/rules/elastic_1/rules/`. Runbook-gap notes request a missing `soc*/cases` playbook **after** investigation. There is no approve button.
+`create_fine_tuning_recommendation`, `create_visibility_recommendation`, and `create_runbook_recommendation` file **informational** notes only. Fine-tune is for **existing** Home Lab rules (exceptions / FP narrowing). Visibility is for **missing coverage / new detections** (and telemetry gaps). Both pull the catalog under `/root/Home-Lab-Rules/rules/elastic_1/rules/`. Always `search_lab_detection_rules` then `find_related_requests` (fine_tune **and** visibility) before filing — do not duplicate open work or invent a second rule when one already covers the behavior. Runbook-gap notes request a missing `soc*/cases` playbook **after** investigation. There is no approve button.
 
 Search first with `search_lab_detection_rules` (compact hits). Load at most one or two rules with `get_lab_detection_rule`. Do not dump the catalog into context.
 
 `update_alert_verdict` is **not** gated. It records the AI's working assessment immediately and does not close the alert.
 
 `create_approval_request` is used for identity checks ("is this you?") and custom follow-ups. A **No** answer opens an Elastic Security case (`create_elastic_case`), not IRIS or TheHive.
+
+`find_related_requests` lists open Approvals/Notes for an `alert_id` and/or detection rule before you file another note, close, fine-tune, visibility, or runbook-gap request. Call it first; if a match already covers the same alert document or the same rule recommendation, **do not file another** — cite the existing `request_id`.
+
+Same-alert re-files are also collapsed server-side: a second `add_alert_note` on a pending alert **updates** the existing request when richer; `close_alert` and informational Notes for the same rule/theme reuse the open request (`deduplicated` / `updated` in the tool result).
 
 `create_elastic_case` runs immediately against the bound Elastic cluster.
 
@@ -2107,7 +2111,9 @@ Retrieve detailed information about a specific detection including type, severit
 
 ### `isolate_endpoint`
 
-Request isolating an endpoint from the network via **Elastic Defend** (Kibana Endpoint Security) on the bound cluster. **Queued for analyst approval** — the host is not isolated until Requests is approved.
+Recommend isolating an endpoint from the network via **Elastic Defend** (Kibana Endpoint Security). **Queued under Requests → Approvals**.
+
+**Host isolation is intentionally disabled:** Approve stores the payload and does **not** call Kibana or EDR until isolation is re-enabled. Tell the analyst the host will not be isolated.
 
 Pass `agent.id` from the alert as `endpoint_id`. A hostname is used to look the agent up when the id is unknown.
 
@@ -2119,9 +2125,7 @@ Pass `agent.id` from the alert as `endpoint_id`. A hostname is used to look the 
 **Returns:**
 - `queued` (boolean): `true` when isolation was filed for approval
 - `request_id` (string): Requests-view id
-- `message` (string): Analyst-facing status (pending approval)
-
-After approval the handler calls Kibana `POST /api/endpoint/action/isolate` (falls back to `/api/endpoint/isolate`).
+- `message` (string): Analyst-facing status (pending; isolation disabled)
 
 **Usage Example:**
 ```json
@@ -2147,7 +2151,9 @@ After approval the handler calls Kibana `POST /api/endpoint/action/isolate` (fal
 
 ### `release_endpoint_isolation`
 
-Request releasing an endpoint from network isolation. **Queued for analyst approval** — connectivity is not restored until Requests is approved.
+Recommend releasing an endpoint from network isolation. **Queued under Requests → Approvals**.
+
+**Host isolation release is intentionally disabled:** Approve will not call Kibana or EDR until isolation is re-enabled.
 
 **Parameters:**
 - `endpoint_id` (string, required): The endpoint ID to release
@@ -2155,7 +2161,7 @@ Request releasing an endpoint from network isolation. **Queued for analyst appro
 **Returns:**
 - `queued` (boolean): `true` when release was filed for approval
 - `request_id` (string): Requests-view id
-- `message` (string): Analyst-facing status (pending approval)
+- `message` (string): Analyst-facing status (pending; isolation disabled)
 
 **Usage Example:**
 ```json
@@ -2253,9 +2259,39 @@ Engineering tools enable creating and managing recommendations for fine-tuning d
 
 **Note:** Currently, only ClickUp is fully supported. Trello and GitHub support for listing and commenting is planned for future releases.
 
+### `find_related_requests`
+
+Look up open Requests (Approvals / Notes) related to an alert and/or detection rule **before** filing `add_alert_note`, `close_alert`, `create_fine_tuning_recommendation`, `create_visibility_recommendation`, or `create_runbook_recommendation`.
+
+**Parameters:**
+- `alert_id` (string, optional): SIEM alert id — finds pending notes/closes for that document
+- `action_type` (string, optional): Single action filter (e.g. `fine_tune`, `add_alert_note`, `close_alert`)
+- `action_types` (array, optional): Multiple action types
+- `rule_id` / `rule_name` (string, optional): Detection rule for recommendation matching
+- `query` (string, optional): Free-text filter against title/summary
+- `open_only` (boolean, optional): Default `true`
+- `limit` (integer, optional): Max rows (default 25)
+
+**Returns:** `count`, `requests[]` with `id`, `action_type`, `status`, `title`, `summary`, `alert_id`, `rule_name`, `created_at`, `session_id`, plus a guidance `message`.
+
+**Usage Example:**
+```json
+{
+  "name": "find_related_requests",
+  "arguments": {
+    "rule_name": "ntopng Security Alert",
+    "action_type": "fine_tune"
+  }
+}
+```
+
+If an open Note already covers the same rule / same fix theme, do **not** file another — cite that `request_id` in the alert note instead.
+
+---
+
 ### `create_fine_tuning_recommendation`
 
-Pull the matching Home Lab detection rule and file a **fine-tune suggestion** in the SamiGPT Requests view. **Informational only** — no approve button, nothing is sent to Trello/ClickUp/GitHub.
+File a **fine-tune suggestion** for an **existing** Home Lab detection (exceptions / false-positive narrowing — **not** new rules). **Informational only** — no approve button. Preflight: `search_lab_detection_rules`, then `find_related_requests` for `fine_tune` and `visibility`; if an open note already covers this rule, cite that `request_id` and do not file again. Pass `rule_id` or `rule_name` when known. If no rule matches, the server reclassifies the note as Visibility. For missing coverage use `create_visibility_recommendation`. When ENG is GitHub, a linked issue may also be opened.
 
 **Parameters:**
 - `title` (string, required): Short title
@@ -2264,7 +2300,7 @@ Pull the matching Home Lab detection rule and file a **fine-tune suggestion** in
 - `rule_name` (string, optional): Detection rule name
 - `alert_id` (string, optional): Related alert
 
-**Returns:** queued informational request plus the pulled `rule` excerpt when found.
+**Returns:** queued informational request plus the pulled `rule` excerpt when found (or a reclassified visibility note).
 
 **Usage Example:**
 ```json
@@ -2282,9 +2318,9 @@ Pull the matching Home Lab detection rule and file a **fine-tune suggestion** in
 
 ### `create_visibility_recommendation`
 
-File an **informational visibility-gap note**. Search Home Lab rules first (`search_lab_detection_rules`, then at most 1–2 `get_lab_detection_rule` calls). Only file this if coverage is still missing. The server re-checks the catalog and stores `coverage_check`.
+File an **informational visibility-gap note** (missing telemetry or missing detection / new rule). Preflight in order: (1) `search_lab_detection_rules` (1–3 short keyword queries) and at most 1–2 `get_lab_detection_rule` — if a rule already covers the behavior, use `create_fine_tuning_recommendation` on that rule instead; (2) `find_related_requests` for `fine_tune` and `visibility` — if an open note already covers the gap, cite `request_id` and do not file again; (3) optionally `list_visibility_recommendations` when ENG is linked. Only file if coverage is still missing. The server re-checks the catalog and stores `coverage_check`. Analysts can **Send to Review** to draft a new query rule in Detection as Code when not `likely_covered`.
 
-**Informational only** — no approve button, no engineering board.
+**Informational only** until Send to Review / Implement. When ENG is GitHub, a linked issue may also be opened.
 
 **Parameters:**
 - `title` (string, required): Short title
@@ -2306,7 +2342,7 @@ File an **informational visibility-gap note**. Search Home Lab rules first (`sea
 **Use Cases:**
 - Record a suspected telemetry or detection gap after searching the Home Lab catalog
 - Show the analyst whether an existing rule already covers the behavior
-- Keep the note informational until a board API exists
+- Promote to Detection as Code Review to author a new query rule when coverage is missing
 
 ---
 

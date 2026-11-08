@@ -29,9 +29,14 @@ def _require(request: ApprovalRequest, *names: str) -> None:
         raise ValueError(f"Missing payload fields: {', '.join(missing)}")
 
 
-def _require_host(request: ApprovalRequest) -> None:
-    if not request.payload.get("endpoint_id") and not request.payload.get("hostname"):
-        raise ValueError("Missing payload fields: endpoint_id or hostname")
+def _alert_ids_for_request(request: ApprovalRequest) -> list:
+    from .dedupe import related_alert_ids_of
+
+    ids = related_alert_ids_of(request)
+    if ids:
+        return ids
+    raw = request.payload.get("alert_id")
+    return [str(raw)] if raw not in (None, "") else []
 
 
 class CloseAlertHandler:
@@ -41,12 +46,27 @@ class CloseAlertHandler:
             return _missing("siem", "No SIEM client for this cluster. Close payload is stored.")
         from ...orchestrator import tools_siem
 
-        return tools_siem.close_alert(
-            alert_id=str(request.payload["alert_id"]),
-            reason=request.payload.get("reason") or "false_positive",
-            comment=request.payload.get("comment") or request.summary,
-            client=clients.siem,
-        )
+        alert_ids = _alert_ids_for_request(request)
+        reason = request.payload.get("reason") or "false_positive"
+        comment = request.payload.get("comment") or request.summary
+        results = []
+        for alert_id in alert_ids:
+            results.append(
+                tools_siem.close_alert(
+                    alert_id=str(alert_id),
+                    reason=reason,
+                    comment=comment,
+                    client=clients.siem,
+                )
+            )
+        if len(results) == 1:
+            return results[0]
+        return {
+            "success": all(bool(item.get("success", True)) for item in results if isinstance(item, dict)),
+            "closed_count": len(results),
+            "alert_ids": alert_ids,
+            "results": results,
+        }
 
 
 class AddAlertNoteHandler:
@@ -56,61 +76,25 @@ class AddAlertNoteHandler:
             return _missing("siem", "No SIEM client for this cluster. Note payload is stored.")
         from ...orchestrator import tools_siem
 
-        return tools_siem.add_alert_note(
-            alert_id=str(request.payload["alert_id"]),
-            note=str(request.payload["note"]),
-            client=clients.siem,
-        )
-
-
-class IsolateEndpointHandler:
-    def execute(self, request: ApprovalRequest, clients: ClientBundle) -> Dict[str, Any]:
-        _require_host(request)
-        reason = request.payload.get("reason") or request.summary
-        hostname = request.payload.get("hostname")
-        endpoint_id = str(request.payload.get("endpoint_id") or hostname or "")
-        if clients.siem is not None and hasattr(clients.siem, "isolate_endpoint"):
-            from ...orchestrator import tools_siem
-
-            return tools_siem.isolate_endpoint(
-                endpoint_id=endpoint_id,
-                hostname=hostname,
-                comment=reason,
-                client=clients.siem,
+        alert_ids = _alert_ids_for_request(request)
+        note = str(request.payload["note"])
+        results = []
+        for alert_id in alert_ids:
+            results.append(
+                tools_siem.add_alert_note(
+                    alert_id=str(alert_id),
+                    note=note,
+                    client=clients.siem,
+                )
             )
-        if clients.edr is not None:
-            from ...orchestrator import tools_edr
-
-            return tools_edr.isolate_endpoint(endpoint_id=endpoint_id, client=clients.edr)
-        return _missing(
-            "siem",
-            "No Elastic cluster for this request. Isolation uses Kibana Elastic Defend on the bound cluster.",
-        )
-
-
-class ReleaseIsolationHandler:
-    def execute(self, request: ApprovalRequest, clients: ClientBundle) -> Dict[str, Any]:
-        _require_host(request)
-        reason = request.payload.get("reason") or request.summary
-        hostname = request.payload.get("hostname")
-        endpoint_id = str(request.payload.get("endpoint_id") or hostname or "")
-        if clients.siem is not None and hasattr(clients.siem, "release_endpoint_isolation"):
-            from ...orchestrator import tools_siem
-
-            return tools_siem.release_endpoint_isolation(
-                endpoint_id=endpoint_id,
-                hostname=hostname,
-                comment=reason,
-                client=clients.siem,
-            )
-        if clients.edr is None:
-            return _missing("siem", "No Elastic cluster for this request. Release uses Kibana Elastic Defend on the bound cluster.")
-        from ...orchestrator import tools_edr
-
-        return tools_edr.release_endpoint_isolation(
-            endpoint_id=endpoint_id,
-            client=clients.edr,
-        )
+        if len(results) == 1:
+            return results[0]
+        return {
+            "success": all(bool(item.get("success", True)) for item in results if isinstance(item, dict)),
+            "noted_count": len(results),
+            "alert_ids": alert_ids,
+            "results": results,
+        }
 
 
 class KillProcessHandler:
@@ -149,7 +133,10 @@ class FineTuneHandler:
         return {
             "success": True,
             "informational": True,
-            "message": "Fine-tune suggestions are informational only. Nothing was sent to an engineering board.",
+            "message": (
+                "Fine-tune suggestions are informational under Requests → Notes. "
+                "Approve does not write the rule; a GitHub issue may already have been opened on file."
+            ),
         }
 
 
@@ -158,7 +145,10 @@ class VisibilityHandler:
         return {
             "success": True,
             "informational": True,
-            "message": "Visibility-gap notes are informational only. Nothing was sent to an engineering board.",
+            "message": (
+                "Visibility-gap notes are informational under Requests → Notes. "
+                "Approve does not change telemetry; a GitHub issue may already have been opened on file."
+            ),
         }
 
 
@@ -310,8 +300,14 @@ HANDLERS: Dict[str, ActionHandler] = {
     "close_alert": CloseAlertHandler(),
     "add_alert_note": AddAlertNoteHandler(),
     "identity_verify": IdentityVerifyHandler(),
-    "isolate_endpoint": IsolateEndpointHandler(),
-    "release_isolation": ReleaseIsolationHandler(),
+    "isolate_endpoint": StubHandler(
+        "none",
+        "Host isolation is intentionally disabled. Approve will not call Kibana Elastic Defend or EDR.",
+    ),
+    "release_isolation": StubHandler(
+        "none",
+        "Host isolation release is intentionally disabled. Approve will not call Kibana or EDR.",
+    ),
     "kill_process": KillProcessHandler(),
     "collect_forensics": CollectForensicsHandler(),
     "fine_tune": FineTuneHandler(),

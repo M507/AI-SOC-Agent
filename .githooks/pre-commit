@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+# Block commits that contain secrets (gitleaks + trufflehog via Docker).
+set -euo pipefail
+
+hooks_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=common.sh
+source "${hooks_dir}/common.sh"
+
+prepare_scanners
+
+echo "Secret scan (pre-commit): running gitleaks + trufflehog via Docker..." >&2
+
+if ! scan_staged_gitleaks; then
+  die "COMMIT BLOCKED: gitleaks found secrets in staged changes (or the scan failed).
+Remove/rotate secrets, then stage again. Manual scan: ./.githooks/scan.sh --staged"
+fi
+
+if ! scan_staged_trufflehog; then
+  die "COMMIT BLOCKED: trufflehog found secrets in staged changes (or the scan failed).
+Remove/rotate secrets, then stage again. Manual scan: ./.githooks/scan.sh --staged"
+fi
+
+echo "Secret scan (pre-commit): clean." >&2
+exit 0

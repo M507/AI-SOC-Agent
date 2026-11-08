@@ -18,12 +18,24 @@ Action types live in `src/ai_controller/approval_queue/catalog.py`. Handlers liv
 
 | Tab | What it shows |
 | --- | --- |
-| SOC | SIEM, identity, EDR, case, IAM, email, network |
-| Detection engineering | Fine-tune, visibility gap, runbook gap |
-| Engineering | Items mirrored to a GitHub issue |
+| Closures (default) | `close_alert`, `close_case` |
+| Alert notes | `add_alert_note` |
+| Questions | `identity_verify` (Is this you?) |
+| Response | Isolate / release, kill process, forensics, escalate, open case, IAM / network / email stubs |
+| Fine-tune | `fine_tune` informational notes |
+| Visibility | `visibility` informational notes |
+| Runbooks | `runbook_gap` informational notes (+ Create runbook) |
 | All | Everything |
 
-Open vs Archived: pending, informational, and waiting-on-integration stay Open. Denied, executed (Done), failed, and acknowledged (reviewed informational notes) are Archived.
+**Nav badge:** pending items on Closures + Questions + Response only (not Alert notes or informational engineering tabs).
+
+**GitHub facet** (on Fine-tune, Visibility, Runbooks, and All): show only items mirrored to a GitHub issue. This replaces the old Engineering top tab.
+
+Open vs Archived: pending, informational, and waiting-on-integration stay Open. Denied, executed (Executed), failed, and acknowledged (Reviewed) are Archived. Ignored informational notes stay Archived with an Ignored label.
+
+**Reopen** (Archived detail or bulk on Archived): brings **Done / Ignore / Deny** cards back to Open. Informational notes return to `informational`; denied approvals return to `pending`. Does **not** reopen Executed/Failed (side effects already ran) or implemented Detection as Code reviews. Does **not** recreate a deleted GitHub issue — that stays gone. A short `reopen_history` trail is kept on the payload.
+
+Legacy API aliases: `queue=approvals` / `soc` → Closures+Alert notes+Questions+Response; `queue=notes` / `detection` → Fine-tune+Visibility+Runbooks; `queue=engineering` → GitHub-linked items only.
 
 ## Actionable (Approve / Deny)
 
@@ -31,8 +43,8 @@ Open vs Archived: pending, informational, and waiting-on-integration stay Open. 
 | --- | --- | --- | --- | --- |
 | **Close alert** | Elastic `close_alert` on the bound cluster, after associated notes (see [Close also approves pending notes](#close-also-approves-pending-notes)) | Close comment on the Kibana close; `signal.ai.verdict` from the reason; associated note text on `signal.ai.comments.comment` | Alert workflow status → `closed` | Nothing. The alert document stays |
 | **Add alert note** | Elastic `add_alert_note`. Also approved automatically when **Close alert** for the same alert is approved | One `{timestamp, comment, author: sami-gpt}` on `signal.ai.comments.comment` | Nothing | Nothing |
-| **Isolate endpoint** | Kibana Elastic Defend `POST /api/endpoint/action/isolate` (EDR client if no SIEM isolate) | Isolation action on that host | Host is cut off the network | Nothing |
-| **Release isolation** | Kibana `POST /api/endpoint/action/unisolate` | Unisolate action | Network access restored | Nothing |
+| **Isolate endpoint** | **Disabled (stub)** | Payload only | Nothing | Does **not** call Kibana Elastic Defend or EDR. Status **Waiting on integration** |
+| **Release isolation** | **Disabled (stub)** | Payload only | Nothing | Does **not** call unisolate / EDR |
 | **Kill process** | EDR `kill_process_on_endpoint` if an EDR client exists | Nothing in SIEM | That PID is terminated | If no EDR: status **Waiting on integration**, nothing runs |
 | **Collect forensics** | EDR `collect_forensic_artifacts` (default `processes`, `network`, `filesystem`) | Collected artifacts on the EDR side | Nothing closed | If no EDR: waiting, nothing runs |
 | **Open case** | IRIS / TheHive `create_case` | A new case (title, description, priority, tags, optional alert id) | Nothing in Elastic | If no case client: waiting. This is **not** a Kibana Security case |
@@ -70,7 +82,7 @@ A `comment` on `update_alert_verdict` is itself filed as a pending **Add alert n
 
 ## Is this you? (Yes / No)
 
-No generic Approve. The analyst answers the identity question.
+No generic Approve. The analyst answers the identity question under Approvals (Verify).
 
 SOC1 may file this with `create_approval_request` (`action_type=identity_verify`) when a Yes/No on identity/expected use would actually decide the alert (login, VPN, RDP, admin, travel). It is **optional**. Uncertain alone is not a reason to file it. The card asks a yes/no `question`. Leave `follow_ups` empty so the defaults below apply.
 
@@ -79,21 +91,19 @@ SOC1 may file this with `create_approval_request` (`action_type=identity_verify`
 | **Yes** | Close alert as benign true positive (and any pending **Add alert note** for that alert) | Close comment; associated notes | Alert closed; verdict benign true positive |
 | **No** | Escalate | TP tag; Kibana Security case | Verdict `true_positive`. Alert stays open |
 
-Isolate, kill process, disable user, and reset credentials after a Yes/No are **not** auto-run. They become a second pending request.
+Isolate, kill process, disable user, and reset credentials after a Yes/No are **not** auto-run. They become a second pending request. Isolate/release remain disabled stubs even if filed.
 
 ## Informational (no Approve)
 
-Fine-tune, visibility gap, and runbook gap are review notes. **Done** only archives the card (GitHub issue stays open if linked). **Ignore** archives the card and closes the linked GitHub issue when ENG is GitHub.
+Fine-tune, visibility gap, and runbook gap are review notes. **Ignore** archives the card and **deletes** the linked GitHub issue when ENG is GitHub (same hard-delete as Done / Send to Review; already-gone issues count as success).
 
-| Request | On file | On Done | On Ignore | On Create runbook |
+| Request | On file | Primary action | On Done | On Ignore |
 | --- | --- | --- | --- | --- |
-| **Fine-tune detection** | Stores the suggestion plus a snapshot of the rule file in the configured folder (`SAMI_LAB_RULES_DIR`). May open a GitHub issue. Filing the note does not call the model and does not edit the file. | Archives locally, still without writing the rule | Archives locally; closes GitHub issue if linked | — |
-| **Visibility gap** | Stores the gap note plus a catalog `coverage_check` | Same | Same | — |
-| **Runbook gap** | Stores that a `soc*/cases` playbook is missing, plus near-matches | Archives locally | Same as above | Starts an Open WebUI session to write `run_books/soc1/cases/*.md`, then marks Done |
+| **Fine-tune detection** | Stores the suggestion plus a Home Lab rule snapshot for an **existing** rule. May open a GitHub issue. Filing does not call the model or edit the file. If no rule matches, the server reclassifies the note as **Visibility**. On queue init, open legacy fine-tunes with no match or clear new/dedicated-rule intent are migrated the same way. | **Send to Review** (only when a rule was found) drafts exceptions (SIEM context + actual rule, up to 3 auto-fix tries), opens Detection as Code Review, and **deletes** the GitHub issue on success | Archives; **deletes** the GitHub issue; does not write the rule | Archives; **deletes** the GitHub issue |
+| **Visibility gap** | Stores the gap note plus a catalog `coverage_check` (missing telemetry or missing detection). Agents must search the catalog and `find_related_requests` before filing. | **Send to Review** (blocked when `likely_covered`) drafts a **new query rule** (`dac.kind=new_rule`, up to 3 auto-fix tries), opens Detection as Code Review, and **deletes** the GitHub issue on success. Done / Ignore still archive without writing. | Archives locally | Archives; **deletes** GitHub if linked |
+| **Runbook gap** | Stores that a `soc*/cases` playbook is missing, plus near-matches | **Create runbook** then Done | Archives locally | Archives; **deletes** GitHub if linked |
 
-None of these change an Elastic rule, sensor, or alert when they are filed.
-
-**Detection as Code** is documented in [detection-as-code.md](detection-as-code.md). That is where a fine-tune note is turned into a file change. **Ask about this finding** spends one model call and does not write a rule. **Draft** and **Ask for changes** each spend one model call and still do not write the file. **Implement** writes the selected exception items, or a disable, into the rule JSON in the configured folder. It does not close alerts and it does not push the rule to Kibana. **Acknowledge** and **Close** on Findings change alert workflow status only. A note is written when the note box has text, and omitted when it is empty. Unchecked exception conditions are left out of the file.
+None of these change an Elastic rule when they are only filed. **Implement** in Detection as Code is what writes: Fine-tune mutates an existing rule (exceptions/disable); Visibility **creates** a new `[enabled]_…` rule file and POSTs it to Kibana when missing remotely (see [detection-as-code.md](detection-as-code.md)). Query rules only for new-rule MVP. The Kibana API key needs **create** detection-rule privileges for new rules, not only update.
 
 ## Not a Requests item
 

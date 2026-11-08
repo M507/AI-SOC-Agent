@@ -2,7 +2,7 @@
 
 The folder path is the only external input. Files are never copied into
 this repository. suggested_fields.json lives beside the rules and is not
-a rule: the indexer skips that name, and Findings unions its names with
+a rule: the indexer skips that name, and Alerts unions its names with
 each rule's investigation_fields. Writes go through a temp file in the
 same directory so a crash does not truncate the rule. The sha256 captured
 at draft time is checked again at Implement so a file edited outside the
@@ -13,6 +13,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
+import uuid
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -157,6 +159,23 @@ def render_with_exceptions(data: Dict[str, Any], additions: List[Dict[str, Any]]
     items = list(updated.get("exception_items") or [])
     items.extend(additions)
     updated["exception_items"] = items
+    # Keep rule.exceptions_list in step with Home-Lab-Rules so Kibana can attach the list.
+    if additions:
+        rule = dict(updated.get("rule") or {})
+        refs = list(rule.get("exceptions_list") or [])
+        list_ids = {str(ref.get("list_id") or "") for ref in refs if isinstance(ref, dict)}
+        for item in additions:
+            list_id = str((item or {}).get("list_id") or "")
+            if not list_id or list_id in list_ids:
+                continue
+            refs.append({
+                "list_id": list_id,
+                "type": "detection",
+                "namespace_type": str((item or {}).get("namespace_type") or "single"),
+            })
+            list_ids.add(list_id)
+        rule["exceptions_list"] = refs
+        updated["rule"] = rule
     return updated
 
 
@@ -212,3 +231,87 @@ def apply_disable(path: Path, data: Dict[str, Any], expected_sha256: str) -> Dic
 
 def document_text(data: Dict[str, Any]) -> str:
     return json.dumps(data, indent=2, ensure_ascii=False) + "\n"
+
+
+def _slugify_rule_name(name: str) -> str:
+    cleaned = re.sub(r"[^A-Za-z0-9]+", "_", (name or "").strip()).strip("_")
+    return (cleaned or "New_Rule")[:80]
+
+
+def find_catalog_collision(*, name: str, query: str = "") -> Optional[Dict[str, Any]]:
+    """Return a catalog hit that looks like the same detection (name or high score)."""
+    needles = " ".join(part for part in (name, query[:120]) if part).strip()
+    if not needles:
+        return None
+    hits = search_rules(needles, limit=6)
+    name_l = (name or "").strip().lower()
+    query_l = (query or "").strip().lower()
+    for hit in hits or []:
+        if not isinstance(hit, dict):
+            continue
+        hit_name = str(hit.get("name") or "").strip().lower()
+        hit_query = str(hit.get("query") or "").strip().lower()
+        score = int(hit.get("score") or 0)
+        if name_l and hit_name == name_l:
+            return hit
+        if query_l and hit_query and hit_query == query_l:
+            return hit
+        if score >= 12 and name_l and name_l in hit_name:
+            return hit
+    return None
+
+
+def create_rule_file(proposed: Dict[str, Any]) -> Dict[str, Any]:
+    """Write a new ``[enabled]_Name_{uuid}.json`` rule document under the rules folder."""
+    folder = require_folder()
+    body = proposed.get("rule") if isinstance(proposed.get("rule"), dict) else proposed
+    if not isinstance(body, dict):
+        raise DetectionError("proposed_rule must be an object.", status_code=422)
+    name = str(body.get("name") or "").strip()
+    query = str(body.get("query") or "").strip()
+    if not name or not query:
+        raise DetectionError("New rules need a name and query.", status_code=422)
+    collision = find_catalog_collision(name=name, query=query)
+    if collision is not None:
+        raise DetectionError(
+            f"A Home Lab rule already looks like this detection "
+            f"({collision.get('name') or collision.get('rule_id')}). "
+            "Fine-tune that rule instead of creating a duplicate.",
+            status_code=409,
+        )
+    rule_id = str(body.get("rule_id") or uuid.uuid4())
+    slug = _slugify_rule_name(name)
+    path = folder / f"[enabled]_{slug}_{rule_id}.json"
+    if path.exists():
+        raise DetectionError(f"Rule file already exists: {path.name}", status_code=409)
+    rule = {
+        "name": name,
+        "description": str(body.get("description") or "").strip(),
+        "severity": str(body.get("severity") or "medium").strip().lower() or "medium",
+        "risk_score": body.get("risk_score") if body.get("risk_score") is not None else 47,
+        "type": "query",
+        "language": str(body.get("language") or "kuery").strip() or "kuery",
+        "query": query,
+        "index": list(body.get("index") or ["logs-*"]),
+        "enabled": True,
+        "tags": list(body.get("tags") or []),
+        "rule_id": rule_id,
+    }
+    data = {
+        "_dac": {
+            "status": "enabled",
+            "rule_id": rule_id,
+            "name": name,
+            "origin": "sami_visibility_new_rule",
+        },
+        "rule": rule,
+        "exception_items": [],
+    }
+    digest = _write_json(path, data)
+    return {
+        "file": str(path),
+        "file_sha256": digest,
+        "rule_id": rule_id,
+        "status": "enabled",
+        "name": name,
+    }

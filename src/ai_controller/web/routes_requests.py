@@ -98,6 +98,7 @@ def _payload(
             "cluster_id": request.cluster_id,
             "cluster": cluster,
             "category": spec.category if spec else None,
+            "queue_tab": spec.queue_tab if spec else None,
             "github_issue": github,
             "created_at": created,
             "archived": archived,
@@ -107,6 +108,7 @@ def _payload(
     data["cluster"] = cluster
     data["archived"] = archived
     data["category"] = spec.category if spec else None
+    data["queue_tab"] = spec.queue_tab if spec else None
     data["github_issue"] = github
     return data
 
@@ -140,10 +142,16 @@ async def list_requests(
     cluster_id: Optional[str] = None,
     queue: Optional[str] = None,
     view: Optional[str] = "summary",
+    github: Optional[str] = None,
 ):
     queue_svc = get_queue()
     try:
-        page = queue_svc.list_bundle(status=status, cluster_id=cluster_id, queue=queue)
+        page = queue_svc.list_bundle(
+            status=status,
+            cluster_id=cluster_id,
+            queue=queue,
+            github=github,
+        )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     cluster_for = _cluster_lookup()
@@ -155,6 +163,7 @@ async def list_requests(
         "tab_counts": page["tab_counts"],
         "queue_counts": page["queue_counts"],
         "queue": page["queue"],
+        "github": page.get("github", False),
         "requests": [_payload(item, view=view_key, cluster_for=cluster_for) for item in page["items"]],
     }
 
@@ -260,6 +269,15 @@ async def ignore_request(request_id: str, body: DecisionPayload = DecisionPayloa
     queue = get_queue()
     request = await _run_queue(queue.ignore, request_id, comment=body.comment)
     logger.info("Ignored informational request %s", request_id)
+    return {"success": True, "request": _payload(request)}
+
+
+@router.post("/{request_id}/reopen")
+async def reopen_request(request_id: str, body: DecisionPayload = DecisionPayload()):
+    """Move an archived Done/Ignore/Deny request back to Open (local queue only)."""
+    queue = get_queue()
+    request = await _run_queue(queue.reopen, request_id, comment=body.comment)
+    logger.info("Reopened request %s -> %s", request_id, request.status.value)
     return {"success": True, "request": _payload(request)}
 
 

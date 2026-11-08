@@ -27,6 +27,7 @@ _DECISIONS = {
     "deny": "Denied",
     "acknowledge": "Reviewed",
     "ignore": "Ignored",
+    "reopen": "Reopened",
 }
 
 

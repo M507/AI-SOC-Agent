@@ -18,7 +18,7 @@ from ..approval_queue.lab_rules import DEFAULT_RULES_DIR, clear_index_cache
 from .errors import DetectionError
 
 SECTION = "detection"
-DEFAULT_FINDINGS_HOURS = 168
+DEFAULT_ALERTS_HOURS = 168
 DEFAULT_MATCH_HOURS = 24 * 90
 MAX_HOURS = 24 * 90
 
@@ -33,9 +33,13 @@ def _clamp_hours(value: Any, default: int) -> int:
 
 def stored_settings() -> Dict[str, Any]:
     raw = get_section(SECTION, {}) or {}
+    # Prefer alerts_hours; fall back to legacy findings_hours so deploy lookback is preserved.
+    hours_raw = raw.get("alerts_hours")
+    if hours_raw is None:
+        hours_raw = raw.get("findings_hours")
     return {
         "rules_dir": str(raw.get("rules_dir") or "").strip(),
-        "findings_hours": _clamp_hours(raw.get("findings_hours"), DEFAULT_FINDINGS_HOURS),
+        "alerts_hours": _clamp_hours(hours_raw, DEFAULT_ALERTS_HOURS),
         "match_hours": _clamp_hours(raw.get("match_hours"), DEFAULT_MATCH_HOURS),
     }
 
@@ -72,15 +76,15 @@ def normalize_rules_dir(value: str) -> str:
 def save_settings(
     *,
     rules_dir: str,
-    findings_hours: Any = None,
+    alerts_hours: Any = None,
     match_hours: Any = None,
 ) -> Dict[str, Any]:
     current = stored_settings()
     payload = {
         "rules_dir": normalize_rules_dir(rules_dir),
-        "findings_hours": _clamp_hours(
-            current["findings_hours"] if findings_hours is None else findings_hours,
-            DEFAULT_FINDINGS_HOURS,
+        "alerts_hours": _clamp_hours(
+            current["alerts_hours"] if alerts_hours is None else alerts_hours,
+            DEFAULT_ALERTS_HOURS,
         ),
         "match_hours": _clamp_hours(
             current["match_hours"] if match_hours is None else match_hours,
@@ -106,6 +110,6 @@ def public_settings(default_rules_dir: Path | None = None) -> Dict[str, Any]:
         "configured": exists,
         "source": source,
         "env_override": bool(env),
-        "findings_hours": stored["findings_hours"],
+        "alerts_hours": stored["alerts_hours"],
         "match_hours": stored["match_hours"],
     }

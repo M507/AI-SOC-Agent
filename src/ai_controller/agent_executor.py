@@ -87,6 +87,7 @@ class AgentExecutor:
         self._current_process: Optional[subprocess.Popen] = None
         self._current_provider = None
         self._active_cluster_id: Optional[str] = None
+        self._active_session_id: Optional[str] = None
         self._tool_registry: Dict[str, Callable] = {}
         self._initialize_tools()
     
@@ -271,7 +272,9 @@ class AgentExecutor:
         pass data their condition function already fetched.
         """
         previous_cluster = self._active_cluster_id
+        previous_session = getattr(self, "_active_session_id", None)
         self._active_cluster_id = cluster_id
+        self._active_session_id = session_id
         try:
             if command.command_type == CommandType.RUN_TOOL:
                 return await self._execute_tool(command)
@@ -308,6 +311,7 @@ class AgentExecutor:
             )
         finally:
             self._active_cluster_id = previous_cluster
+            self._active_session_id = previous_session
     
     def _mcp_client(self):
         """Build an MCP client bound to the current session cluster."""
@@ -322,6 +326,7 @@ class AgentExecutor:
             port=int(mcp_cfg.get("port", 8082)),
             api_token=mcp_cfg.get("api_token") or "",
             cluster_id=self._active_cluster_id,
+            session_id=getattr(self, "_active_session_id", None),
             tls=bool(mcp_cfg.get("tls", True)),
         )
 

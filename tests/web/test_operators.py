@@ -46,9 +46,19 @@ def test_operator_lists_approval_groups(tmp_path, monkeypatch):
     body = loaded.json()
     assert body["username"] == "admin"
     labels = [group["label"] for group in body["groups"]]
-    assert labels == ["SOC", "Detection engineering", "Engineering"]
-    soc = body["groups"][0]["actions"]
-    assert any(item["label"] == "Close alert" for item in soc)
+    assert labels == [
+        "Closures",
+        "Alert notes",
+        "Questions",
+        "Response",
+        "Fine-tune",
+        "Visibility",
+        "Runbooks",
+    ]
+    closures = body["groups"][0]["actions"]
+    assert any(item["label"] == "Close alert" for item in closures)
+    fine_tune = body["groups"][4]["actions"]
+    assert any(item["label"] == "Fine-tune detection" for item in fine_tune)
     assert TEST_PASSWORD not in loaded.text
 
 

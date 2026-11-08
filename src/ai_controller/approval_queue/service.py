@@ -2,13 +2,38 @@
 
 from __future__ import annotations
 
+import re
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 from ...core.logging import get_logger
 from .actions import get_handler
-from .catalog import get_action_spec, list_action_specs, github_issue_link, matches_queue, SOC_CATEGORIES, DETECTION_CATEGORIES
+from .catalog import (
+    get_action_spec,
+    list_action_specs,
+    github_issue_link,
+    matches_queue,
+    wants_github_facet,
+    queue_tab_for,
+    ACTIONABLE_QUEUE_TABS,
+    SOC_CATEGORIES,
+    DETECTION_CATEGORIES,
+    QUEUE_COUNT_KEYS,
+)
 from .clients import resolve_clients
+from .dedupe import (
+    ALERT_SCOPED_ACTIONS,
+    ENDPOINT_SCOPED_ACTIONS,
+    INFORMATIONAL_ACTIONS,
+    EnqueueOutcome,
+    find_open_alert_match,
+    find_open_endpoint_match,
+    find_open_flow_match,
+    find_open_informational_match,
+    find_related_requests as _find_related_requests,
+    note_is_richer,
+    related_alert_ids_of,
+)
 from .models import ApprovalRequest, Decision, FollowUpPlan, RequestStatus, is_archived
 from .store import RequestStore
 
@@ -17,22 +42,50 @@ logger = get_logger("sami.approval_queue")
 _CRITICAL_FOLLOW_UPS = {"isolate_endpoint", "kill_process", "disable_user", "reset_credentials"}
 _OPEN_STATUSES = {RequestStatus.PENDING, RequestStatus.INFORMATIONAL, RequestStatus.AWAITING_INTEGRATION}
 _IGNORE_GITHUB_COMMENT = "Manager decided to ignore this professionally."
+_DONE_GITHUB_DELETE_COMMENT = "Fine-tune marked Done in SamiGPT Requests; deleting the tracking issue."
+_PROMOTE_GITHUB_DELETE_COMMENT = "Moved to Detection as Code Review in SamiGPT; deleting the tracking issue."
+_IMPLEMENT_GITHUB_DELETE_COMMENT = "Fine-tune implemented in Detection as Code; deleting the tracking issue."
 _ENRICHMENT_RETRY_SECONDS = 900
-_QUEUE_KEYS = ("all", "soc", "engineering", "detection")
+_QUEUE_KEYS = QUEUE_COUNT_KEYS
 
 _queue: Optional["ApprovalQueue"] = None
+
+# Open fine-tune notes whose text asks for a net-new / dedicated detection.
+_NEW_RULE_INTENT = re.compile(
+    r"("
+    r"\b(create|add|author|write)\b.{0,40}\b(new |dedicated )?(detection )?rule\b"
+    r"|\bdedicated\b.{0,40}\brule\b"
+    r"|\breplace the generic\b"
+    r"|\bsplit\b.{0,60}\bout of\b"
+    r")",
+    re.IGNORECASE | re.DOTALL,
+)
+_EXCEPTION_INTENT = re.compile(
+    r"\b(exception|except|whitelist|exclude|suppress|false[\s-]?positive|"
+    r"fine[\s-]?tun|narrow the|noise)\b",
+    re.IGNORECASE,
+)
 
 
 def init_queue(storage_dir: Optional[str] = None) -> "ApprovalQueue":
     global _queue
     _queue = ApprovalQueue(storage_dir or "data/ai_controller")
+    try:
+        result = _queue.migrate_misfiled_fine_tunes()
+        if result.get("reclassified"):
+            logger.info(
+                "Reclassified %s legacy fine-tune note(s) to visibility",
+                result["reclassified"],
+            )
+    except Exception as exc:  # noqa: BLE001 — never block startup on migration
+        logger.warning("Legacy fine-tune → visibility migration skipped: %s", exc)
     return _queue
 
 
 def get_queue(storage_dir: Optional[str] = None) -> "ApprovalQueue":
     global _queue
     if _queue is None:
-        _queue = ApprovalQueue(storage_dir or "data/ai_controller")
+        return init_queue(storage_dir)
     return _queue
 
 
@@ -49,12 +102,14 @@ class ApprovalQueue:
         cluster_id: Optional[str] = None,
         queue: Optional[str] = None,
         sync_github: bool = False,
+        github: Optional[str] = None,
     ) -> List[ApprovalRequest]:
         return self.list_bundle(
             status=status,
             cluster_id=cluster_id,
             queue=queue,
             sync_github=sync_github,
+            github=github,
         )["items"]
 
     def list_bundle(
@@ -63,6 +118,7 @@ class ApprovalQueue:
         cluster_id: Optional[str] = None,
         queue: Optional[str] = None,
         sync_github: bool = False,
+        github: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Local snapshot: tickets, badge counts, and generation. No GitHub or SIEM."""
         queue_key = (queue or "all").strip().lower()
@@ -76,11 +132,23 @@ class ApprovalQueue:
         queued = [
             item for item in clustered if matches_queue(item.action_type, item.payload, queue_key)
         ]
+        if wants_github_facet(github):
+            queued = [item for item in queued if github_issue_link(item.payload)]
         items = self._apply_status(queued, status)
         items = sorted(items, key=lambda item: item.created_at, reverse=True)
         counts = self._counts_from(snapshot)
         queue_counts = self._queue_counts_from(snapshot)
-        tab_key = queue_key if queue_key in queue_counts else "all"
+        # Map legacy / alias queue keys onto a count bucket when needed.
+        tab_aliases = {
+            "soc": "approvals",
+            "detection": "notes",
+            "detections": "notes",
+            "detection_engineering": "notes",
+            "eng": "engineering",
+        }
+        tab_key = tab_aliases.get(queue_key, queue_key)
+        if tab_key not in queue_counts:
+            tab_key = "all"
         return {
             "items": items,
             "counts": counts,
@@ -88,6 +156,7 @@ class ApprovalQueue:
             "queue_counts": queue_counts,
             "generation": generation,
             "queue": queue or "all",
+            "github": bool(wants_github_facet(github)),
         }
 
     def get(self, request_id: str) -> Optional[ApprovalRequest]:
@@ -144,18 +213,47 @@ class ApprovalQueue:
         informational = sum(1 for item in open_items if item.status == RequestStatus.INFORMATIONAL)
         awaiting = sum(1 for item in open_items if item.status == RequestStatus.AWAITING_INTEGRATION)
         actionable = 0
+        approvals_open = 0
+        notes_open = 0
         detection_open = 0
         engineering_open = 0
         soc_open = 0
+        closures_open = 0
+        alert_notes_open = 0
+        questions_open = 0
+        response_open = 0
+        fine_tune_open = 0
+        visibility_open = 0
+        runbooks_open = 0
         for item in open_items:
             spec = get_action_spec(item.action_type)
             category = spec.category if spec else ""
-            if item.status == RequestStatus.PENDING and category in SOC_CATEGORIES:
+            tab = queue_tab_for(item.action_type)
+            is_note = category in DETECTION_CATEGORIES
+            # Nav badge: pending Closures + Questions + Response only.
+            if item.status == RequestStatus.PENDING and tab in ACTIONABLE_QUEUE_TABS:
                 actionable += 1
-            if category in SOC_CATEGORIES:
-                soc_open += 1
-            if category in DETECTION_CATEGORIES:
+            if tab == "closures":
+                closures_open += 1
+            elif tab == "alert_notes":
+                alert_notes_open += 1
+            elif tab == "questions":
+                questions_open += 1
+            elif tab == "response":
+                response_open += 1
+            elif tab == "fine_tune":
+                fine_tune_open += 1
+            elif tab == "visibility":
+                visibility_open += 1
+            elif tab == "runbooks":
+                runbooks_open += 1
+            if is_note:
+                notes_open += 1
                 detection_open += 1
+            else:
+                approvals_open += 1
+                if category in SOC_CATEGORIES:
+                    soc_open += 1
             if github_issue_link(item.payload):
                 engineering_open += 1
         return {
@@ -165,9 +263,18 @@ class ApprovalQueue:
             "informational": informational,
             "awaiting": awaiting,
             "actionable": actionable,
+            "approvals_open": approvals_open,
+            "notes_open": notes_open,
             "soc_open": soc_open,
             "detection_open": detection_open,
             "engineering_open": engineering_open,
+            "closures_open": closures_open,
+            "alert_notes_open": alert_notes_open,
+            "questions_open": questions_open,
+            "response_open": response_open,
+            "fine_tune_open": fine_tune_open,
+            "visibility_open": visibility_open,
+            "runbooks_open": runbooks_open,
             "all": len(items),
         }
 
@@ -195,6 +302,92 @@ class ApprovalQueue:
         request.updated_at = datetime.now()
         return request
 
+    @staticmethod
+    def _clear_archived(request: ApprovalRequest) -> ApprovalRequest:
+        request.archived = False
+        request.archived_at = None
+        request.updated_at = datetime.now()
+        return request
+
+    def reopen(
+        self,
+        request_id: str,
+        comment: Optional[str] = None,
+        actor: str = "analyst",
+    ) -> ApprovalRequest:
+        """Move an archived request back to Open.
+
+        Safe cases only: Done/Ignore (acknowledged) and Deny. Does **not** undo
+        executed or failed side effects (Elastic close, EDR kill, DaC implement).
+        Does not recreate a deleted GitHub issue — reopen is local queue state.
+        """
+        from .dedupe import INFORMATIONAL_ACTIONS
+
+        request = self._require(request_id)
+        if not is_archived(request):
+            raise ValueError("Request is already open")
+
+        dac = (request.payload or {}).get("dac") if isinstance(request.payload, dict) else None
+        dac = dac if isinstance(dac, dict) else {}
+        if dac.get("stage") == "implemented":
+            raise ValueError(
+                "This Detection as Code review was already implemented. "
+                "File a new request if you need another change."
+            )
+        if request.status in {RequestStatus.EXECUTED, RequestStatus.FAILED}:
+            raise ValueError(
+                "Executed or failed requests cannot be reopened — their side effects "
+                "already ran. File a new request if you need to act again."
+            )
+        if request.status not in {RequestStatus.ACKNOWLEDGED, RequestStatus.DENIED}:
+            raise ValueError(
+                f"Cannot reopen a request in status {request.status.value}"
+            )
+
+        previous_status = request.status.value
+        previous_decision = request.decision.to_dict() if request.decision else None
+        payload = dict(request.payload or {})
+        history = list(payload.get("reopen_history") or [])
+        history.append(
+            {
+                "at": datetime.now().isoformat(),
+                "actor": actor,
+                "comment": (comment or "").strip() or None,
+                "restored_from": previous_status,
+                "previous_decision": previous_decision,
+            }
+        )
+        payload["reopen_history"] = history[-20:]  # keep a short trail
+
+        # Rejected DaC reviews become editable again when brought back to Open.
+        if dac.get("stage") == "rejected":
+            revisions = dac.get("revisions") if isinstance(dac.get("revisions"), list) else []
+            dac = dict(dac)
+            dac["stage"] = "drafted" if revisions else "proposed"
+            payload["dac"] = dac
+
+        # Notes return to informational; denied/settled approvals return to pending.
+        if request.action_type in INFORMATIONAL_ACTIONS:
+            request.status = RequestStatus.INFORMATIONAL
+        else:
+            request.status = RequestStatus.PENDING
+
+        request.payload = payload
+        request.decision = Decision(
+            action="reopen",
+            actor=actor,
+            comment=comment or "Reopened from Archived",
+        )
+        request.error = None
+        request.execution_result = {
+            "success": True,
+            "reopened": True,
+            "restored_from": previous_status,
+            "message": "Reopened and moved back to Open. Linked GitHub issues are not recreated.",
+        }
+        self._clear_archived(request)
+        return self.store.put(request)
+
     def create(
         self,
         action_type: str,
@@ -209,7 +402,44 @@ class ApprovalQueue:
         follow_ups: Optional[Dict[str, Any]] = None,
         parent_request_id: Optional[str] = None,
         created_by: str = "ai",
+        *,
+        dedupe: bool = True,
     ) -> ApprovalRequest:
+        outcome = self.enqueue(
+            action_type=action_type,
+            title=title,
+            summary=summary,
+            payload=payload,
+            rationale=rationale,
+            cluster_id=cluster_id,
+            session_id=session_id,
+            source=source,
+            question=question,
+            follow_ups=follow_ups,
+            parent_request_id=parent_request_id,
+            created_by=created_by,
+            dedupe=dedupe,
+        )
+        return outcome.request
+
+    def enqueue(
+        self,
+        action_type: str,
+        title: str,
+        summary: str,
+        payload: Optional[Dict[str, Any]] = None,
+        rationale: str = "",
+        cluster_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        source: str = "mcp",
+        question: Optional[str] = None,
+        follow_ups: Optional[Dict[str, Any]] = None,
+        parent_request_id: Optional[str] = None,
+        created_by: str = "ai",
+        *,
+        dedupe: bool = True,
+    ) -> EnqueueOutcome:
+        """Create a request, or reuse/update an open IR-equivalent match."""
         spec = get_action_spec(action_type)
         if spec is None:
             raise ValueError(f"Unknown action type {action_type!r}")
@@ -217,6 +447,19 @@ class ApprovalQueue:
         missing = [name for name in spec.required_fields if not payload.get(name)]
         if missing:
             raise ValueError(f"{spec.label} is missing required fields: {', '.join(missing)}")
+
+        if dedupe:
+            reused = self._reuse_open_request(
+                action_type=action_type,
+                title=title,
+                summary=summary,
+                payload=payload,
+                rationale=rationale,
+                cluster_id=cluster_id,
+                session_id=session_id,
+            )
+            if reused is not None:
+                return reused
 
         request = ApprovalRequest(
             action_type=action_type,
@@ -237,11 +480,279 @@ class ApprovalQueue:
         if spec.execution == "informational":
             request.payload = self._enrich_informational(spec.action_type, request.payload)
             request.status = RequestStatus.INFORMATIONAL
+            # Fine-tune requires an existing Home Lab rule. Gap filings become Visibility.
+            if action_type == "fine_tune" and not request.payload.get("rule_found"):
+                request = self._reclassify_fine_tune_as_visibility(request)
         else:
             from .enrichment import enrich_request
 
             request = enrich_request(request)
-        return self.store.put(request)
+        return EnqueueOutcome(request=self.store.put(request), outcome="created")
+
+    def _reclassify_fine_tune_as_visibility(
+        self,
+        request: ApprovalRequest,
+        *,
+        reason: str = "",
+    ) -> ApprovalRequest:
+        """Keep the note but file it under Visibility (gap / new-rule path)."""
+        from .catalog import get_action_spec
+
+        payload = dict(request.payload or {})
+        payload["reclassified_from"] = "fine_tune"
+        payload["reclassified_reason"] = reason or (
+            "No matching Home Lab rule for fine-tune; filed as a visibility gap instead."
+        )
+        request.action_type = "visibility"
+        request.payload = self._enrich_informational("visibility", payload)
+        vis = get_action_spec("visibility")
+        if vis is not None:
+            request.risk = vis.risk
+        return request
+
+    @staticmethod
+    def _looks_like_new_rule_request(request: ApprovalRequest) -> bool:
+        """True when the note asks to create/split a detection, not just except noise."""
+        payload = request.payload or {}
+        blob = " ".join(
+            str(part or "")
+            for part in (
+                request.title,
+                request.summary,
+                payload.get("description"),
+                payload.get("suggestion"),
+            )
+        )
+        if not _NEW_RULE_INTENT.search(blob):
+            return False
+        # Exception wording keeps Fine-tune unless clearly asking for a dedicated/new rule.
+        if _EXCEPTION_INTENT.search(blob) and not re.search(
+            r"("
+            r"\b(create|author|write)\b.{0,40}\b(new |dedicated )?(detection )?rule\b"
+            r"|\bdedicated\b.{0,40}\brule\b"
+            r"|\breplace the generic\b"
+            r"|\bsplit\b.{0,60}\bout of\b"
+            r")",
+            blob,
+            re.IGNORECASE | re.DOTALL,
+        ):
+            return False
+        return True
+
+    def migrate_misfiled_fine_tunes(self) -> Dict[str, Any]:
+        """Reclassify open fine-tune notes that belong under Visibility.
+
+        Covers: no ``rule_found`` after re-enrich, and clear new-rule / dedicated-rule
+        intent text. Leaves true exception fine-tunes and closed reviews alone.
+        """
+        from .lab_rules import enrich_fine_tune
+
+        reclassified: List[str] = []
+        skipped = 0
+        for item in self.store.snapshot():
+            if item.action_type != "fine_tune":
+                continue
+            if is_archived(item) or item.status != RequestStatus.INFORMATIONAL:
+                skipped += 1
+                continue
+            payload = dict(item.payload or {})
+            dac = payload.get("dac") if isinstance(payload.get("dac"), dict) else {}
+            if dac.get("stage") in {"implemented", "rejected", "drafted", "needs_fix"}:
+                # Already in (or past) DaC exception review — do not move.
+                skipped += 1
+                continue
+            enriched = enrich_fine_tune(payload)
+            item.payload = enriched
+            reason = ""
+            if not enriched.get("rule_found"):
+                reason = (
+                    "Legacy fine-tune had no matching Home Lab rule; "
+                    "moved to Visibility."
+                )
+            elif self._looks_like_new_rule_request(item):
+                reason = (
+                    "Legacy fine-tune asked for a new/dedicated detection; "
+                    "moved to Visibility."
+                )
+            else:
+                # Persist refreshed enrich only.
+                self.store.put(item)
+                skipped += 1
+                continue
+            moved = self._reclassify_fine_tune_as_visibility(item, reason=reason)
+            moved.updated_at = datetime.now()
+            self.store.put(moved)
+            reclassified.append(moved.id)
+        return {
+            "reclassified": len(reclassified),
+            "ids": reclassified,
+            "skipped": skipped,
+        }
+
+    def _reuse_open_request(
+        self,
+        *,
+        action_type: str,
+        title: str,
+        summary: str,
+        payload: Dict[str, Any],
+        rationale: str,
+        cluster_id: Optional[str],
+        session_id: Optional[str],
+    ) -> Optional[EnqueueOutcome]:
+        snapshot = self.store.snapshot()
+        existing: Optional[ApprovalRequest] = None
+        if action_type in ALERT_SCOPED_ACTIONS:
+            alert_id = str(payload.get("alert_id") or "").strip()
+            if alert_id:
+                existing = find_open_alert_match(
+                    snapshot,
+                    action_type=action_type,
+                    alert_id=alert_id,
+                    cluster_id=cluster_id,
+                )
+            if existing is None:
+                existing = find_open_flow_match(
+                    snapshot,
+                    action_type=action_type,
+                    payload=payload,
+                    cluster_id=cluster_id,
+                )
+        elif action_type in INFORMATIONAL_ACTIONS:
+            existing = find_open_informational_match(
+                snapshot,
+                action_type=action_type,
+                payload=payload,
+                title=title,
+                summary=summary,
+                cluster_id=cluster_id,
+            )
+        elif action_type in ENDPOINT_SCOPED_ACTIONS:
+            existing = find_open_endpoint_match(
+                snapshot,
+                action_type=action_type,
+                payload=payload,
+                cluster_id=cluster_id,
+            )
+        if existing is None:
+            return None
+
+        if action_type in ALERT_SCOPED_ACTIONS:
+            existing = self._merge_related_alert_ids(existing, payload)
+
+        if action_type == "add_alert_note":
+            new_note = str(payload.get("note") or summary or "").strip()
+            old_note = str(
+                (existing.payload or {}).get("note") or existing.summary or ""
+            ).strip()
+            if note_is_richer(old_note, new_note):
+                existing.payload = dict(existing.payload or {})
+                existing.payload["note"] = new_note
+                if payload.get("rule_name"):
+                    existing.payload.setdefault("rule_name", payload.get("rule_name"))
+                existing.summary = summary or new_note or existing.summary
+                if rationale:
+                    existing.rationale = rationale
+                if session_id and not existing.session_id:
+                    existing.session_id = session_id
+                existing.updated_at = datetime.now()
+                from .enrichment import enrich_request
+
+                existing = enrich_request(existing, force=True)
+                return EnqueueOutcome(request=self.store.put(existing), outcome="updated")
+            if session_id and not existing.session_id:
+                existing.session_id = session_id
+                existing.updated_at = datetime.now()
+                return EnqueueOutcome(request=self.store.put(existing), outcome="deduplicated")
+            # related_alert_ids may have changed even when note text did not
+            existing.updated_at = datetime.now()
+            return EnqueueOutcome(request=self.store.put(existing), outcome="deduplicated")
+
+        if action_type == "close_alert":
+            changed = False
+            existing.payload = dict(existing.payload or {})
+            for key in ("reason", "comment"):
+                value = payload.get(key)
+                if value and value != existing.payload.get(key):
+                    existing.payload[key] = value
+                    changed = True
+            if rationale and rationale != existing.rationale:
+                existing.rationale = rationale
+                changed = True
+            if summary and summary != existing.summary:
+                existing.summary = summary
+                changed = True
+            if session_id and not existing.session_id:
+                existing.session_id = session_id
+                changed = True
+            # Always persist after related_alert_ids merge
+            existing.updated_at = datetime.now()
+            return EnqueueOutcome(
+                request=self.store.put(existing),
+                outcome="updated" if changed else "deduplicated",
+            )
+
+        if session_id and not existing.session_id:
+            existing.session_id = session_id
+            existing.updated_at = datetime.now()
+            return EnqueueOutcome(request=self.store.put(existing), outcome="deduplicated")
+        return EnqueueOutcome(request=existing, outcome="deduplicated")
+
+    @staticmethod
+    def _merge_related_alert_ids(
+        existing: ApprovalRequest,
+        payload: Dict[str, Any],
+    ) -> ApprovalRequest:
+        """Keep one ticket but remember every SIEM alert_id that folded into it."""
+        existing.payload = dict(existing.payload or {})
+        ids = related_alert_ids_of(existing)
+        for key in ("alert_id", "alertId"):
+            raw = payload.get(key)
+            if raw not in (None, ""):
+                text = str(raw).strip()
+                if text and text not in ids:
+                    ids.append(text)
+        extra = payload.get("related_alert_ids") or payload.get("alert_ids") or []
+        if isinstance(extra, str):
+            extra = [part.strip() for part in extra.split(",") if part.strip()]
+        if isinstance(extra, list):
+            for raw in extra:
+                text = str(raw or "").strip()
+                if text and text not in ids:
+                    ids.append(text)
+        if ids:
+            existing.payload["alert_id"] = ids[0]
+            if len(ids) > 1:
+                existing.payload["related_alert_ids"] = ids
+        return existing
+
+    def find_related_requests(
+        self,
+        *,
+        alert_id: Optional[str] = None,
+        action_type: Optional[str] = None,
+        action_types: Optional[List[str]] = None,
+        rule_id: Optional[str] = None,
+        rule_name: Optional[str] = None,
+        query: Optional[str] = None,
+        cluster_id: Optional[str] = None,
+        open_only: bool = True,
+        limit: int = 25,
+    ) -> List[Dict[str, Any]]:
+        types = list(action_types or [])
+        if action_type:
+            types.append(action_type)
+        return _find_related_requests(
+            self.store.snapshot(),
+            alert_id=alert_id,
+            action_types=types or None,
+            rule_id=rule_id,
+            rule_name=rule_name,
+            query=query,
+            cluster_id=cluster_id,
+            open_only=open_only,
+            limit=limit,
+        )
 
     def create_from_mcp_tool(
         self,
@@ -250,6 +761,20 @@ class ApprovalQueue:
         cluster_id: Optional[str] = None,
         session_id: Optional[str] = None,
     ) -> ApprovalRequest:
+        return self.enqueue_from_mcp_tool(
+            tool_name,
+            arguments,
+            cluster_id=cluster_id,
+            session_id=session_id,
+        ).request
+
+    def enqueue_from_mcp_tool(
+        self,
+        tool_name: str,
+        arguments: Optional[Dict[str, Any]] = None,
+        cluster_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+    ) -> EnqueueOutcome:
         from .catalog import spec_for_mcp_tool
 
         spec = spec_for_mcp_tool(tool_name)
@@ -279,7 +804,7 @@ class ApprovalQueue:
         }
         if "title" not in payload and title:
             payload["title"] = title
-        return self.create(
+        return self.enqueue(
             action_type=spec.action_type,
             title=str(title),
             summary=str(summary),
@@ -358,8 +883,20 @@ class ApprovalQueue:
         siem = self.enrich_open(cluster_id=cluster_id)
         return {**github, **siem}
 
+    @staticmethod
+    def _github_issue_already_gone(exc: BaseException) -> bool:
+        """True when GitHub says the tracking issue is deleted / missing."""
+        text = str(exc or "").lower()
+        return (
+            "this issue was deleted" in text
+            or "could not resolve" in text
+            or ("not found" in text and "issue" in text)
+            or "status: 410" in text
+            or "http 410" in text
+        )
+
     def sync_github_closed(self, cluster_id: Optional[str] = None) -> Dict[str, Any]:
-        """Archive open mirrored notes whose GitHub issue is already closed."""
+        """Archive open mirrored notes whose GitHub issue is already closed or deleted."""
         checked = 0
         closed = 0
         errors = 0
@@ -373,22 +910,38 @@ class ApprovalQueue:
             if provider not in {"github", ""}:
                 continue
             checked += 1
+            number = link.get("number")
+            already_deleted = False
             try:
                 issue = self._github_get_issue(item, str(link["number"]))
             except Exception as exc:
-                errors += 1
-                logger.warning("GitHub sync skipped for request %s: %s", item.id, exc)
-                continue
+                if self._github_issue_already_gone(exc):
+                    already_deleted = True
+                    issue = {}
+                else:
+                    errors += 1
+                    logger.warning("GitHub sync skipped for request %s: %s", item.id, exc)
+                    continue
             state = str((issue or {}).get("state") or "").lower()
-            if state != "closed":
+            if not already_deleted and state != "closed":
                 continue
-            number = link.get("number")
             try:
-                self.acknowledge(
-                    item.id,
-                    comment=f"Closed on GitHub #{number}",
-                    actor="github",
-                )
+                if already_deleted:
+                    self._apply_github_link_state(
+                        item, link=link, state="deleted", deleted=True
+                    )
+                    self.store.put(item)
+                    self.acknowledge(
+                        item.id,
+                        comment=f"Deleted on GitHub #{number}",
+                        actor="github",
+                    )
+                else:
+                    self.acknowledge(
+                        item.id,
+                        comment=f"Closed on GitHub #{number}",
+                        actor="github",
+                    )
                 closed += 1
             except Exception as exc:
                 errors += 1
@@ -406,7 +959,7 @@ class ApprovalQueue:
         comment: Optional[str] = None,
         actor: str = "analyst",
     ) -> ApprovalRequest:
-        """Archive an informational note and close the linked GitHub issue."""
+        """Archive an informational note and delete the linked GitHub issue."""
         request = self._require(request_id)
         if request.status != RequestStatus.INFORMATIONAL:
             raise ValueError("Only informational requests can be ignored")
@@ -414,48 +967,33 @@ class ApprovalQueue:
         github_body = _IGNORE_GITHUB_COMMENT
         if extra:
             github_body = f"{github_body}\n\n{extra}"
-        github_result: Dict[str, Any] = {"attempted": False}
-        link = github_issue_link(request.payload)
-        if link:
-            github_result["attempted"] = True
-            try:
-                issue = self._github_close_issue(request, str(link["number"]), github_body)
-                github_result["success"] = True
-                github_result["issue"] = {
-                    "number": (issue or {}).get("number") or link.get("number"),
-                    "state": (issue or {}).get("state") or "closed",
-                    "url": (issue or {}).get("html_url") or link.get("url"),
-                }
-            except Exception as exc:
-                logger.warning("Ignore archived %s locally but GitHub close failed: %s", request_id, exc)
-                github_result["success"] = False
-                github_result["error"] = str(exc)
-        if github_result.get("success") and link:
-            payload = dict(request.payload or {})
-            engineering = dict(payload.get("engineering") or {})
-            issue = dict(engineering.get("issue") or {})
-            issue["number"] = github_result.get("issue", {}).get("number") or link.get("number")
-            issue["url"] = github_result.get("issue", {}).get("url") or link.get("url")
-            issue["state"] = "closed"
-            engineering["issue"] = issue
-            engineering["provider"] = engineering.get("provider") or link.get("provider") or "github"
-            engineering["repository"] = engineering.get("repository") or link.get("repository")
-            payload["engineering"] = engineering
-            request.payload = payload
+        # Same hard-delete path as Done / Send-to-Review. close_issue failed in
+        # production when the issue was already gone (comment POST → 404) while
+        # delete_linked_github_issue treats missing/deleted as success.
+        github_result = self.delete_linked_github_issue(request, comment=github_body)
         request.status = RequestStatus.ACKNOWLEDGED
         request.decision = Decision(action="ignore", actor=actor, comment=comment or _IGNORE_GITHUB_COMMENT)
+        if github_result.get("success"):
+            message = "Ignored. Linked GitHub issue was deleted."
+        elif github_result.get("attempted"):
+            message = "Ignored locally. GitHub issue was not deleted."
+        else:
+            message = "Ignored. No GitHub issue was linked."
         request.execution_result = {
             "success": True,
             "informational": True,
             "archived": True,
             "ignored": True,
-            "message": "Ignored. Linked GitHub issue was closed." if github_result.get("success") else (
-                "Ignored locally. GitHub issue was not closed." if github_result.get("attempted") else "Ignored. No GitHub issue was linked."
-            ),
+            "message": message,
             "github": github_result,
         }
         if github_result.get("error"):
-            request.error = f"GitHub close failed: {github_result['error']}"
+            request.error = f"GitHub delete failed: {github_result['error']}"
+            logger.warning(
+                "Ignore archived %s locally but GitHub delete failed: %s",
+                request_id,
+                github_result["error"],
+            )
         else:
             request.error = None
         self._mark_archived(request)
@@ -477,6 +1015,72 @@ class ApprovalQueue:
     def _github_close_issue(self, request: ApprovalRequest, number: str, comment: str) -> Dict[str, Any]:
         return self._github_client_for(request).close_issue(number, comment=comment)
 
+    def _github_delete_issue(self, request: ApprovalRequest, number: str, comment: str) -> Dict[str, Any]:
+        return self._github_client_for(request).delete_issue(number, comment=comment)
+
+    def _apply_github_link_state(
+        self,
+        request: ApprovalRequest,
+        *,
+        link: Dict[str, Any],
+        state: str,
+        deleted: bool = False,
+    ) -> None:
+        """Update payload.engineering.issue after close or delete."""
+        payload = dict(request.payload or {})
+        engineering = dict(payload.get("engineering") or {})
+        issue = dict(engineering.get("issue") or {})
+        issue["number"] = link.get("number") or issue.get("number")
+        issue["url"] = link.get("url") or issue.get("url")
+        issue["state"] = state
+        if deleted:
+            issue["deleted"] = True
+        engineering["issue"] = issue
+        engineering["provider"] = engineering.get("provider") or link.get("provider") or "github"
+        engineering["repository"] = engineering.get("repository") or link.get("repository")
+        payload["engineering"] = engineering
+        request.payload = payload
+
+    def delete_linked_github_issue(
+        self,
+        request: ApprovalRequest,
+        *,
+        comment: str,
+    ) -> Dict[str, Any]:
+        """Hard-delete the linked GitHub issue when present. Idempotent if already gone.
+
+        Returns a github result dict ``{attempted, success?, error?, issue?}``.
+        Does not archive the request — callers decide local lifecycle.
+        """
+        result: Dict[str, Any] = {"attempted": False, "action": "delete"}
+        link = github_issue_link(request.payload)
+        if not link:
+            return result
+        # Already deleted locally — treat as success without another API call.
+        eng = (request.payload or {}).get("engineering") or {}
+        existing = eng.get("issue") if isinstance(eng, dict) else {}
+        if isinstance(existing, dict) and existing.get("deleted"):
+            result["attempted"] = True
+            result["success"] = True
+            result["issue"] = {"number": existing.get("number") or link.get("number"), "deleted": True}
+            return result
+        result["attempted"] = True
+        try:
+            deleted = self._github_delete_issue(request, str(link["number"]), comment)
+            result["success"] = True
+            result["issue"] = {
+                "number": (deleted or {}).get("number") or link.get("number"),
+                "deleted": True,
+                "url": (deleted or {}).get("url") or link.get("url"),
+                "already_gone": bool((deleted or {}).get("already_gone")),
+            }
+            self._apply_github_link_state(request, link=link, state="deleted", deleted=True)
+        except Exception as exc:
+            logger.warning("GitHub delete failed for request %s: %s", request.id, exc)
+            result["success"] = False
+            result["error"] = str(exc)
+        return result
+
     def deny(self, request_id: str, comment: Optional[str] = None, actor: str = "analyst") -> ApprovalRequest:
         request = self._require(request_id)
         if request.status == RequestStatus.INFORMATIONAL:
@@ -494,18 +1098,40 @@ class ApprovalQueue:
         comment: Optional[str] = None,
         actor: str = "analyst",
     ) -> ApprovalRequest:
-        """Mark an informational request as reviewed (Done). Archives it out of Open."""
+        """Mark an informational request as reviewed (Done). Archives it out of Open.
+
+        Fine-tune notes also hard-delete the linked GitHub tracking issue.
+        """
         request = self._require(request_id)
         if request.status != RequestStatus.INFORMATIONAL:
             raise ValueError("Only informational requests can be marked Done")
+        github_result: Dict[str, Any] = {"attempted": False}
+        message = "Marked as reviewed and archived. No side effects."
+        if request.action_type == "fine_tune":
+            extra = (comment or "").strip()
+            gh_comment = _DONE_GITHUB_DELETE_COMMENT
+            if extra:
+                gh_comment = f"{gh_comment}\n\n{extra}"
+            github_result = self.delete_linked_github_issue(request, comment=gh_comment)
+            if github_result.get("success"):
+                message = "Marked Done. Linked GitHub issue was deleted."
+            elif github_result.get("attempted"):
+                message = "Marked Done locally. GitHub issue was not deleted."
+            else:
+                message = "Marked Done. No GitHub issue was linked."
         request.status = RequestStatus.ACKNOWLEDGED
         request.decision = Decision(action="acknowledge", actor=actor, comment=comment)
         request.execution_result = {
             "success": True,
             "informational": True,
             "archived": True,
-            "message": "Marked as reviewed and archived. No side effects.",
+            "message": message,
+            "github": github_result,
         }
+        if github_result.get("error"):
+            request.error = f"GitHub delete failed: {github_result['error']}"
+        else:
+            request.error = None
         self._mark_archived(request)
         return self.store.put(request)
 
@@ -533,8 +1159,8 @@ class ApprovalQueue:
         normalized = str(action or "").strip().lower()
         if normalized in {"done", "ack"}:
             normalized = "acknowledge"
-        if normalized not in {"approve", "deny", "acknowledge", "ignore"}:
-            raise ValueError("Bulk action must be approve, deny, acknowledge, or ignore")
+        if normalized not in {"approve", "deny", "acknowledge", "ignore", "reopen"}:
+            raise ValueError("Bulk action must be approve, deny, acknowledge, ignore, or reopen")
         results: List[Dict[str, Any]] = []
         succeeded = 0
         skipped = 0
@@ -550,7 +1176,20 @@ class ApprovalQueue:
             informational = request.status == RequestStatus.INFORMATIONAL or (
                 spec is not None and spec.execution == "informational" and request.status == RequestStatus.INFORMATIONAL
             )
-            if normalized == "acknowledge":
+            if normalized == "reopen":
+                if not is_archived(request):
+                    skipped += 1
+                    results.append(
+                        {
+                            "id": request_id,
+                            "success": False,
+                            "skipped": True,
+                            "error": "Already open",
+                            "status": request.status.value,
+                        }
+                    )
+                    continue
+            elif normalized == "acknowledge":
                 if request.status != RequestStatus.INFORMATIONAL:
                     skipped += 1
                     results.append(
@@ -624,6 +1263,8 @@ class ApprovalQueue:
                     updated = self.deny(request_id, comment=comment, actor=actor)
                 elif normalized == "ignore":
                     updated = self.ignore(request_id, comment=comment, actor=actor)
+                elif normalized == "reopen":
+                    updated = self.reopen(request_id, comment=comment, actor=actor)
                 else:
                     updated = self.acknowledge(request_id, comment=comment, actor=actor)
                 succeeded += 1

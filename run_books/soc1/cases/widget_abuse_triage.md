@@ -53,8 +53,8 @@ This runbook explicitly **excludes**:
 *   **SIEM – past decisions (MANDATORY):** `get_rule_detections`, `get_security_alerts`, `get_alerts_by_entity`
 *   **SIEM – entity pivot / enrichment:** `lookup_entity`, `pivot_on_indicator`, `search_user_activity`, `search_security_events`, `search_kql_query`, `search_lucene_query`, `search_eql_query`, `search_dsl_query`, `search_esql_query`, `get_alerts_by_time_window`, `get_ioc_matches`, `get_ip_address_report`, `get_network_events`
 *   **NetBox:** `netbox_lookup_host`, `netbox_lookup_ip`, `netbox_lookup_prefix`, `netbox_search`
-*   **Engineering (when applicable):** `list_fine_tuning_recommendations`, `create_fine_tuning_recommendation`, `add_comment_to_fine_tuning_recommendation`, `create_visibility_recommendation`
-*   **Requests:** `create_approval_request` — optional **Is this you?** (`action_type=identity_verify`) only when a Yes/No on identity would actually help
+*   **Detection notes (when applicable):** `list_fine_tuning_recommendations`, `create_fine_tuning_recommendation`, `add_comment_to_fine_tuning_recommendation`, `create_visibility_recommendation` — land under Requests → Notes
+*   **Requests → Approvals:** `create_approval_request` — optional **Is this you?** (`action_type=identity_verify`) only when a Yes/No on identity would actually help
 *   **Forbidden in this runbook:** `create_case`, `search_cases`, `list_cases`, `review_case`, `add_case_comment`, `attach_observable_to_case`, `update_case_status`, `add_case_task`, and other case-write tools
 
 ## Workflow Steps
@@ -103,10 +103,11 @@ This runbook explicitly **excludes**:
     *   Set `${ASSESSMENT}` accordingly.
 
 7.  **FP/BTP Closure (no case) — MANDATORY final verdict:**
+    *   `find_related_requests` with `alert_id` (+ note/close) before filing; skip twins for the same document.
     *   `add_alert_note` citing history (verdicts + note takeaways), NetBox role match, pivot summary (host `lab-1` / user `bob` as applicable), and IOC results. Queued for Requests — do not claim the note is already written.
     *   **MANDATORY:** `update_alert_verdict` → `false_positive` or `benign_true_positive` (set `${FINAL_VERDICT}`).
     *   `close_alert` with appropriate reason + comment. Close is **queued for Requests** — do not claim the alert is already closed.
-    *   If the rule is noisy for known lab/widget roles, create/update a fine-tuning recommendation (`list_fine_tuning_recommendations` → comment or `create_fine_tuning_recommendation` with tags like `["false-positive", "fine-tuning", "soc1-triage", "widget-abuse"]`).
+    *   If the rule is noisy for known lab/widget roles: `find_related_requests` with rule + `fine_tune` first; only then create/update (`list_fine_tuning_recommendations` → comment or `create_fine_tuning_recommendation` with tags like `["false-positive", "fine-tuning", "soc1-triage", "widget-abuse"]`).
     *   Set `${ACTION_TAKEN}` = "AI verdict recorded; close requested (pending analyst approval)." End.
 
 8.  **TP / Uncertain Handoff (still no case) — MANDATORY final verdict:**
@@ -119,7 +120,7 @@ This runbook explicitly **excludes**:
         4. `${PIVOT_SUMMARY}` and `${IOC_MATCH_RESULTS}`
         5. Why not closed and what a human should check next (widget legitimacy, user intent, lateral activity)
     *   **MANDATORY:** `update_alert_verdict` with that final assessment (`${FINAL_VERDICT}`).
-    *   Optionally file **Is this you?** only if a Yes/No would actually decide whether `${USER_ID}` expected the widget activity — not on every `uncertain`. If filing: `create_approval_request` (`action_type=identity_verify`), a yes/no `question` (e.g. "Was this widget activity by ${USER_ID} on ${HOSTNAME} actually you / expected?"), and `payload` `alert_id`, `username=${USER_ID}`, `hostname`, `activity`. Tell the analyst it is pending in Requests.
+    *   Optionally file **Is this you?** only if a Yes/No would actually decide whether `${USER_ID}` expected the widget activity — not on every `uncertain`. If filing: `create_approval_request` (`action_type=identity_verify`), a yes/no `question` (e.g. "Was this widget activity by ${USER_ID} on ${HOSTNAME} actually you / expected?"), and `payload` `alert_id`, `username=${USER_ID}`, `hostname`, `activity`. Tell the analyst it is pending in Requests → Approvals.
     *   If visibility gaps blocked triage (missing NetBox, weak widget telemetry), optionally `create_visibility_recommendation`.
     *   **Do not create a case.** Set `${ACTION_TAKEN}` = "Alert note requested; final verdict recorded; no case created." (mention Is this you? only if you filed it.) End.
 

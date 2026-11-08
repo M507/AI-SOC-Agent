@@ -1,6 +1,6 @@
 # Detection as Code
 
-SamiGPT section for reading an external Elastic rule folder, working open alerts, and writing an exception or a disable only after an analyst implements a review. The sidebar group is **Detection as Code**: **Findings**, **Rules**, and **Review**. Settings live under **Settings → General → Detection as Code**.
+SamiGPT section for reading an external Elastic rule folder, working open alerts, and writing an exception or a disable only after an analyst implements a review. The sidebar group is **Detection as Code**: **Alerts**, **Rules**, and **Review**. Settings live under **Settings → General → Detection as Code**.
 
 Rule JSON stays in the configured folder. It is not vendored, copied, or imported from another rules application. Prompts, model calls, usage, validation, the diff, and the file write are in `src/ai_controller/detection/`.
 
@@ -8,13 +8,17 @@ Rule JSON stays in the configured folder. It is not vendored, copied, or importe
 
 | Surface | What the analyst can do | What is written |
 | --- | --- | --- |
-| Findings | Search open alerts, check evidence, Ask, send checked fields to Review, ask the model to suggest an exception, acknowledge or close | Ask and Suggest do not write a rule file. Acknowledge and Close change Elastic workflow status only |
+| Alerts | Search open alerts, check evidence, Ask, send checked fields to Review, ask the model to suggest an exception, acknowledge or close | Ask and Suggest do not write a rule file. Acknowledge and Close change Elastic workflow status only |
 | Rules | Search the folder, open one rule, start a disable review | Disable does not rename the file until Implement |
-| Review | Keep or drop conditions, Draft, Ask for changes, Implement, Reject | Implement writes the rule JSON. Reject archives the review and leaves the file unchanged |
+| Review | Keep or drop conditions (exceptions), Draft, Ask for changes, Implement, Reject; also **New rule** reviews from Visibility | Implement writes the rule JSON **and syncs it to Kibana** (exceptions: list/items + PUT update; new rule: create file + POST when missing remotely). Exception Implement may close matching open alerts. Reject archives the review and leaves the file unchanged |
 
-Not implemented: pushing the rule to Kibana, pulling or merging an upstream rules catalog, a Discord notifier, and the setup-wizard step that would store the folder path. The wizard step is still the TODO in [Setup](setup.md). **Settings → General** already saves that same `detection.rules_dir` field.
+Not implemented: pulling or merging an upstream rules catalog, a Discord notifier, and the setup-wizard step that would store the folder path. The wizard step is still the TODO in [Setup](setup.md). **Settings → General** already saves that same `detection.rules_dir` field. Rule sync after Implement matches Home-Lab-Rules Fine-tune & Deploy / `cli.py --sync` for the one changed file.
 
-Filing a **Fine-tune detection** note from the agent still only stores an informational Requests card. It does not call the Detection as Code model and does not edit a file. See [Requests tab](requests.md). Findings actions below are separate from that card.
+Filing a **Fine-tune detection** note from the agent still only stores an informational Requests card (no model call, no file write) for an **existing** Home Lab rule. If no rule matches, the server reclassifies the note as **Visibility**. **Send to Review** on a fine-tune card promotes it into DaC (`dac.kind=exceptions`): the model drafts exceptions with SIEM/rule context, validation runs (auto-revise up to 3 tries), then Review shows the suggestion, rationale, and exact JSON diff for **Implement** or **Reject**.
+
+Filing a **Visibility** note stores a coverage gap. Agents must search the catalog and open Requests first. **Send to Review** on a visibility card (blocked when `coverage_check.likely_covered`) promotes into DaC as `dac.kind=new_rule` (query rules only): draft/validate loop, then Implement **creates** `[enabled]_…_{uuid}.json` and syncs to Kibana (POST create when the rule is not remote yet). Kibana API keys need **create** detection-rule privileges for that path.
+
+On a successful Send (or on Requests **Done** / **Implement** / **Ignore**), the linked GitHub tracking issue is **deleted**. Already-deleted issues are treated as success. After 3 failed tries the stage is `needs_fix`, the issue stays open, and the attempt log is kept. See [Requests tab](requests.md).
 
 ## Rules folder
 
@@ -26,7 +30,7 @@ Resolution, first match wins:
 
 An empty saved path is allowed and falls through to the default. A non-empty path must already be a directory (`expanduser` + `resolve`). Saving settings (`PUT /api/detections/settings`) clears the in-memory rule index.
 
-`detection.findings_hours` defaults to **168**. `detection.match_hours` defaults to **2160** (90 days). Both are clamped to 1..2160. Findings uses the findings lookback. Acknowledge and Close use the match lookback.
+`detection.alerts_hours` defaults to **168**. `detection.match_hours` defaults to **2160** (90 days). Both are clamped to 1..2160. Alerts uses the alerts lookback. Acknowledge and Close use the match lookback.
 
 `config.json.example` has the `detection` section. The UI card is **Settings → General**, saved by its own button so saving investigation limits does not clear the path.
 
@@ -44,12 +48,12 @@ Filenames look like `[enabled]_name_uuid.json` or `[disabled]_name_uuid.json`. T
 
 ### Suggested fields
 
-A finding field is marked **Suggested**, and starts checked, when its dotted name is in either set:
+An alert field is marked **Suggested**, and starts checked, when its dotted name is in either set:
 
 - The rule's highlighted fields: `rule.investigation_fields.field_names` (also read from `signal.rule.investigation_fields` or `kibana.alert.rule.investigation_fields` on the alert when present)
 - Extra names in `suggested_fields.json` in the rules folder
 
-The catalog file is an object with a `fields` array (a bare array is also accepted). It applies to every finding. The rule list applies only to that rule. Missing or unreadable JSON does not fail the finding; those extra names are simply omitted. Suggested does not write anything. A field is sent with Ask, exception, acknowledge, or close only while its checkbox stays checked.
+The catalog file is an object with a `fields` array (a bare array is also accepted). It applies to every alert. The rule list applies only to that rule. Missing or unreadable JSON does not fail the alert; those extra names are simply omitted. Suggested does not write anything. A field is sent with Ask, exception, acknowledge, or close only while its checkbox stays checked.
 
 ## Package
 
@@ -57,33 +61,34 @@ Each module below has a docstring that points back at this file.
 
 | Module | Responsibility |
 | --- | --- |
-| `detection/findings.py` | Flatten alert fields, suggest names, list open alerts, acknowledge and close |
+| `detection/alerts.py` | Flatten alert fields, suggest names, list open alerts, acknowledge and close |
 | `detection/rules_store.py` | Folder status, load and search, render a file with exceptions or disabled, atomic write |
 | `detection/settings.py` | `detection` section and the env override |
 | `detection/prompts.py` | Ask templates and the draft JSON contract. Not the global SOC system prompt |
-| `detection/ask.py` | One model call about a finding. `mcp_client=None`, `max_tool_iterations=0` |
+| `detection/ask.py` | One model call about an alert. `mcp_client=None`, `max_tool_iterations=0` |
 | `detection/drafting.py` | Parse the draft JSON and normalize exception cards |
-| `detection/review.py` | Create, draft, revise, select, implement, reject. Stored as an informational `fine_tune` request |
-| `detection/validation.py` | Blocks a write that is empty, wildcarded, off-evidence, duplicated, or against a file that changed |
+| `detection/review.py` | Create, draft, revise, select, implement, reject. Fine-tune reviews use `fine_tune` + `dac`; new-rule reviews use `visibility` + `dac.kind=new_rule` |
+| `detection/validation.py` | Blocks a write that is empty, wildcarded, off-evidence, duplicated, or against a file that changed; `evaluate_new_rule_gate` for new query rules |
 | `detection/diff.py` | Unified diff used by the Review **Change** pane |
-| `detection/apply.py` | Builds an exception item and calls the store write |
+| `detection/apply.py` | Builds an exception item and calls the store write; `write_new_rule` creates a new enabled file |
+| `detection/elastic_sync.py` | After Implement, upserts exception lists/items and PUTs the rule to Kibana (POST create when remote rule is missing), then refreshes `_dac` sync hashes |
 | `detection/usage.py` | One usage-ledger row per model round, `session_type=detection` |
 | `web/routes_detections.py` | `/api/detections`, behind the same session auth as the rest of the console |
-| `web/static/detections.js` | Findings, Rules, and Review UI |
+| `web/static/detections.js` | Alerts, Rules, and Review UI |
 
 The active LLM provider is `get_active_provider().complete`. There is no second HTTP client and no tool loop.
 
-## Findings
+## Alerts
 
-`GET /api/detections/findings` loads up to 100 open alerts from the configured Elastic cluster (`include_investigated=true`). Omit `hours` and the server uses `findings_hours`. The list search is a case-insensitive match on title, rule name, rule id, severity, and host.
+`GET /api/detections/alerts` loads up to 100 open alerts from the configured Elastic cluster (`include_investigated=true`). Omit `hours` and the server uses `alerts_hours`. The list search is a case-insensitive match on title, rule name, rule id, severity, and host.
 
-`GET /api/detections/findings/{alert_id}` returns the summary plus up to 400 flattened scalar fields. Nested object keys become dotted names (`host.name`). Lists of scalars are joined. Prefixes `kibana.alert.rule.parameters`, `kibana.alert.rule.note`, `signal.rule.note`, and `signal.rule.investigation_fields` are not evidence rows. Suggested rows sort first.
+`GET /api/detections/alerts/{alert_id}` returns the summary plus up to 400 flattened scalar fields. Nested object keys become dotted names (`host.name`). Lists of scalars are joined. Prefixes `kibana.alert.rule.parameters`, `kibana.alert.rule.note`, `signal.rule.note`, and `signal.rule.investigation_fields` are not evidence rows. Suggested rows sort first.
 
-Every Findings action in the UI requires at least one checked field.
+Every Alerts action in the UI requires at least one checked field.
 
 | Action | API | Model | Rule file | Alerts |
 | --- | --- | --- | --- | --- |
-| Ask about this finding | `POST .../ask` | One call. The answer stays on the finding | Unchanged | Unchanged |
+| Ask about this alert | `POST .../ask` | One call. The answer stays on the alert | Unchanged | Unchanged |
 | Create exception from checked fields | `POST .../exception` | None | Unchanged. Opens Review with the fields as one AND condition, **unchecked** | Unchanged |
 | Suggest with AI | `POST .../suggest` | None yet. Opens Review at stage `proposed` | Unchanged until Draft, and Draft still does not write | Unchanged |
 | Acknowledge | `POST .../status` with `acknowledged` | None | Unchanged | This alert, plus other open alerts for the same rule whose fields contain every checked value, set to `acknowledged` |
@@ -95,16 +100,17 @@ Ask templates (`prompts.py`): `ask_about`, `is_fp`, `suggest_exception`, `invest
 
 ## Review
 
-Reviews are informational `fine_tune` approval requests whose payload has a `dac` object. `GET /api/detections/reviews` returns the open ones (not archived). The Requests tab can still show the same note; Done or Ignore there does not write the file.
+Reviews are informational approval requests whose payload has a `dac` object: usually `fine_tune` (exceptions/disable), or `visibility` with `dac.kind=new_rule`. `GET /api/detections/reviews` returns the open ones (not archived). The Requests tab can still show the same note; Done or Ignore there does not write the file.
 
-`dac` holds `stage`, `kind` (`exceptions` or `disable`), `file`, `file_sha256`, `rule_id`, `evidence_fields`, and `revisions`. The current revision holds `rationale`, `exceptions` (cards), and for a model draft `safe_to_except` and `notes`.
+`dac` holds `stage`, `kind` (`exceptions`, `disable`, or `new_rule`), `file`, `file_sha256`, `rule_id`, `evidence_fields`, and `revisions`. The current revision holds `rationale`, `exceptions` (cards) for fine-tune, or `proposed_rule` / `safe_to_create` for new-rule drafts.
 
 | Stage | How you get there | Buttons |
 | --- | --- | --- |
 | `proposed` | Suggest with AI | **Draft** only. One model call. File unchanged |
-| `drafted` | After Draft, or immediately for a field exception or a disable | Checkboxes, **Ask for changes** (exceptions only), **Implement**, **Reject** |
-| `implemented` | Implement succeeded | No further edits. The request is acknowledged |
-| `rejected` | Reject | File unchanged. The request is ignored |
+| `drafted` | After Draft, Send to Review (validated), field exception, disable, or Visibility new-rule | Checkboxes (exceptions), **Ask for changes**, **Implement**, **Reject** |
+| `needs_fix` | Send to Review exhausted 3 auto-fix attempts | **Ask for changes**, **Implement** (if selection/gate validates), **Reject**. GitHub left open |
+| `implemented` | Implement succeeded | No further edits. The request is acknowledged; GitHub issue deleted if still linked |
+| `rejected` | Reject | File unchanged (new_rule never wrote a file). The request is ignored (GitHub deleted) |
 
 A field exception card is one AND of the checked fields and starts with `selected: false`. Implement stays disabled in the UI until at least one card is checked, and the API rejects a write with no selected condition. Unchecked cards are omitted from the file and from the diff. Toggling a box is `POST /api/detections/reviews/{id}/selection`, which rebuilds the diff without a model call.
 
@@ -114,10 +120,13 @@ A field exception card is one AND of the checked fields and starts with `selecte
 
 An unchecked field exception is a normal open review. The page does not treat "nothing selected" as an error. Implement is what refuses that write. Wildcards, duplicate conditions, and fields outside the stored evidence are errors on Implement and warnings or errors on the review when a selected card already has the problem.
 
-- Exceptions: validates the checked cards, appends them to `exception_items`, writes the same path
-- Disable: writes a sibling `[disabled]_...` file first, then removes the `[enabled]_...` file, so a failed write leaves the original in place. Sets `rule.enabled` false and `_dac.status` to `disabled`
-- Does not close the alert and does not push the rule to Kibana
+- Exceptions: validates the checked cards, appends them to `exception_items`, writes the same path, then pushes exception lists/items and the rule to Kibana
+- Disable: writes a sibling `[disabled]_...` file first, then removes the `[enabled]_...` file, so a failed write leaves the original in place. Sets `rule.enabled` false and `_dac.status` to `disabled`, then syncs that disable to Kibana
+- New rule (`new_rule`): validates the proposed query rule (and catalog collision / `likely_covered` gates), writes a new `[enabled]_Name_{uuid}.json`, then syncs to Kibana (POST create when the rule id is not remote yet)
+- Exceptions Implement also closes open alerts for that rule that match a selected exception card (AND within a card, OR across cards), using the Alerts match lookback and `false_positive`. Close failures are best-effort and do not undo the write/sync. Disable Implement still leaves alerts open.
+- Updates `_dac.content_hash`, `_dac.last_synced_hash`, and `_dac.last_synced_at` after a successful Elastic push
 - If `file_sha256` no longer matches the bytes on disk, the write is refused (409) and the review must be drafted again
+- If the local write succeeds but Kibana sync fails, Implement returns an error (502) and the review stays open
 
 **Reject** (`POST .../reject`) archives the review.
 
@@ -126,7 +135,7 @@ An unchecked field exception is a normal open review. The page does not treat "n
 Each written item (`detection/apply.py`) is a simple included match:
 
 - `item_id`: `sami-{rule_id[:8]}-{sha256 of field=value pairs, 10 hex chars}`
-- `list_id`: `sami-{rule_id[:8]}-exceptions`
+- `list_id`: `dac-{rule_id[:8]}-exceptions` (shared with Home-Lab-Rules)
 - `type`: `simple`, `operator`: `included`, entry `type`: `match`
 - `namespace_type`: `single`
 
@@ -150,23 +159,24 @@ All routes are under `/api/detections` and require a signed-in session.
 
 | Method | Path | Effect |
 | --- | --- | --- |
-| GET, PUT | `/settings` | Read or save `rules_dir`, `findings_hours`, `match_hours` |
-| GET | `/findings` | Open alerts. Optional `q`, `hours` |
-| GET | `/findings/{alert_id}` | One alert and its fields |
-| POST | `/findings/{alert_id}/ask` | `{prompt_id, custom_instruction, entries}` |
-| POST | `/findings/{alert_id}/exception` | `{entries, name?}`. Creates the review, does not write |
-| POST | `/findings/{alert_id}/suggest` | `{entries}`. Creates a `proposed` review |
-| POST | `/findings/{alert_id}/status` | `{status: acknowledged\|closed, entries, note, rule_id}` |
+| GET, PUT | `/settings` | Read or save `rules_dir`, `alerts_hours`, `match_hours` |
+| GET | `/alerts` | Open alerts. Optional `q`, `hours` |
+| GET | `/alerts/{alert_id}` | One alert and its fields |
+| POST | `/alerts/{alert_id}/ask` | `{prompt_id, custom_instruction, entries}` |
+| POST | `/alerts/{alert_id}/exception` | `{entries, name?}`. Creates the review, does not write |
+| POST | `/alerts/{alert_id}/suggest` | `{entries}`. Creates a `proposed` review |
+| POST | `/alerts/{alert_id}/status` | `{status: acknowledged\|closed, entries, note, rule_id}` |
 | GET | `/rules` | `q`, `limit` (1..100) |
 | GET | `/rules/{rule_id}` | Query, exceptions, description |
 | POST | `/rules/{rule_id}/disable` | Creates a disable review |
 | GET | `/reviews` | Open Detection as Code reviews |
+| POST | `/reviews/from-request/{request_id}` | Promote a Fine-tune Requests note (draft + validate loop, max 3) |
 | GET | `/reviews/{request_id}` | One review, including overview, conditions, warnings, and diff |
 | POST | `/reviews/{request_id}/draft` | First model draft |
 | POST | `/reviews/{request_id}/revise` | `{feedback}` |
 | POST | `/reviews/{request_id}/selection` | `{exceptions: [{selected, allow_wildcard}, ...]}` for every card, in order |
-| POST | `/reviews/{request_id}/implement` | Writes the file |
-| POST | `/reviews/{request_id}/reject` | Archives |
+| POST | `/reviews/{request_id}/implement` | Writes the file and syncs; deletes linked GitHub issue if present |
+| POST | `/reviews/{request_id}/reject` | Archives (closes GitHub) |
 
 `DetectionError.status_code` is the HTTP status. A missing rules folder is 409. A missing Elastic cluster is 409 with `No Elastic cluster is configured.`
 
@@ -174,6 +184,6 @@ All routes are under `/api/detections` and require a signed-in session.
 
 `templates/index.html` holds the three panes. `static/detections.js` is `DetectionsManager`. `static/css/detections.css` follows the same tokens as the rest of the console (list pane plus detail, as on Requests).
 
-Findings splits Ask, Exception, and Workflow. Exception copy states that the file is not written until Implement. Close is the danger button. Rules shows query, exceptions, and **Disable through review**. Review shows the rule overview, condition checkboxes, the unified diff (additions and deletions colored), then Implement. Reject sits apart from Implement.
+Alerts splits Ask, Exception, and Workflow. Exception copy states that the file is not written until Implement. Close is the danger button. Rules shows query, exceptions, and **Disable through review**. Review shows the rule overview, condition checkboxes, the unified diff (additions and deletions colored), then Implement. Reject sits apart from Implement.
 
 Switching to Review after **Create exception** or **Suggest with AI** does not call Implement. The status line says the file is unchanged.

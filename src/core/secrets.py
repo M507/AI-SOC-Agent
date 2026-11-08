@@ -8,6 +8,7 @@ MASKED_PLACEHOLDER = "••••••••"
 _MASK_MARKERS = ("...", "••", "****")
 _SECRET_KEYS = {
     "api_key",
+    "kibana_api_key",
     "api_token",
     "password",
     "secret",

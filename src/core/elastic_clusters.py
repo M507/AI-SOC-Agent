@@ -66,6 +66,9 @@ class ElasticCluster:
     verify_ssl: bool = True
     skill_vector: str = ""
     kibana_url: Optional[str] = None
+    # Optional Kibana-scoped API key (cases, exception lists, detection-engine writes).
+    # When unset, Kibana calls reuse ``api_key`` (often an ES-only key without lists-all).
+    kibana_api_key: Optional[str] = None
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -79,6 +82,7 @@ class ElasticCluster:
             "verify_ssl": bool(self.verify_ssl),
             "skill_vector": self.skill_vector or DEFAULT_SKILL_VECTOR,
             "kibana_url": self.kibana_url or "",
+            "kibana_api_key": self.kibana_api_key or "",
         }
 
     def auth_type(self) -> str:
@@ -171,6 +175,9 @@ def _normalize_cluster(raw: Dict[str, Any]) -> ElasticCluster:
         password = password.strip() or None
     skill_vector = str(raw.get("skill_vector") or "").strip()
     kibana_url = str(raw.get("kibana_url") or "").strip().rstrip("/") or None
+    kibana_api_key = raw.get("kibana_api_key") or None
+    if isinstance(kibana_api_key, str):
+        kibana_api_key = kibana_api_key.strip() or None
     return ElasticCluster(
         id=cluster_id,
         name=name,
@@ -182,6 +189,7 @@ def _normalize_cluster(raw: Dict[str, Any]) -> ElasticCluster:
         verify_ssl=bool(raw.get("verify_ssl", True)),
         skill_vector=skill_vector,
         kibana_url=kibana_url,
+        kibana_api_key=kibana_api_key,
     )
 
 
@@ -320,6 +328,7 @@ def client_for_cluster(cluster: ElasticCluster):
         timeout_seconds=cluster.timeout_seconds,
         verify_ssl=cluster.verify_ssl,
         kibana_url=derive_kibana_url(cluster.base_url, cluster.kibana_url),
+        kibana_api_key=cluster.kibana_api_key,
     )
 
 

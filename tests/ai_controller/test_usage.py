@@ -224,6 +224,31 @@ def test_overlapping_appends_write_intact_lines(tmp_path, monkeypatch):
     assert len(ids) == 20
 
 
+def test_append_usage_flushes_without_fsync(tmp_path, monkeypatch):
+    """Hot-path appends must not fsync — that starved the shared UI event loop."""
+    _usage_dir(tmp_path, monkeypatch)
+    fsync_calls = {"n": 0}
+    real_fsync = __import__("os").fsync
+
+    def counting_fsync(fd):
+        fsync_calls["n"] += 1
+        return real_fsync(fd)
+
+    monkeypatch.setattr("os.fsync", counting_fsync)
+    row = append_usage(
+        {
+            "session_id": "s-flush",
+            "session_type": "autorun",
+            "input_tokens": 1,
+            "output_tokens": 1,
+            "usage_reported": True,
+        }
+    )
+    assert row is not None
+    assert fsync_calls["n"] == 0
+    assert usage_path().read_text(encoding="utf-8").strip()
+
+
 def test_format_cost_does_not_round_small_spend_to_zero():
     assert format_cost(0.021) == "$0.021"
     assert format_cost(0.0004) == "$0.0004"

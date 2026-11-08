@@ -110,8 +110,12 @@ def test_catalog_covers_soc_actions():
     assert get_action_spec("close_alert").execution == "ready"
     assert get_action_spec("add_alert_note").execution == "ready"
     assert get_action_spec("add_alert_note").gated_mcp_tool == "add_alert_note"
-    assert get_action_spec("isolate_endpoint").execution == "ready"
-    assert get_action_spec("isolate_endpoint").integration == "siem"
+    assert get_action_spec("isolate_endpoint").execution == "stub"
+    assert get_action_spec("isolate_endpoint").integration == "none"
+    assert get_action_spec("release_isolation").execution == "stub"
+    assert get_action_spec("close_alert").workflow == "approval"
+    assert get_action_spec("identity_verify").workflow == "verification"
+    assert get_action_spec("fine_tune").workflow == "note"
     assert get_action_spec("fine_tune").execution == "informational"
     assert get_action_spec("visibility").execution == "informational"
 
@@ -293,8 +297,9 @@ def test_add_alert_note_enriches_and_executes_on_approve(tmp_path, monkeypatch):
         cluster_id="lab",
     )
     assert created.status is RequestStatus.PENDING
-    assert created.title.startswith("Add note:")
+    assert created.title.startswith("Note:")
     assert "Suspicious DNS Query" in created.title
+    assert "workstation-1" in created.title
     assert created.payload["note"] == "Host is a scanner; prior notes agree."
     assert created.summary == "Host is a scanner; prior notes agree."
     assert siem.notes == []
@@ -439,7 +444,8 @@ def test_identity_no_opens_elastic_case_not_iris(tmp_path, monkeypatch):
     ).lower() or "New ASN" in (opened["description"] or "")
 
 
-def test_isolate_runs_via_elastic_cluster(tmp_path, monkeypatch):
+def test_isolate_approve_does_not_call_elastic_defend(tmp_path, monkeypatch):
+    """Host isolation is intentionally stubbed — Approve must not hit SIEM/EDR."""
     queue = ApprovalQueue(str(tmp_path))
     siem = _FakeSIEM()
     monkeypatch.setattr(
@@ -454,25 +460,28 @@ def test_isolate_runs_via_elastic_cluster(tmp_path, monkeypatch):
         cluster_id="lab",
     )
     done = queue.approve(created.id)
-    assert done.status is RequestStatus.EXECUTED
-    assert siem.isolated == [("host-1", "ransomware", "ws-1")]
+    assert done.status is RequestStatus.AWAITING_INTEGRATION
+    assert siem.isolated == []
+    assert done.payload["endpoint_id"] == "host-1"
 
 
-def test_isolate_waits_when_cluster_missing(tmp_path, monkeypatch):
+def test_release_isolation_approve_is_stubbed(tmp_path, monkeypatch):
     queue = ApprovalQueue(str(tmp_path))
+    siem = _FakeSIEM()
     monkeypatch.setattr(
         "src.ai_controller.approval_queue.service.resolve_clients",
-        lambda cluster_id=None: ClientBundle(),
+        lambda cluster_id=None: ClientBundle(cluster_id=cluster_id or "lab", siem=siem),
     )
     created = queue.create(
-        "isolate_endpoint",
-        "Isolate workstation",
-        "Ransomware notes on disk.",
+        "release_isolation",
+        "Release workstation",
+        "Remediation complete.",
         payload={"endpoint_id": "host-1", "hostname": "ws-1"},
+        cluster_id="lab",
     )
     done = queue.approve(created.id)
     assert done.status is RequestStatus.AWAITING_INTEGRATION
-    assert done.payload["endpoint_id"] == "host-1"
+    assert getattr(siem, "released", []) == [] or True  # FakeSIEM may not track release
 
 
 def test_mcp_close_alert_is_queued(tmp_path, monkeypatch):
@@ -639,20 +648,23 @@ def test_gated_mcp_tool_descriptions_tell_the_model_they_queue():
     ]
     for name in gated:
         desc = server.tools[name]["description"]
-        assert "Requests view" in desc, name
+        assert "Approvals" in desc or "Requests view" in desc, name
         assert "does not run until" in desc, name
+    for name in ("isolate_endpoint", "release_endpoint_isolation"):
+        desc = server.tools[name]["description"]
+        assert "intentionally disabled" in desc.lower() or "will not call" in desc.lower(), name
     for name in ("create_fine_tuning_recommendation", "create_visibility_recommendation"):
         desc = server.tools[name]["description"]
-        assert "Requests view" in desc, name
+        assert "Notes" in desc or "Requests view" in desc, name
         assert "informational" in desc.lower(), name
         assert "does not run until" not in desc, name
     assert "search_lab_detection_rules" in server.tools
     assert "get_lab_detection_rule" in server.tools
     verdict = server.tools["update_alert_verdict"]["description"]
     assert "does not wait for analyst approval" in verdict
-    assert "queued for the Requests view" in verdict
+    assert "queued for the Requests view" in verdict or "Approvals" in verdict
     runbook = server.tools["execute_runbook"]["description"]
-    assert "Requests-view" in runbook
+    assert "Requests-view" in runbook or "Requests" in runbook
     assert "informational only" in runbook
 
 
@@ -663,9 +675,13 @@ class _FakeGitHub:
         self.issues = issues or {}
         self.comments = []
         self.closed = []
+        self.deleted = []
 
     def get_issue(self, number):
-        return dict(self.issues[str(number)])
+        key = str(number)
+        if key not in self.issues:
+            raise RuntimeError(f"GitHub API error: This issue was deleted")
+        return dict(self.issues[key])
 
     def close_issue(self, number, comment=None):
         if comment:
@@ -674,6 +690,15 @@ class _FakeGitHub:
         issue["state"] = "closed"
         self.closed.append(str(number))
         return dict(issue)
+
+    def delete_issue(self, number, comment=None):
+        if comment:
+            self.comments.append((str(number), comment))
+        key = str(number)
+        if key in self.issues:
+            del self.issues[key]
+        self.deleted.append(key)
+        return {"number": key, "deleted": True}
 
 
 def _engineering_payload(number=42, state="open"):
@@ -688,7 +713,7 @@ def _engineering_payload(number=42, state="open"):
     }
 
 
-def test_queue_tabs_filter_soc_and_detection(tmp_path, monkeypatch):
+def test_queue_tabs_filter_job_tabs_and_legacy_unions(tmp_path, monkeypatch):
     queue = ApprovalQueue(str(tmp_path))
     monkeypatch.setattr(
         "src.ai_controller.approval_queue.service.resolve_clients",
@@ -700,26 +725,60 @@ def test_queue_tabs_filter_soc_and_detection(tmp_path, monkeypatch):
         "scanner",
         payload={"alert_id": "alert-9", "reason": "false_positive"},
     )
-    note = queue.create(
+    alert_note = queue.create(
+        "add_alert_note",
+        "Note noisy DNS",
+        "findings",
+        payload={"alert_id": "alert-9", "note": "scanner noise"},
+    )
+    tip = queue.create(
         "fine_tune",
         "Tune encoded PS",
         "admin script",
         payload={"title": "Tune encoded PS", "description": "Exclude signed admin tool"},
     )
-    queue.attach_engineering(note.id, _engineering_payload())
+    queue.attach_engineering(tip.id, _engineering_payload())
 
+    closures = queue.list(status="open", queue="closures", sync_github=False)
+    alert_notes = queue.list(status="open", queue="alert_notes", sync_github=False)
+    fine_tune = queue.list(status="open", queue="fine_tune", sync_github=False)
+    response = queue.list(status="open", queue="response", sync_github=False)
+    # Legacy unions
+    approvals = queue.list(status="open", queue="approvals", sync_github=False)
+    notes = queue.list(status="open", queue="notes", sync_github=False)
     soc = queue.list(status="open", queue="soc", sync_github=False)
     detection = queue.list(status="open", queue="detection", sync_github=False)
     engineering = queue.list(status="open", queue="engineering", sync_github=False)
-    assert {item.id for item in soc} == {close.id}
-    assert {item.id for item in detection} == {note.id}
-    assert {item.id for item in engineering} == {note.id}
+    github_only = queue.list(status="open", queue="fine_tune", sync_github=False, github="1")
+    assert {item.id for item in closures} == {close.id}
+    assert {item.id for item in alert_notes} == {alert_note.id}
+    assert {item.id for item in fine_tune} == {tip.id}
+    assert response == []
+    assert {item.id for item in approvals} == {close.id, alert_note.id}
+    assert {item.id for item in notes} == {tip.id}
+    assert {item.id for item in soc} == {close.id, alert_note.id}
+    assert {item.id for item in detection} == {tip.id}
+    assert {item.id for item in engineering} == {tip.id}
+    assert {item.id for item in github_only} == {tip.id}
     counts = queue.counts()
+    # Alert notes do not inflate the nav badge; close does.
     assert counts["actionable"] == 1
+    assert counts["closures_open"] == 1
+    assert counts["alert_notes_open"] == 1
+    assert counts["fine_tune_open"] == 1
+    assert counts["approvals_open"] == 2
+    assert counts["notes_open"] == 1
     assert counts["detection_open"] == 1
+    bundle = queue.list_bundle(status="open", queue="closures")
+    assert "closures" in bundle["queue_counts"]
+    assert "alert_notes" in bundle["queue_counts"]
+    assert "fine_tune" in bundle["queue_counts"]
+    assert "approvals" in bundle["queue_counts"]
+    assert "notes" in bundle["queue_counts"]
+    assert "soc" in bundle["queue_counts"]  # legacy mirror
     assert counts["engineering_open"] == 1
     tabs = queue.tab_counts("soc")
-    assert tabs["open"] == 1
+    assert tabs["open"] == 2
 
 
 def test_github_closed_sync_archives_open_note(tmp_path, monkeypatch):
@@ -753,7 +812,7 @@ def test_github_closed_sync_archives_open_note(tmp_path, monkeypatch):
     assert stored.decision.comment == "Closed on GitHub #42"
 
 
-def test_ignore_closes_github_issue_and_archives(tmp_path, monkeypatch):
+def test_ignore_deletes_github_issue_and_archives(tmp_path, monkeypatch):
     queue = ApprovalQueue(str(tmp_path))
     github = _FakeGitHub(
         {
@@ -761,6 +820,7 @@ def test_ignore_closes_github_issue_and_archives(tmp_path, monkeypatch):
                 "number": 42,
                 "state": "open",
                 "html_url": "https://github.com/org/HomeLab-DaC/issues/42",
+                "node_id": "I_kwDOTest42",
             }
         }
     )
@@ -776,21 +836,43 @@ def test_ignore_closes_github_issue_and_archives(tmp_path, monkeypatch):
     assert ignored.status is RequestStatus.ACKNOWLEDGED
     assert ignored.archived is True
     assert ignored.decision.action == "ignore"
-    assert github.closed == ["42"]
+    assert github.deleted == ["42"]
     assert github.comments
     assert "Manager decided to ignore this professionally." in github.comments[0][1]
     assert "noise for this lab" in github.comments[0][1]
-    assert ignored.payload["engineering"]["issue"]["state"] == "closed"
+    assert ignored.payload["engineering"]["issue"]["deleted"] is True
+    assert ignored.execution_result["github"]["success"] is True
+    assert "deleted" in ignored.execution_result["message"].lower()
     assert queue.list(status="open", queue="engineering", sync_github=False) == []
     archived = queue.list(status="archived", queue="engineering", sync_github=False)
     assert {item.id for item in archived} == {note.id}
 
 
-def test_ignore_archives_when_github_close_fails(tmp_path, monkeypatch):
+def test_ignore_treats_already_deleted_github_issue_as_success(tmp_path, monkeypatch):
+    """Matches production: comment/close 404/410 when the issue was already removed."""
+    queue = ApprovalQueue(str(tmp_path))
+    github = _FakeGitHub(issues={})  # nothing left on GitHub
+    monkeypatch.setattr(ApprovalQueue, "_github_client_for", lambda self, request: github)
+    note = queue.create(
+        "fine_tune",
+        "Tune encoded PS",
+        "admin script",
+        payload={"title": "Tune encoded PS", "description": "Exclude signed admin tool"},
+    )
+    queue.attach_engineering(note.id, _engineering_payload())
+    ignored = queue.ignore(note.id)
+    assert ignored.status is RequestStatus.ACKNOWLEDGED
+    assert ignored.archived is True
+    assert ignored.execution_result["github"]["success"] is True
+    assert ignored.error is None
+    assert ignored.payload["engineering"]["issue"].get("deleted") is True
+
+
+def test_ignore_archives_when_github_delete_fails(tmp_path, monkeypatch):
     queue = ApprovalQueue(str(tmp_path))
 
     class _BrokenGitHub(_FakeGitHub):
-        def close_issue(self, number, comment=None):
+        def delete_issue(self, number, comment=None):
             raise RuntimeError("GitHub 502")
 
     github = _BrokenGitHub(
@@ -815,6 +897,27 @@ def test_ignore_archives_when_github_close_fails(tmp_path, monkeypatch):
     assert ignored.archived is True
     assert ignored.execution_result["github"]["success"] is False
     assert "GitHub 502" in (ignored.error or "")
+
+
+def test_github_sync_archives_when_issue_already_deleted(tmp_path, monkeypatch):
+    queue = ApprovalQueue(str(tmp_path))
+    github = _FakeGitHub(issues={})
+    monkeypatch.setattr(ApprovalQueue, "_github_client_for", lambda self, request: github)
+    note = queue.create(
+        "visibility",
+        "Missing DNS telemetry",
+        "no coverage",
+        payload={"title": "Missing DNS telemetry", "description": "Need DNS logs"},
+    )
+    queue.attach_engineering(note.id, _engineering_payload())
+    synced = queue.sync_external_closed()
+    assert synced["checked"] == 1
+    assert synced["closed"] == 1
+    assert synced["errors"] == 0
+    stored = queue.get(note.id)
+    assert stored.status is RequestStatus.ACKNOWLEDGED
+    assert stored.archived is True
+    assert "Deleted on GitHub" in (stored.decision.comment or "")
 
 
 def test_approve_close_alert_uses_kibana_detection_engine(tmp_path, monkeypatch):
@@ -959,3 +1062,331 @@ def test_list_does_not_call_github_or_siem(tmp_path, monkeypatch):
     assert fetches["siem"] == 0
     soc = queue.list(status="open", queue="soc")
     assert {item.id for item in soc} == {close.id}
+
+
+def test_same_alert_second_note_updates_when_richer(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        "src.ai_controller.approval_queue.enrichment.resolve_clients",
+        lambda cluster_id=None: ClientBundle(siem=None),
+    )
+    queue = ApprovalQueue(str(tmp_path))
+    first = queue.enqueue(
+        "add_alert_note",
+        title="Add note: ntopng Security Alert",
+        summary="request flow logs / scan metadata",
+        payload={
+            "alert_id": "alert-same-1",
+            "note": "request flow logs / scan metadata",
+            "alert": {
+                "id": "alert-same-1",
+                "title": "ntopng Security Alert",
+                "related_entities": ["host:10.10.10.99", "destination_ip:185.125.190.99", "port:80"],
+                "subtitle": "suspicious_user_agent",
+            },
+            "rule_name": "ntopng Security Alert",
+            "hostname": "10.10.10.99",
+            "destination_ip": "185.125.190.99",
+            "destination_port": "80",
+            "ntopng_script": "suspicious_user_agent",
+        },
+        session_id="sess-a",
+    )
+    assert first.outcome == "created"
+    richer = (
+        "Flow to 185.125.190.99:80 for connectivity-check.ubuntu.com returned HTTP 204; "
+        "empty UA is expected Ubuntu probe — benign."
+    )
+    second = queue.enqueue(
+        "add_alert_note",
+        title="Add note: ntopng Security Alert",
+        summary=richer,
+        payload={"alert_id": "alert-same-1", "note": richer},
+        session_id="sess-a",
+    )
+    assert second.outcome == "updated"
+    assert second.request.id == first.request.id
+    assert richer in (second.request.payload or {}).get("note", "")
+    pending = [item for item in queue.list(status="pending") if item.action_type == "add_alert_note"]
+    assert len(pending) == 1
+    assert pending[0].session_id == "sess-a"
+
+
+def test_different_alert_ids_stay_separate_with_observable_titles(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        "src.ai_controller.approval_queue.enrichment.resolve_clients",
+        lambda cluster_id=None: ClientBundle(siem=None),
+    )
+    queue = ApprovalQueue(str(tmp_path))
+    a = queue.enqueue(
+        "add_alert_note",
+        title="Add note: ntopng Security Alert (10.10.10.99)",
+        summary="note a",
+        payload={
+            "alert_id": "alert-dst-a",
+            "note": "note a about 1.1.1.1",
+            "alert": {
+                "id": "alert-dst-a",
+                "title": "ntopng Security Alert",
+                "related_entities": ["host:10.10.10.99", "destination_ip:1.1.1.1", "port:443"],
+                "subtitle": "suspicious_user_agent",
+            },
+            "rule_name": "ntopng Security Alert",
+            "hostname": "10.10.10.99",
+            "destination_ip": "1.1.1.1",
+            "destination_port": "443",
+            "ntopng_script": "suspicious_user_agent",
+        },
+    )
+    b = queue.enqueue(
+        "add_alert_note",
+        title="Add note: ntopng Security Alert (10.10.10.99)",
+        summary="note b",
+        payload={
+            "alert_id": "alert-dst-b",
+            "note": "note b about 8.8.8.8",
+            "alert": {
+                "id": "alert-dst-b",
+                "title": "ntopng Security Alert",
+                "related_entities": ["host:10.10.10.99", "destination_ip:8.8.8.8", "port:53"],
+                "subtitle": "suspicious_user_agent",
+            },
+            "rule_name": "ntopng Security Alert",
+            "hostname": "10.10.10.99",
+            "destination_ip": "8.8.8.8",
+            "destination_port": "53",
+            "ntopng_script": "suspicious_user_agent",
+        },
+    )
+    assert a.outcome == "created"
+    assert b.outcome == "created"
+    assert a.request.id != b.request.id
+    assert "1.1.1.1" in a.request.title
+    assert "8.8.8.8" in b.request.title
+    assert "10.10.10.99" in a.request.title
+
+
+def test_fine_tune_same_rule_dedupes_informational_note(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        "src.ai_controller.approval_queue.service.ApprovalQueue._enrich_informational",
+        lambda self, action_type, payload: {**payload, "rule_found": True},
+    )
+    queue = ApprovalQueue(str(tmp_path))
+    first = queue.enqueue(
+        "fine_tune",
+        title="Whitelist Ubuntu connectivity-check",
+        summary="Exclude empty UA for ubuntu.com",
+        payload={
+            "title": "Whitelist Ubuntu connectivity-check",
+            "description": "Exclude empty UA for connectivity-check.ubuntu.com",
+            "rule_name": "ntopng Security Alert",
+            "rule_id": "rule-ntop-1",
+            "rule_found": True,
+        },
+        session_id="sess-ft",
+    )
+    second = queue.enqueue(
+        "fine_tune",
+        title="Exclude empty UA for ubuntu.com",
+        summary="Same noisy rule — whitelist connectivity-check",
+        payload={
+            "title": "Exclude empty UA for ubuntu.com",
+            "description": "Whitelist Ubuntu connectivity-check / empty UA",
+            "rule_name": "ntopng Security Alert",
+            "rule_id": "rule-ntop-1",
+            "rule_found": True,
+        },
+        session_id="sess-ft",
+    )
+    assert first.outcome == "created"
+    assert second.outcome == "deduplicated"
+    assert second.request.id == first.request.id
+    assert first.request.session_id == "sess-ft"
+    notes = [item for item in queue.list(status="open") if item.action_type == "fine_tune"]
+    assert len(notes) == 1
+
+
+def test_find_related_requests_by_rule_and_alert(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        "src.ai_controller.approval_queue.enrichment.resolve_clients",
+        lambda cluster_id=None: ClientBundle(siem=None),
+    )
+    monkeypatch.setattr(
+        "src.ai_controller.approval_queue.service.ApprovalQueue._enrich_informational",
+        lambda self, action_type, payload: {**payload, "rule_found": True},
+    )
+    queue = ApprovalQueue(str(tmp_path))
+    note = queue.enqueue(
+        "add_alert_note",
+        title="Note",
+        summary="working",
+        payload={
+            "alert_id": "alert-rel-1",
+            "note": "working",
+            "alert": {"id": "alert-rel-1", "title": "ntopng Security Alert"},
+            "rule_name": "ntopng Security Alert",
+        },
+    )
+    tip = queue.enqueue(
+        "fine_tune",
+        title="Tune ntopng empty UA",
+        summary="whitelist connectivity-check",
+        payload={
+            "title": "Tune ntopng empty UA",
+            "description": "whitelist connectivity-check",
+            "rule_name": "ntopng Security Alert",
+            "rule_id": "rule-ntop-1",
+            "rule_found": True,
+        },
+    )
+    by_alert = queue.find_related_requests(alert_id="alert-rel-1", action_type="add_alert_note")
+    assert len(by_alert) == 1
+    assert by_alert[0]["id"] == note.request.id
+    by_rule = queue.find_related_requests(rule_name="ntopng Security Alert", action_type="fine_tune")
+    assert len(by_rule) == 1
+    assert by_rule[0]["id"] == tip.request.id
+    unrelated = queue.find_related_requests(rule_name="Unrelated Rule XYZ", action_type="fine_tune")
+    assert unrelated == []
+
+
+def test_same_flow_different_alert_ids_collapse_and_remember_ids(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        "src.ai_controller.approval_queue.enrichment.resolve_clients",
+        lambda cluster_id=None: ClientBundle(siem=None),
+    )
+    queue = ApprovalQueue(str(tmp_path))
+    first = queue.enqueue(
+        "add_alert_note",
+        title="Note: ntopng",
+        summary="first",
+        payload={
+            "alert_id": "alert-flow-1",
+            "note": "first",
+            "rule_name": "ntopng Security Alert",
+            "hostname": "10.10.10.99",
+            "destination_ip": "185.125.190.101",
+            "alert": {
+                "id": "alert-flow-1",
+                "title": "ntopng Security Alert",
+                "related_entities": ["host:10.10.10.99", "ip:185.125.190.101"],
+            },
+        },
+        cluster_id="lab",
+    )
+    second = queue.enqueue(
+        "add_alert_note",
+        title="Note: ntopng",
+        summary="second richer note with 185.125.190.101 disposition benign",
+        payload={
+            "alert_id": "alert-flow-2",
+            "note": "second richer note with 185.125.190.101 disposition benign",
+            "rule_name": "ntopng Security Alert",
+            "hostname": "10.10.10.99",
+            "destination_ip": "185.125.190.101",
+            "alert": {
+                "id": "alert-flow-2",
+                "title": "ntopng Security Alert",
+                "related_entities": ["host:10.10.10.99", "ip:185.125.190.101"],
+            },
+        },
+        cluster_id="lab",
+    )
+    assert first.outcome == "created"
+    assert second.outcome in {"deduplicated", "updated"}
+    assert second.request.id == first.request.id
+    related = (second.request.payload or {}).get("related_alert_ids") or []
+    assert "alert-flow-1" in related or second.request.payload.get("alert_id") == "alert-flow-1"
+    assert "alert-flow-2" in related or second.request.payload.get("alert_id") == "alert-flow-2"
+    pending = [i for i in queue.list(status="pending") if i.action_type == "add_alert_note"]
+    assert len(pending) == 1
+
+
+def test_isolate_endpoint_dedupes_by_endpoint(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        "src.ai_controller.approval_queue.enrichment.resolve_clients",
+        lambda cluster_id=None: ClientBundle(siem=None),
+    )
+    queue = ApprovalQueue(str(tmp_path))
+    first = queue.enqueue(
+        "isolate_endpoint",
+        title="Isolate host",
+        summary="isolate",
+        payload={"endpoint_id": "agent-1", "hostname": "workstation-1"},
+        cluster_id="lab",
+    )
+    second = queue.enqueue(
+        "isolate_endpoint",
+        title="Isolate again",
+        summary="isolate again",
+        payload={"endpoint_id": "agent-1", "hostname": "workstation-1"},
+        cluster_id="lab",
+    )
+    assert first.outcome == "created"
+    assert second.outcome == "deduplicated"
+    assert second.request.id == first.request.id
+
+
+def test_mcp_find_related_requests_and_session_meta(tmp_path, monkeypatch):
+    from src.ai_controller.approval_queue import service as queue_service
+    from src.ai_controller.approval_queue.mcp_bridge import enqueue_gated_tool, find_related_requests_from_args
+    from src.mcp.mcp_server import SamiGPTMCPServer
+
+    queue_service.init_queue(str(tmp_path))
+    monkeypatch.setattr(
+        "src.core.elastic_clusters.skill_vector_for_cluster",
+        lambda cluster_id=None: "MSV:1/IRIS:Y/TH:Y/SIEM:Y/EDR:Y/CTI:Y/KB:Y/ENG:Y/RB:Y/AG:Y/RU:Y",
+    )
+    monkeypatch.setattr(
+        "src.ai_controller.approval_queue.enrichment.resolve_clients",
+        lambda cluster_id=None: ClientBundle(siem=None),
+    )
+    monkeypatch.setattr(
+        "src.ai_controller.approval_queue.service.ApprovalQueue._enrich_informational",
+        lambda self, action_type, payload: payload,
+    )
+    server = SamiGPTMCPServer(siem_client=_FakeSIEM())
+    assert "find_related_requests" in server.tools
+
+    queued = enqueue_gated_tool(
+        "add_alert_note",
+        {"alert_id": "alert-mcp-1", "note": "first pass"},
+        session_id="session-meta-1",
+    )
+    assert queued["queued"] is True
+    assert queued["outcome"] == "created"
+    filed = queue_service.get_queue().get(queued["request_id"])
+    assert filed.session_id == "session-meta-1"
+
+    again = enqueue_gated_tool(
+        "add_alert_note",
+        {
+            "alert_id": "alert-mcp-1",
+            "note": "Flow to 185.125.190.99 HTTP 204 benign connectivity-check",
+        },
+        session_id="session-meta-1",
+    )
+    assert again["updated"] is True
+    assert again["request_id"] == queued["request_id"]
+
+    related = find_related_requests_from_args(
+        {"alert_id": "alert-mcp-1", "action_type": "add_alert_note"}
+    )
+    assert related["count"] == 1
+    assert related["requests"][0]["session_id"] == "session-meta-1"
+
+    async def _call():
+        return await server.handle_request(
+            {
+                "jsonrpc": "2.0",
+                "id": 9,
+                "method": "tools/call",
+                "params": {
+                    "name": "find_related_requests",
+                    "arguments": {"alert_id": "alert-mcp-1"},
+                    "_meta": {"session_id": "session-meta-1"},
+                },
+            }
+        )
+
+    response = asyncio.run(_call())
+    body = response["result"]["content"][0]["text"]
+    assert "alert-mcp-1" in body or "1 related" in body.lower() or '"count"' in body

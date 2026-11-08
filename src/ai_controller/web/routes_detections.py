@@ -15,14 +15,14 @@ from pydantic import BaseModel, Field
 from ...core.elastic_clusters import client_for_id
 from ...core.logging import get_logger
 from ..approval_queue.models import ApprovalRequest
-from ..detection.ask import ask_about_finding
+from ..detection.ask import ask_about_alert
 from ..detection.settings import public_settings, save_settings
 from ..detection.errors import DetectionError
-from ..detection.findings import (
-    finding_detail,
-    list_findings,
+from ..detection.alerts import (
+    alert_detail,
+    list_alerts,
     normalize_entries,
-    update_finding_status,
+    update_alert_status,
 )
 from ..detection.prompts import list_ask_templates
 from ..detection import review as review_service
@@ -74,6 +74,12 @@ class RejectBody(BaseModel):
     comment: str = ""
 
 
+class PromoteFromRequestBody(BaseModel):
+    """Optional analyst instructions for the fine-tune draft model."""
+    note: str = ""
+    comment: str = ""
+
+
 def _http(exc: DetectionError) -> HTTPException:
     return HTTPException(status_code=exc.status_code, detail=str(exc))
 
@@ -98,7 +104,7 @@ async def get_detection_settings():
 
 class DetectionSettingsBody(BaseModel):
     rules_dir: str = ""
-    findings_hours: Optional[int] = None
+    alerts_hours: Optional[int] = None
     match_hours: Optional[int] = None
 
 
@@ -107,7 +113,7 @@ async def put_detection_settings(body: DetectionSettingsBody):
     try:
         saved = save_settings(
             rules_dir=body.rules_dir,
-            findings_hours=body.findings_hours,
+            alerts_hours=body.alerts_hours,
             match_hours=body.match_hours,
         )
     except DetectionError as exc:
@@ -137,36 +143,36 @@ async def disable_rule(rule_id: str, cluster_id: Optional[str] = None):
     return {"success": True, "review": _review_payload(created)}
 
 
-@router.get("/findings")
-async def get_findings(
+@router.get("/alerts")
+async def get_alerts(
     q: str = Query(default=""),
     hours: Optional[int] = Query(default=None, ge=1, le=24 * 90),
     cluster_id: Optional[str] = None,
 ):
     try:
-        alerts = list_findings(_client(cluster_id), hours=hours, query=q)
+        alerts = list_alerts(_client(cluster_id), hours=hours, query=q)
     except DetectionError as exc:
         raise _http(exc) from exc
-    return {"success": True, "findings": alerts, "templates": list_ask_templates()}
+    return {"success": True, "alerts": alerts, "templates": list_ask_templates()}
 
 
-@router.get("/findings/{alert_id}")
-async def get_finding(alert_id: str, cluster_id: Optional[str] = None):
+@router.get("/alerts/{alert_id}")
+async def get_alert(alert_id: str, cluster_id: Optional[str] = None):
     try:
-        return {"success": True, "finding": finding_detail(_client(cluster_id), alert_id)}
+        return {"success": True, "alert": alert_detail(_client(cluster_id), alert_id)}
     except DetectionError as exc:
         raise _http(exc) from exc
 
 
-@router.post("/findings/{alert_id}/ask")
-async def ask_finding(alert_id: str, body: AskBody):
+@router.post("/alerts/{alert_id}/ask")
+async def ask_alert(alert_id: str, body: AskBody):
     client = _client(body.cluster_id)
     entries = normalize_entries([item.model_dump() for item in body.entries])
     try:
-        finding = finding_detail(client, alert_id)
-        answer = await ask_about_finding(
+        alert = alert_detail(client, alert_id)
+        answer = await ask_about_alert(
             prompt_id=body.prompt_id,
-            alert=finding,
+            alert=alert,
             entries=entries,
             custom_instruction=body.custom_instruction,
         )
@@ -175,15 +181,15 @@ async def ask_finding(alert_id: str, body: AskBody):
     return {"success": True, **answer}
 
 
-@router.post("/findings/{alert_id}/exception")
+@router.post("/alerts/{alert_id}/exception")
 async def exception_from_fields(alert_id: str, body: EntriesBody):
     entries = normalize_entries([item.model_dump() for item in body.entries])
     if not entries:
         raise HTTPException(status_code=400, detail="Check at least one field.")
     try:
-        finding = finding_detail(_client(body.cluster_id), alert_id)
+        alert = alert_detail(_client(body.cluster_id), alert_id)
         created = review_service.create_from_fields(
-            alert=finding,
+            alert=alert,
             entries=entries,
             name=body.name,
             cluster_id=body.cluster_id,
@@ -193,15 +199,15 @@ async def exception_from_fields(alert_id: str, body: EntriesBody):
     return {"success": True, "review": _review_payload(created)}
 
 
-@router.post("/findings/{alert_id}/suggest")
-async def suggest_finding(alert_id: str, body: EntriesBody):
+@router.post("/alerts/{alert_id}/suggest")
+async def suggest_alert(alert_id: str, body: EntriesBody):
     entries = normalize_entries([item.model_dump() for item in body.entries])
     if not entries:
         raise HTTPException(status_code=400, detail="Check at least one field.")
     try:
-        finding = finding_detail(_client(body.cluster_id), alert_id)
+        alert = alert_detail(_client(body.cluster_id), alert_id)
         created = review_service.create_suggestion(
-            alert=finding,
+            alert=alert,
             entries=entries,
             cluster_id=body.cluster_id,
         )
@@ -210,16 +216,16 @@ async def suggest_finding(alert_id: str, body: EntriesBody):
     return {"success": True, "review": _review_payload(created)}
 
 
-@router.post("/findings/{alert_id}/status")
-async def finding_status(alert_id: str, body: StatusBody, request: Request):
+@router.post("/alerts/{alert_id}/status")
+async def alert_status(alert_id: str, body: StatusBody, request: Request):
     user = require_user(request)
     client = _client(body.cluster_id)
     try:
-        finding = finding_detail(client, alert_id)
-        result = update_finding_status(
+        alert = alert_detail(client, alert_id)
+        result = update_alert_status(
             client,
             alert_id=alert_id,
-            rule_id=body.rule_id or str(finding.get("rule_id") or ""),
+            rule_id=body.rule_id or str(alert.get("rule_id") or ""),
             entries=[item.model_dump() for item in body.entries],
             status=body.status,
             note=body.note,
@@ -229,7 +235,7 @@ async def finding_status(alert_id: str, body: StatusBody, request: Request):
     note_bit = "with a note" if result.get("note") else "without a note"
     record_action(
         str(user.get("username") or "analyst"),
-        f"{body.status} {len(result.get('updated') or [])} alert(s) {note_bit} for {finding.get('rule_name') or alert_id}",
+        f"{body.status} {len(result.get('updated') or [])} alert(s) {note_bit} for {alert.get('rule_name') or alert_id}",
     )
     return {"success": True, **result}
 
@@ -241,6 +247,32 @@ async def get_reviews():
         "reviews": [_review_payload(item) for item in review_service.list_reviews()],
         "folder": rules_store.folder_status(),
     }
+
+
+@router.post("/reviews/from-request/{request_id}")
+async def promote_review_from_request(
+    request_id: str,
+    body: PromoteFromRequestBody = PromoteFromRequestBody(),
+):
+    """Send a Fine-tune or Visibility Requests note to DaC Review (draft + validate)."""
+    analyst_note = (body.note or body.comment or "").strip()
+    try:
+        from ..approval_queue import get_queue
+
+        existing = get_queue().get(request_id)
+        if existing is not None and existing.action_type == "visibility":
+            review = await review_service.promote_visibility_from_request(
+                request_id,
+                analyst_note=analyst_note or None,
+            )
+        else:
+            review = await review_service.promote_from_request(
+                request_id,
+                analyst_note=analyst_note or None,
+            )
+    except DetectionError as exc:
+        raise _http(exc) from exc
+    return {"success": True, "review": review}
 
 
 @router.get("/reviews/{request_id}")

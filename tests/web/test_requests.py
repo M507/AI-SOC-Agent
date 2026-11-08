@@ -27,11 +27,24 @@ def test_requests_view_is_in_the_shell():
     assert 'data-request-filter="archived"' in html
     assert 'data-request-filter="open"' in html
     assert 'data-request-queue="all"' in html
-    assert 'data-request-queue="soc"' in html
-    assert 'data-request-queue="engineering"' in html
-    assert 'data-request-queue="detection"' in html
-    assert "Approval queue (ALL)" in html
-    assert "Detection engineering" in html
+    assert 'data-request-queue="closures"' in html
+    assert 'data-request-queue="alert_notes"' in html
+    assert 'data-request-queue="questions"' in html
+    assert 'data-request-queue="response"' in html
+    assert 'data-request-queue="fine_tune"' in html
+    assert 'data-request-queue="visibility"' in html
+    assert 'data-request-queue="runbooks"' in html
+    assert 'data-request-queue="approvals"' not in html
+    assert 'data-request-queue="notes"' not in html
+    assert 'data-request-queue="soc"' not in html
+    assert 'data-request-queue="engineering"' not in html
+    assert 'data-request-queue="detection"' not in html
+    assert "Approval queue (ALL)" not in html
+    assert "Detection engineering" not in html
+    assert ">Closures<" in html or "Closures" in html
+    assert "Alert notes" in html
+    assert "Fine-tune" in html
+    assert "data-request-github-facet" in html
     assert "requests.js" in html
     assert "requests.css" in html
     assert "setActiveSection('requests')" in app_js
@@ -50,14 +63,20 @@ def test_requests_view_is_in_the_shell():
     assert "archived" in requests_js
     assert "Waiting on integration" in requests_js
     assert 'data-request-action="ignore"' in requests_js
+    assert 'data-request-action="reopen"' in requests_js
+    assert 'data-request-action="bulk-reopen"' in requests_js
     assert 'data-request-action="approve"' in requests_js
+    assert "reopenRequest" in (WEB / "static" / "api.js").read_text(encoding="utf-8")
     assert "Needs approval" in requests_js
+    assert "Verify identity" in requests_js
     assert "Proposed note" in requests_js
     assert "Associated notes (approved with this close)" in requests_js
     assert "Approve will also write" in requests_js
     assert "request-bulk-comment" in requests_js
     assert "Technical details" in requests_js
     assert "matchesQueue" in requests_js
+    assert "queueTab = 'closures'" in requests_js
+    assert "kind-badge" in requests_js
     assert "startLocalPoll" in requests_js
     assert "justOpened" in app_js
     assert "getRequestsSummary" in (WEB / "static" / "api.js").read_text(encoding="utf-8")
@@ -281,6 +300,16 @@ def test_fine_tune_api_is_informational(tmp_path, monkeypatch):
     assert approve.status_code == 400
     listed = client.get("/api/requests?status=pending")
     assert any(item["id"] == request_id for item in listed.json()["requests"])
+    closures = client.get("/api/requests?status=open&queue=closures")
+    assert closures.status_code == 200
+    assert all(item["id"] != request_id for item in closures.json()["requests"])
+    fine_tune = client.get("/api/requests?status=open&queue=fine_tune")
+    assert fine_tune.status_code == 200
+    assert any(item["id"] == request_id for item in fine_tune.json()["requests"])
+    notes = client.get("/api/requests?status=open&queue=notes")
+    assert notes.status_code == 200
+    assert any(item["id"] == request_id for item in notes.json()["requests"])
+    # Legacy aliases
     soc = client.get("/api/requests?status=open&queue=soc")
     assert soc.status_code == 200
     assert all(item["id"] != request_id for item in soc.json()["requests"])
@@ -288,11 +317,14 @@ def test_fine_tune_api_is_informational(tmp_path, monkeypatch):
     assert detection.status_code == 200
     assert any(item["id"] == request_id for item in detection.json()["requests"])
     assert "actionable" in listed.json()["counts"]
-    assert "tab_counts" in detection.json()
+    assert "tab_counts" in fine_tune.json()
+    assert "closures" in fine_tune.json()["queue_counts"]
+    assert "fine_tune" in fine_tune.json()["queue_counts"]
+    assert "approvals" in fine_tune.json()["queue_counts"]
+    assert "notes" in fine_tune.json()["queue_counts"]
     js = Path(__file__).resolve().parents[2] / "src" / "ai_controller" / "web" / "static" / "requests.js"
     text = js.read_text(encoding="utf-8")
     assert "isInformational" in text
-    assert "Informational only" in text
     assert 'data-request-action="approve"' in text
     assert "queueTab" in text
     assert 'data-request-action="ignore"' in text
@@ -393,6 +425,72 @@ def test_ignore_archives_informational_request(tmp_path, monkeypatch):
     assert all(item["id"] != request_id for item in open_list.json()["requests"])
     archived = client.get("/api/requests?status=archived&queue=detection")
     assert any(item["id"] == request_id for item in archived.json()["requests"])
+
+
+def test_reopen_moves_ignored_note_back_to_open(tmp_path, monkeypatch):
+    from src.ai_controller.approval_queue.lab_rules import clear_index_cache
+
+    monkeypatch.setenv("SAMI_LAB_RULES_DIR", str(tmp_path / "empty-rules"))
+    clear_index_cache()
+    client = _client(tmp_path)
+    created = client.post(
+        "/api/requests",
+        json={
+            "action_type": "visibility",
+            "title": "Missing DNS telemetry",
+            "summary": "No DNS logs",
+            "payload": {"title": "Missing DNS telemetry", "description": "Need DNS logs"},
+        },
+    )
+    request_id = created.json()["request"]["id"]
+    client.post(f"/api/requests/{request_id}/ignore", json={"comment": "out of scope"})
+    reopened = client.post(f"/api/requests/{request_id}/reopen", json={"comment": "still needed"})
+    assert reopened.status_code == 200, reopened.text
+    body = reopened.json()["request"]
+    assert body["status"] == "informational"
+    assert body["archived"] is False
+    assert body["decision"]["action"] == "reopen"
+    assert body["payload"]["reopen_history"]
+    assert body["payload"]["reopen_history"][-1]["previous_decision"]["action"] == "ignore"
+    open_list = client.get("/api/requests?status=open&queue=detection")
+    assert any(item["id"] == request_id for item in open_list.json()["requests"])
+
+
+def test_reopen_refuses_executed_request(tmp_path, monkeypatch):
+    from src.ai_controller.approval_queue.clients import ClientBundle
+
+    class _FakeSIEM:
+        def get_security_alert_by_id(self, alert_id, include_detections=True):
+            return {"id": alert_id, "title": "noise"}
+
+        def add_alert_note(self, alert_id, note):
+            return {"alert_id": alert_id, "note": note, "alert": {}}
+
+    monkeypatch.setattr(
+        "src.ai_controller.approval_queue.service.resolve_clients",
+        lambda cluster_id=None: ClientBundle(siem=_FakeSIEM()),
+    )
+    monkeypatch.setattr(
+        "src.ai_controller.approval_queue.enrichment.resolve_clients",
+        lambda cluster_id=None: ClientBundle(siem=_FakeSIEM()),
+    )
+    client = _client(tmp_path)
+    created = client.post(
+        "/api/requests",
+        json={
+            "action_type": "add_alert_note",
+            "title": "Note",
+            "summary": "working",
+            "payload": {"alert_id": "alert-reopen-1", "note": "working"},
+        },
+    )
+    request_id = created.json()["request"]["id"]
+    approved = client.post(f"/api/requests/{request_id}/approve", json={})
+    assert approved.status_code == 200, approved.text
+    assert approved.json()["request"]["status"] == "executed"
+    refused = client.post(f"/api/requests/{request_id}/reopen", json={})
+    assert refused.status_code == 400
+    assert "side effects" in refused.json()["detail"].lower()
 
 
 def test_add_alert_note_request_approve_writes_and_deny_does_not(tmp_path, monkeypatch):

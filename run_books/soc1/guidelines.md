@@ -68,12 +68,13 @@ If you cannot triage further, still call `update_alert_verdict` with `uncertain`
 
 ## Analyst approval
 
-SOC1 **recommends** closures; an analyst must approve them in the SamiGPT **Requests** view.
+SOC1 **recommends** closures; an analyst must approve them under SamiGPT **Requests → Approvals**.
 
 - Call `update_alert_verdict` for **every** assessment (FP / BTP / TP / uncertain / in-progress). That is **your** verdict and does **not** need approval. It does **not** close the alert.
-- Call `close_alert` when the alert itself should be closed. That **queues** a request. Do not tell the analyst the alert is already closed.
-- Call `create_fine_tuning_recommendation` to file a detection-tuning note when the rule is noisy.
-- **Is this you? (optional — only when needed):** do **not** file this just because the verdict is `uncertain`. Use `create_approval_request` with `action_type=identity_verify` only when a Yes/No on “was this you / expected?” would actually decide the alert (typical: leftover question is identity or expected use — login, VPN, RDP, admin, travel). Skip it when the note is enough, the user cannot usefully answer, or the uncertainty is not about a person. If you do file it: set `question` as a yes/no (e.g. "Was this VPN login from 8.8.8.8 by user F16 actually you / expected?"), put `alert_id`, `username`, and any `source_ip` / `hostname` / `timestamp` / `activity` in `payload`. Default follow-ups: **Yes** closes as benign true positive; **No** escalates (TP tag + Kibana Security case). Tell the analyst the question is pending in Requests. Do **not** create IRIS/TheHive cases.
+- Before `add_alert_note`, `close_alert`, or any recommendation tool, call `find_related_requests` for this `alert_id` and/or rule. If an open match already covers the same alert document or the same rule recommendation, **do not file another** — cite the existing `request_id`.
+- Call `close_alert` when the alert itself should be closed. That **queues** a request under Approvals. Do not tell the analyst the alert is already closed.
+- Call `create_fine_tuning_recommendation` to file a detection-tuning note under **Requests → Notes** when the rule is noisy (after `find_related_requests` shows no open fine-tune for that rule).
+- **Is this you? (optional — only when needed):** do **not** file this just because the verdict is `uncertain`. Use `create_approval_request` with `action_type=identity_verify` only when a Yes/No on “was this you / expected?” would actually decide the alert (typical: leftover question is identity or expected use — login, VPN, RDP, admin, travel). Skip it when the note is enough, the user cannot usefully answer, or the uncertainty is not about a person. If you do file it: set `question` as a yes/no (e.g. "Was this VPN login from 8.8.8.8 by user F16 actually you / expected?"), put `alert_id`, `username`, and any `source_ip` / `hostname` / `timestamp` / `activity` in `payload`. Default follow-ups: **Yes** closes as benign true positive; **No** escalates (TP tag + Kibana Security case). Tell the analyst the question is pending in Requests → Approvals. Do **not** create IRIS/TheHive cases.
 
 ## Main Objectives
 
@@ -82,7 +83,7 @@ SOC1 **recommends** closures; an analyst must approve them in the SamiGPT **Requ
 - Use **NetBox** to understand what the host/IP is *for* (role, tags, description).
 - **Before deciding:** review **past closed and acknowledged alerts** of the same detection rule/type **and** matching key values (IPs, hosts, users, hashes, …); open those alerts and **read prior verdicts and `get_alert_notes` note bodies**.
 - Close clear FP/BTP with `update_alert_verdict` + `close_alert` (no case).
-- If uncertain or suspicious: **still** set a final verdict (`uncertain` / `true_positive`), request a detailed alert note (pending in Requests). Do **not** create a case. Never end without a final verdict. Filing **Is this you?** is optional and only when a Yes/No from the analyst would actually help.
+- If uncertain or suspicious: **still** set a final verdict (`uncertain` / `true_positive`), request a detailed alert note (pending in Requests → Approvals). Do **not** create a case. Never end without a final verdict. Filing **Is this you?** is optional and only when a Yes/No from the analyst would actually help.
 
 ## Responsibilities (What SOC1 Does)
 
@@ -118,7 +119,7 @@ SOC1 **recommends** closures; an analyst must approve them in the SamiGPT **Requ
   - Case-specific playbooks live under `run_books/soc1/cases/` (e.g. suspicious login, malware, widget abuse).
   - After the **final** verdict is set, if this alert type had **no** matching case playbook, call `create_runbook_recommendation` with enough detail/examples for SOC engineering to author one.
   - Confirm with `list_runbooks` (`category=cases`) when unsure. Do **not** delay history, NetBox, enrichment, or verdicts for this.
-  - The note is **informational** in Requests (like fine-tune / visibility) — nothing to approve.
+  - The note is **informational** under Requests → Notes (like fine-tune / visibility) — nothing to approve.
 
 ## False Positive Identification Strategy
 
@@ -162,7 +163,7 @@ When leaving an alert open / uncertain / TP, the alert note MUST include:
 3. Same-type / same-key closed/ack summary (`${HISTORICAL_DECISIONS}`), including prior verdicts and **`get_alert_notes` takeaways**
 4. IOC / enrichment highlights
 5. Why it was not closed and what a human should check next
-6. If you filed **Is this you?** (optional): that it is pending in Requests (Yes/No)
+6. If you filed **Is this you?** (optional): that it is pending in Requests → Approvals (Yes/No)
 
 ## Key Runbooks
 

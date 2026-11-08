@@ -157,6 +157,60 @@ running_tasks: Dict[str, asyncio.Task] = {}
 autorun_scheduler_task: Optional[asyncio.Task] = None
 mcp_start_task: Optional[asyncio.Task] = None
 running_autoruns: set[str] = set()
+# At most one autorun LLM run holds the heavy execute path at a time.
+autorun_execute_semaphore: Optional[asyncio.Semaphore] = None
+# Debounced disk flushes for high-frequency progress ticks.
+_progress_flush_tasks: Dict[str, asyncio.Task] = {}
+_PROGRESS_FLUSH_DELAY_S = 0.4
+
+
+def _autorun_execute_sem() -> asyncio.Semaphore:
+    global autorun_execute_semaphore
+    if autorun_execute_semaphore is None:
+        autorun_execute_semaphore = asyncio.Semaphore(1)
+    return autorun_execute_semaphore
+
+
+def _schedule_progress_flush(session_id: str) -> None:
+    """Debounce session JSON writes during streaming progress."""
+    if not session_manager:
+        return
+    existing = _progress_flush_tasks.get(session_id)
+    if existing and not existing.done():
+        existing.cancel()
+
+    async def _flush_later() -> None:
+        try:
+            await asyncio.sleep(_PROGRESS_FLUSH_DELAY_S)
+            await asyncio.to_thread(session_manager.flush_session, session_id)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            logger.debug("Could not flush session %s after progress: %s", session_id, exc)
+        finally:
+            current = _progress_flush_tasks.get(session_id)
+            if current is asyncio.current_task():
+                _progress_flush_tasks.pop(session_id, None)
+
+    _progress_flush_tasks[session_id] = asyncio.create_task(_flush_later())
+
+
+async def _flush_progress_now(session_id: str) -> None:
+    """Cancel debounce and write the session immediately (run end)."""
+    existing = _progress_flush_tasks.pop(session_id, None)
+    if existing and not existing.done():
+        existing.cancel()
+        try:
+            await existing
+        except asyncio.CancelledError:
+            pass
+        except Exception:
+            pass
+    if session_manager:
+        try:
+            await asyncio.to_thread(session_manager.flush_session, session_id)
+        except Exception as exc:
+            logger.debug("Could not flush session %s: %s", session_id, exc)
 
 
 class CommandRequest(BaseModel):
@@ -341,15 +395,20 @@ async def _run_autorun(autorun: AutorunConfig):
 
         # If the session was deleted or never created, create a new one and persist it
         if not session:
-            session_name = f"Autorun: {fresh_autorun.name}"
-            logger.debug("Creating new AUTORUN session for autorun %s (%s)", fresh_autorun.id, session_name)
+            created_name = f"Autorun: {fresh_autorun.name}"
+            logger.debug("Creating new AUTORUN session for autorun %s (%s)", fresh_autorun.id, created_name)
             session = session_manager.create_session(
-                session_name,
+                created_name,
                 SessionType.AUTORUN,
                 cluster_id=fresh_autorun.cluster_id,
             )
             session_manager.update_autorun(fresh_autorun.id, session_id=session.id)
             session_id = session.id
+
+        # Always resolve from the live session. Assigning only inside the create
+        # branch left session_name unbound on subsequent ticks (autoruns keep a
+        # persistent session_id), which crashed condition checks before any prompt ran.
+        session_name = session.name
 
         # Check condition function if configured
         # Validate that condition_function is not None and not empty string
@@ -471,6 +530,15 @@ async def _run_autorun(autorun: AutorunConfig):
         entry = session_manager.add_entry(session_id, command_str)
         session_manager.update_session_status(session_id, SessionStatus.RUNNING)
 
+        # Schedule from start so a long run does not push the next tick by
+        # (duration + interval); honor running_autoruns so we never double-start.
+        started_at = datetime.now()
+        scheduled_next = started_at + timedelta(seconds=fresh_autorun.interval_seconds)
+        session_manager.update_autorun(
+            fresh_autorun.id,
+            next_run=scheduled_next,
+        )
+
         # Broadcast that autorun execution started for any connected clients
         await broadcast_to_session(session_id, {
             "type": "execution_started",
@@ -478,18 +546,21 @@ async def _run_autorun(autorun: AutorunConfig):
             "command": command_str,
         })
 
-        result: Optional[ExecutionResult] = await executor.execute_command(
-            command,
-            cluster_id=fresh_autorun.cluster_id or (session.cluster_id if session else None),
-            context=condition_context,
-            on_progress=_live_progress(session_id, entry.id),
-            session_id=session_id,
-            entry_id=entry.id,
-            session_type="autorun",
-            session_name=session.name if session else f"Autorun: {fresh_autorun.name}",
-            autorun_id=fresh_autorun.id,
-            autorun_name=fresh_autorun.name,
-        )
+        async with _autorun_execute_sem():
+            result = await executor.execute_command(
+                command,
+                cluster_id=fresh_autorun.cluster_id or (session.cluster_id if session else None),
+                context=condition_context,
+                on_progress=_live_progress(session_id, entry.id),
+                session_id=session_id,
+                entry_id=entry.id,
+                session_type="autorun",
+                session_name=session.name if session else f"Autorun: {fresh_autorun.name}",
+                autorun_id=fresh_autorun.id,
+                autorun_name=fresh_autorun.name,
+            )
+
+        await _flush_progress_now(session_id)
 
         # Update entry and session status
         status = SessionStatus.COMPLETED if result and result.success else SessionStatus.FAILED
@@ -508,9 +579,12 @@ async def _run_autorun(autorun: AutorunConfig):
             "result": result.to_dict() if result else None,
         })
 
-        # Update autorun schedule (last_run / next_run)
+        # Record last_run; keep next_run from start (bump only if already due).
         now = datetime.now()
-        next_run = now + timedelta(seconds=fresh_autorun.interval_seconds)
+        current = session_manager.get_autorun(fresh_autorun.id) or fresh_autorun
+        next_run = current.next_run or scheduled_next
+        if next_run <= now:
+            next_run = now
         session_manager.update_autorun(
             fresh_autorun.id,
             last_run=now,
@@ -529,8 +603,12 @@ async def _run_autorun(autorun: AutorunConfig):
         logger.exception("Error executing autorun %s (%s): %s", autorun.id, autorun.name, e)
         # Best-effort: still push next_run forward to avoid tight failure loops
         try:
+            if 'session_id' in locals() and session_id:
+                await _flush_progress_now(session_id)
             now = datetime.now()
-            next_run = now + timedelta(seconds=autorun.interval_seconds)
+            started = locals().get("started_at") or now
+            interval = getattr(autorun, "interval_seconds", 300) or 300
+            next_run = max(started + timedelta(seconds=interval), now)
             session_manager.update_autorun(
                 autorun.id,
                 last_run=now,
@@ -595,15 +673,23 @@ async def _check_autorun_condition(
 
                 # Build SIEM client for the autorun's cluster (or the default)
                 max_alerts = spec.alert_limit()
+                hours_back = spec.alert_hours_back()
                 details["command_executed"] = (
-                    f"python:get_recent_alerts(hours_back=1, max_alerts={max_alerts})"
+                    f"python:get_recent_alerts(hours_back={hours_back}, max_alerts={max_alerts})"
                 )
 
                 logger.debug(
-                    "Executing get_recent_alerts condition directly via SIEM client (max_alerts=%s)",
+                    "Executing get_recent_alerts condition directly via SIEM client "
+                    "(hours_back=%s, max_alerts=%s)",
+                    hours_back,
                     max_alerts,
                 )
-                output = get_recent_alerts(hours_back=1, max_alerts=max_alerts, client=siem_client)
+                output = await asyncio.to_thread(
+                    get_recent_alerts,
+                    hours_back=hours_back,
+                    max_alerts=max_alerts,
+                    client=siem_client,
+                )
                 details["execution_success"] = True
                 details["output"] = output
                 details["output_type"] = type(output).__name__ if output is not None else "None"
@@ -645,7 +731,12 @@ async def _check_autorun_condition(
                     return False, details
 
                 logger.debug("Executing list_cases condition directly via case management client")
-                output = list_cases(status="open", limit=case_limit, client=case_client)
+                output = await asyncio.to_thread(
+                    list_cases,
+                    status="open",
+                    limit=case_limit,
+                    client=case_client,
+                )
                 details["execution_success"] = True
                 details["output"] = output
                 details["output_type"] = type(output).__name__ if output is not None else "None"
@@ -1012,7 +1103,7 @@ async def broadcast_to_session(session_id: str, message: dict):
 
 
 def _live_progress(session_id: str, entry_id: str):
-    """Persist and broadcast the trace gathered so far, before the final reply."""
+    """Update in-memory trace and broadcast; debounce disk writes."""
 
     async def on_progress(trace):
         payload = {
@@ -1027,7 +1118,9 @@ def _live_progress(session_id: str, entry_id: str):
                     entry_id,
                     result=payload,
                     status=SessionStatus.RUNNING,
+                    persist=False,
                 )
+                _schedule_progress_flush(session_id)
             except Exception as exc:
                 logger.debug("Could not store partial trace for %s: %s", entry_id, exc)
         await broadcast_to_session(session_id, {
@@ -1400,6 +1493,7 @@ async def kickoff_session_command(session_id: str, command_text: str) -> Dict[st
                 session_type="manual",
                 session_name=session_name,
             )
+            await _flush_progress_now(session_id)
 
             session_manager.update_entry(
                 session_id,
@@ -1419,6 +1513,7 @@ async def kickoff_session_command(session_id: str, command_text: str) -> Dict[st
         except asyncio.CancelledError:
             logger.info(f"Execution task for session {session_id} was cancelled")
             try:
+                await _flush_progress_now(session_id)
                 current = session_manager.get_session(session_id)
                 if current:
                     session_manager.update_entry(
@@ -1437,6 +1532,7 @@ async def kickoff_session_command(session_id: str, command_text: str) -> Dict[st
         except Exception as e:
             logger.exception(f"Error executing command in session {session_id}")
             try:
+                await _flush_progress_now(session_id)
                 current = session_manager.get_session(session_id)
                 if current:
                     session_manager.update_entry(

@@ -2,8 +2,8 @@
 class DetectionsManager {
     constructor(app) {
         this.app = app;
-        this.page = 'findings';
-        this.finding = null;
+        this.page = 'alerts';
+        this.alert = null;
         this.rule = null;
         this.review = null;
         this.checked = new Set();
@@ -15,22 +15,22 @@ class DetectionsManager {
     }
 
     bind() {
-        const refresh = document.getElementById('findings-refresh');
-        if (refresh) refresh.addEventListener('click', () => this.loadFindings());
-        const search = document.getElementById('findings-search');
-        if (search) search.addEventListener('input', () => this.debounce('findingsTimer', () => this.loadFindings()));
+        const refresh = document.getElementById('alerts-refresh');
+        if (refresh) refresh.addEventListener('click', () => this.loadAlerts());
+        const search = document.getElementById('alerts-search');
+        if (search) search.addEventListener('input', () => this.debounce('alertsTimer', () => this.loadAlerts()));
         const rulesSearch = document.getElementById('rules-search');
         if (rulesSearch) rulesSearch.addEventListener('input', () => this.debounce('rulesTimer', () => this.loadRules()));
-        const template = document.getElementById('findings-ask-template');
+        const template = document.getElementById('alerts-ask-template');
         if (template) {
             template.addEventListener('change', () => {
-                const custom = document.getElementById('findings-ask-custom');
+                const custom = document.getElementById('alerts-ask-custom');
                 if (custom) custom.hidden = template.value !== 'custom';
             });
         }
-        const suggested = document.getElementById('findings-select-suggested');
+        const suggested = document.getElementById('alerts-select-suggested');
         if (suggested) suggested.addEventListener('click', () => this.setSuggestedFields());
-        const clear = document.getElementById('findings-clear');
+        const clear = document.getElementById('alerts-clear');
         if (clear) clear.addEventListener('click', () => {
             this.checked = new Set();
             this.renderFields();
@@ -51,13 +51,13 @@ class DetectionsManager {
     }
 
     show(page) {
-        this.page = page || 'findings';
+        this.page = page || 'alerts';
         const titles = {
-            findings: ['Findings', 'Open alerts from the lookback in Settings. Check the evidence you want to keep, then ask, except, or update workflow status.'],
+            alerts: ['Alerts', 'Open alerts from the lookback in Settings. Check the evidence you want to keep, then ask, except, or update workflow status.'],
             rules: ['Rules', 'Search the configured rules folder. Disable opens Review and does not write the file until Implement.'],
-            review: ['Review', 'Keep the conditions you want. Unchecked conditions are omitted. Draft spends one model call. Implement writes the rule file.'],
+            review: ['Review', 'Read the suggestion, SIEM rationale, and exact rule diff. Implement writes and syncs; Reject drops the change.'],
         };
-        const pair = titles[this.page] || titles.findings;
+        const pair = titles[this.page] || titles.alerts;
         const title = document.getElementById('detections-title');
         const caption = document.getElementById('detections-caption');
         if (title) title.textContent = pair[0];
@@ -66,7 +66,7 @@ class DetectionsManager {
             panel.hidden = panel.dataset.detectionsPageContent !== this.page;
         });
         this.setStatus('');
-        if (this.page === 'findings') this.loadFindings();
+        if (this.page === 'alerts') this.loadAlerts();
         if (this.page === 'rules') this.loadRules();
         if (this.page === 'review') this.loadReviews();
     }
@@ -89,19 +89,19 @@ class DetectionsManager {
         return data;
     }
 
-    async loadFindings() {
-        const query = (document.getElementById('findings-search') || {}).value || '';
+    async loadAlerts() {
+        const query = (document.getElementById('alerts-search') || {}).value || '';
         try {
-            const data = await this.request('/api/detections/findings?q=' + encodeURIComponent(query));
+            const data = await this.request('/api/detections/alerts?q=' + encodeURIComponent(query));
             this.fillTemplates(data.templates || []);
-            this.renderFindingList(data.findings || []);
+            this.renderAlertList(data.alerts || []);
         } catch (error) {
             this.setStatus(error.message, true);
         }
     }
 
     fillTemplates(templates) {
-        const select = document.getElementById('findings-ask-template');
+        const select = document.getElementById('alerts-ask-template');
         if (!select || select.options.length) return;
         templates.forEach((item) => {
             const option = document.createElement('option');
@@ -111,55 +111,63 @@ class DetectionsManager {
         });
     }
 
-    renderFindingList(findings) {
-        const host = document.getElementById('findings-list');
-        const count = document.getElementById('findings-count');
+    renderAlertList(alerts) {
+        const host = document.getElementById('alerts-list');
+        const count = document.getElementById('alerts-count');
         host.replaceChildren();
-        if (count) count.textContent = findings.length ? findings.length + ' open' : '';
-        if (!findings.length) {
-            host.append(this.emptyNote('No open findings in this lookback.'));
+        if (count) count.textContent = alerts.length ? alerts.length + ' open' : '';
+        if (!alerts.length) {
+            host.append(this.emptyNote('No open alerts in this lookback.'));
             return;
         }
-        const selected = this.finding && this.finding.id;
-        findings.forEach((item) => {
+        const selected = this.alert && this.alert.id;
+        alerts.forEach((item) => {
+            const rich = Boolean(item.subtitle || item.reason || item.target);
             host.append(this.listButton({
                 id: item.id,
                 title: item.rule_name || item.title || item.id,
-                meta: [item.host_name, item.user_name, this.formatTime(item.created_at)].filter(Boolean),
+                subtitle: item.subtitle || '',
+                reason: item.reason || '',
+                target: item.target || '',
+                meta: [
+                    rich ? null : item.host_name,
+                    item.user_name,
+                    this.formatTime(item.created_at),
+                ].filter(Boolean),
                 badge: item.severity,
                 active: item.id === selected,
-                onClick: () => this.openFinding(item.id),
+                onClick: () => this.openAlert(item.id),
             }));
         });
     }
 
-    async openFinding(alertId) {
+    async openAlert(alertId) {
         this.setStatus('');
-        const answer = document.getElementById('findings-answer');
+        const answer = document.getElementById('alerts-answer');
         if (answer) {
             answer.hidden = true;
             answer.textContent = '';
         }
         try {
-            const data = await this.request('/api/detections/findings/' + encodeURIComponent(alertId));
-            this.finding = data.finding;
+            const data = await this.request('/api/detections/alerts/' + encodeURIComponent(alertId));
+            this.alert = data.alert;
             this.checked = new Set(
-                (data.finding.fields || []).filter((row) => row.suggested).map((row) => row.field + '=' + row.value)
+                (data.alert.fields || []).filter((row) => row.suggested).map((row) => row.field + '=' + row.value)
             );
             this.renderFields();
-            this.markActive('findings-list', this.finding.id);
+            this.markActive('alerts-list', this.alert.id);
         } catch (error) {
             this.setStatus(error.message, true);
         }
     }
 
     renderFields() {
-        const finding = this.finding;
-        const list = document.getElementById('findings-fields');
-        const empty = document.getElementById('findings-empty');
-        const actions = document.getElementById('findings-actions');
-        const block = document.getElementById('findings-field-block');
-        const summary = document.getElementById('findings-summary');
+        const alert = this.alert;
+        const list = document.getElementById('alerts-fields');
+        const empty = document.getElementById('alerts-empty');
+        const actions = document.getElementById('alerts-actions');
+        const block = document.getElementById('alerts-field-block');
+        const summary = document.getElementById('alerts-summary');
         empty.hidden = true;
         list.hidden = false;
         actions.hidden = false;
@@ -168,18 +176,36 @@ class DetectionsManager {
             summary.hidden = false;
             summary.replaceChildren();
             const heading = document.createElement('h3');
-            heading.textContent = finding.rule_name || finding.title || finding.id;
+            heading.textContent = alert.rule_name || alert.title || alert.id;
             summary.append(heading);
+            if (alert.subtitle) {
+                const sub = document.createElement('p');
+                sub.className = 'dac-card-sub';
+                sub.textContent = alert.subtitle;
+                summary.append(sub);
+            }
+            if (alert.reason) {
+                const reason = document.createElement('p');
+                reason.className = 'dac-card-reason';
+                reason.textContent = alert.reason;
+                summary.append(reason);
+            }
+            if (alert.target) {
+                const target = document.createElement('p');
+                target.className = 'dac-card-target';
+                target.textContent = alert.target;
+                summary.append(target);
+            }
             summary.append(this.metaLine([
-                finding.severity,
-                finding.host_name,
-                finding.user_name,
-                finding.status,
-                this.formatTime(finding.created_at),
+                alert.severity,
+                alert.host_name,
+                alert.user_name,
+                alert.status,
+                this.formatTime(alert.created_at),
             ]));
         }
         list.replaceChildren();
-        const fields = finding.fields || [];
+        const fields = alert.fields || [];
         if (!fields.length) {
             list.append(this.emptyNote('This alert has no evidence fields to check.'));
         }
@@ -218,30 +244,30 @@ class DetectionsManager {
     }
 
     updateSelectedCount() {
-        const node = document.getElementById('findings-selected');
-        if (!node || !this.finding) return;
-        const total = (this.finding.fields || []).length;
+        const node = document.getElementById('alerts-selected');
+        if (!node || !this.alert) return;
+        const total = (this.alert.fields || []).length;
         node.textContent = this.checked.size + ' of ' + total + ' checked. Every action uses the checked fields.';
     }
 
     setSuggestedFields() {
-        if (!this.finding) return;
+        if (!this.alert) return;
         this.checked = new Set(
-            (this.finding.fields || []).filter((row) => row.suggested).map((row) => row.field + '=' + row.value)
+            (this.alert.fields || []).filter((row) => row.suggested).map((row) => row.field + '=' + row.value)
         );
         this.renderFields();
     }
 
     selectedEntries() {
         const entries = [];
-        (this.finding && this.finding.fields || []).forEach((row) => {
+        (this.alert && this.alert.fields || []).forEach((row) => {
             if (this.checked.has(row.field + '=' + row.value)) entries.push({ field: row.field, value: row.value });
         });
         return entries;
     }
 
     async onFindingAction(action) {
-        if (!this.finding || this.busy) return;
+        if (!this.alert || this.busy) return;
         const entries = this.selectedEntries();
         if (!entries.length) {
             this.setStatus('Check at least one evidence field.', true);
@@ -251,21 +277,21 @@ class DetectionsManager {
         this.setBusy(true);
         try {
             if (action === 'ask') {
-                const promptId = document.getElementById('findings-ask-template').value;
-                const custom = document.getElementById('findings-ask-custom').value;
-                const data = await this.request('/api/detections/findings/' + encodeURIComponent(this.finding.id) + '/ask', {
+                const promptId = document.getElementById('alerts-ask-template').value;
+                const custom = document.getElementById('alerts-ask-custom').value;
+                const data = await this.request('/api/detections/alerts/' + encodeURIComponent(this.alert.id) + '/ask', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ prompt_id: promptId, custom_instruction: custom, entries: entries }),
                 });
-                const answer = document.getElementById('findings-answer');
+                const answer = document.getElementById('alerts-answer');
                 answer.hidden = false;
                 answer.textContent = data.answer || '';
                 return;
             }
             if (action === 'exception' || action === 'suggest') {
                 const path = action === 'exception' ? 'exception' : 'suggest';
-                const data = await this.request('/api/detections/findings/' + encodeURIComponent(this.finding.id) + '/' + path, {
+                const data = await this.request('/api/detections/alerts/' + encodeURIComponent(this.alert.id) + '/' + path, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ entries: entries }),
@@ -276,21 +302,21 @@ class DetectionsManager {
                 this.setStatus('Opened a review. The rule file is unchanged.');
                 return;
             }
-            const note = document.getElementById('findings-note').value;
-            const data = await this.request('/api/detections/findings/' + encodeURIComponent(this.finding.id) + '/status', {
+            const note = document.getElementById('alerts-note').value;
+            const data = await this.request('/api/detections/alerts/' + encodeURIComponent(this.alert.id) + '/status', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     status: action === 'close' ? 'closed' : 'acknowledged',
                     entries: entries,
                     note: note,
-                    rule_id: this.finding.rule_id || '',
+                    rule_id: this.alert.rule_id || '',
                 }),
             });
             const label = action === 'close' ? 'Closed' : 'Acknowledged';
             const withNote = data.note ? 'with a note' : 'without a note';
             this.setStatus(label + ' ' + (data.updated || []).length + ' alert(s) ' + withNote + '.');
-            this.loadFindings();
+            this.loadAlerts();
         } catch (error) {
             this.setStatus(error.message, true);
         } finally {
@@ -397,7 +423,7 @@ class DetectionsManager {
             const reviews = (data.reviews || []).filter((item) => !item.archived);
             if (count) count.textContent = reviews.length ? reviews.length + ' open' : '';
             if (!reviews.length) {
-                host.append(this.emptyNote('No open reviews. Create an exception from a finding, or disable a rule.'));
+                host.append(this.emptyNote('No open reviews. Create an exception from an alert, or disable a rule.'));
                 return;
             }
             const selected = this.review && this.review.id;
@@ -405,7 +431,11 @@ class DetectionsManager {
                 host.append(this.listButton({
                     id: item.id,
                     title: item.title,
-                    meta: [item.kind === 'disable' ? 'Disable' : 'Exception'],
+                    meta: [
+                        item.kind === 'disable'
+                            ? 'Disable'
+                            : (item.kind === 'new_rule' ? 'New rule' : 'Exception'),
+                    ],
                     badge: item.stage,
                     badgeClass: 'dac-stage dac-stage-' + String(item.stage || ''),
                     active: item.id === selected,
@@ -435,9 +465,13 @@ class DetectionsManager {
             info.severity,
             info.language,
             info.status,
-            review.kind === 'disable' ? 'Disable' : 'Exception',
+            review.kind === 'disable'
+                ? 'Disable'
+                : (review.kind === 'new_rule' ? 'New rule' : 'Exception'),
             review.stage,
-            typeof info.exception_count === 'number' ? info.exception_count + ' existing exceptions' : '',
+            review.kind === 'new_rule'
+                ? ''
+                : (typeof info.exception_count === 'number' ? info.exception_count + ' existing exceptions' : ''),
         ]));
         if (info.file) {
             const file = document.createElement('p');
@@ -448,11 +482,67 @@ class DetectionsManager {
             summary.append(file);
         }
         overview.append(summary);
+        if (review.analyst_instructions) {
+            const instructions = document.createElement('p');
+            instructions.className = 'detections-kicker';
+            instructions.textContent = 'Analyst instructions: ' + review.analyst_instructions;
+            overview.append(instructions);
+        }
+        if (review.suggestion) {
+            const suggestion = document.createElement('p');
+            suggestion.className = 'detections-kicker';
+            suggestion.textContent = 'Suggestion: ' + review.suggestion;
+            overview.append(suggestion);
+        }
+        const siem = review.siem_context || {};
+        if (siem.signal_summary || siem.rule_type || siem.platform) {
+            const siemLine = document.createElement('p');
+            siemLine.className = 'detections-kicker';
+            siemLine.textContent = [
+                siem.platform || 'elastic',
+                siem.rule_type,
+                siem.signal_summary,
+            ].filter(Boolean).join(' · ');
+            overview.append(siemLine);
+        }
+        if (review.rule_understanding) {
+            const understanding = document.createElement('p');
+            understanding.className = 'detections-kicker';
+            understanding.textContent = review.rule_understanding;
+            overview.append(understanding);
+        }
         if (review.rationale) {
             const rationale = document.createElement('p');
             rationale.className = 'detections-kicker';
             rationale.textContent = review.rationale;
             overview.append(rationale);
+        }
+        (review.improvement_plan || []).forEach((step) => {
+            if (!step) return;
+            const plan = document.createElement('p');
+            plan.className = 'detections-kicker';
+            plan.textContent = '• ' + step;
+            overview.append(plan);
+        });
+        if (review.notes) {
+            const notes = document.createElement('p');
+            notes.className = 'detections-kicker';
+            notes.textContent = 'Notes: ' + review.notes;
+            overview.append(notes);
+        }
+        const attempts = (review.auto_fix && review.auto_fix.attempts) || [];
+        if (review.stage === 'needs_fix' || attempts.length) {
+            const log = document.createElement('div');
+            log.className = 'detections-kicker';
+            log.textContent = attempts.length
+                ? ('Auto-fix attempts: ' + attempts.length + (review.auto_fix && review.auto_fix.exhausted ? ' (exhausted)' : ''))
+                : 'Needs fix after validation.';
+            overview.append(log);
+            attempts.forEach((attempt, index) => {
+                const errors = (attempt.errors || []).join('; ');
+                if (!errors) return;
+                overview.append(this.banner('Attempt ' + (index + 1) + ' (' + (attempt.kind || 'draft') + '): ' + errors, true));
+            });
         }
         (review.warnings || []).forEach((warning) => overview.append(this.banner(warning, false)));
         if (review.error) overview.append(this.banner(review.error, true));
@@ -461,8 +551,30 @@ class DetectionsManager {
         const conditionsBlock = document.getElementById('review-conditions-block');
         conditions.replaceChildren();
         const cards = review.exceptions || [];
-        if (conditionsBlock) conditionsBlock.hidden = review.kind === 'disable';
-        if (!cards.length) {
+        if (conditionsBlock) {
+            conditionsBlock.hidden = review.kind === 'disable';
+        }
+        if (review.kind === 'new_rule') {
+            const proposed = review.proposed_rule || {};
+            if (!proposed.query && !proposed.name) {
+                conditions.append(this.emptyNote('No proposed rule yet. Draft asks the model for one.'));
+            } else {
+                const box = document.createElement('div');
+                box.className = 'dac-condition-copy';
+                const title = document.createElement('span');
+                title.className = 'dac-condition-title';
+                title.textContent = proposed.name || 'Proposed query rule';
+                const entries = document.createElement('span');
+                entries.className = 'dac-entry';
+                entries.textContent = [
+                    proposed.severity ? 'severity=' + proposed.severity : '',
+                    proposed.language || 'kuery',
+                    proposed.query || '',
+                ].filter(Boolean).join(' · ');
+                box.append(title, entries);
+                conditions.append(box);
+            }
+        } else if (!cards.length) {
             conditions.append(this.emptyNote(
                 review.kind === 'disable'
                     ? 'Disabling a rule has no exception conditions. The change below is the whole file.'
@@ -518,24 +630,44 @@ class DetectionsManager {
             });
         }
 
-        const open = !review.archived && (review.stage === 'proposed' || review.stage === 'drafted');
+        const open = !review.archived && (review.stage === 'proposed' || review.stage === 'drafted' || review.stage === 'needs_fix');
         document.getElementById('review-actions').hidden = !open;
-        document.getElementById('review-feedback-label').hidden = review.stage !== 'drafted' || review.kind === 'disable';
+        document.getElementById('review-feedback-label').hidden = (
+            (review.stage !== 'drafted' && review.stage !== 'needs_fix') || review.kind === 'disable'
+        );
         document.querySelector('[data-review-action="draft"]').hidden = review.stage !== 'proposed';
-        document.querySelector('[data-review-action="revise"]').hidden = review.stage !== 'drafted' || review.kind === 'disable';
-        const noneKept = review.kind !== 'disable' && cards.length > 0 && selectedCount === 0;
-        this.implementLocked = noneKept;
+        document.querySelector('[data-review-action="revise"]').hidden = (
+            (review.stage !== 'drafted' && review.stage !== 'needs_fix') || review.kind === 'disable'
+        );
+        const noneKept = review.kind !== 'disable'
+            && review.kind !== 'new_rule'
+            && cards.length > 0
+            && selectedCount === 0;
+        const newRuleReady = review.kind === 'new_rule'
+            && review.proposed_rule
+            && review.proposed_rule.query
+            && (review.stage === 'drafted' || review.stage === 'needs_fix');
+        this.implementLocked = review.kind === 'new_rule' ? !newRuleReady : noneKept;
         const implement = document.querySelector('[data-review-action="implement"]');
-        if (implement) implement.disabled = noneKept || this.busy;
+        if (implement) implement.disabled = this.implementLocked || this.busy;
         const hint = document.getElementById('review-action-hint');
         if (hint) {
             if (review.stage === 'proposed') hint.textContent = 'Draft spends one model call. The file stays unchanged.';
-            else if (review.kind === 'disable') hint.textContent = 'Implement renames the rule file to disabled. The alert stays open.';
+            else if (review.stage === 'needs_fix') hint.textContent = 'AI draft failed validation after 3 tries. Ask for changes, fix selection, Implement, or Reject. GitHub issue stayed open.';
+            else if (review.kind === 'disable') hint.textContent = 'Implement disables the rule file and syncs that change to Elastic. The alert stays open.';
+            else if (review.kind === 'new_rule') hint.textContent = 'Implement creates a new [enabled] rule file and syncs it to Elastic (POST create when missing remotely).';
             else if (noneKept) hint.textContent = 'Check the conditions to keep. The rule file is unchanged until you implement.';
-            else hint.textContent = 'Implement writes only the checked conditions. The alert stays open.';
+            else hint.textContent = 'Implement writes the checked conditions, syncs the rule to Elastic, and closes open alerts that match those exceptions.';
         }
         this.markActive('review-list', review.id);
         if (detail) detail.scrollTop = scroll;
+    }
+
+    openReviewFromPromote(review) {
+        this.page = 'review';
+        this.show('review');
+        this.openReview(review);
+        this.loadReviews();
     }
 
     async toggleCondition(index, selected) {
@@ -574,7 +706,21 @@ class DetectionsManager {
                 data = await this.request('/api/detections/reviews/' + id + '/' + action, { method: 'POST' });
             }
             this.openReview(data.review);
-            this.setStatus(action === 'implement' ? 'Wrote the rule file. The alert is still open.' : '');
+            if (action === 'implement') {
+                const exec = (data.review && (data.review.execution_result || data.review.result)) || {};
+                const closed = Array.isArray(exec.alerts_closed) ? exec.alerts_closed.length : 0;
+                const failed = Array.isArray(exec.alerts_close_failed) ? exec.alerts_close_failed.length : 0;
+                let message = 'Wrote the rule file and synced it to Elastic.';
+                if (data.review && data.review.kind === 'disable') {
+                    message += ' The alert is still open.';
+                } else {
+                    message += ` Closed ${closed} matching open alert(s).`;
+                    if (failed) message += ` ${failed} close failure(s).`;
+                }
+                this.setStatus(message, Boolean(failed));
+            } else {
+                this.setStatus('');
+            }
             if (action === 'reject' || action === 'implement') this.loadReviews();
         } catch (error) {
             this.setStatus(error.message, true);
@@ -593,6 +739,25 @@ class DetectionsManager {
         const title = document.createElement('div');
         title.className = 'dac-card-title';
         title.textContent = options.title || 'Untitled';
+        button.append(title);
+        if (options.subtitle) {
+            const sub = document.createElement('div');
+            sub.className = 'dac-card-sub';
+            sub.textContent = options.subtitle;
+            button.append(sub);
+        }
+        if (options.reason) {
+            const reason = document.createElement('div');
+            reason.className = 'dac-card-reason';
+            reason.textContent = options.reason;
+            button.append(reason);
+        }
+        if (options.target) {
+            const target = document.createElement('div');
+            target.className = 'dac-card-target';
+            target.textContent = options.target;
+            button.append(target);
+        }
         const meta = document.createElement('div');
         meta.className = 'dac-card-meta';
         if (options.badge) {
@@ -606,7 +771,7 @@ class DetectionsManager {
             span.textContent = part;
             meta.append(span);
         });
-        button.append(title, meta);
+        button.append(meta);
         button.addEventListener('click', options.onClick);
         return button;
     }
@@ -662,7 +827,7 @@ class DetectionsManager {
     }
 
     setBusy(isBusy) {
-        document.querySelectorAll('[data-detection-action], [data-review-action], #rules-disable, #findings-refresh').forEach((button) => {
+        document.querySelectorAll('[data-detection-action], [data-review-action], #rules-disable, #alerts-refresh').forEach((button) => {
             const locked = button.dataset.reviewAction === 'implement' && this.implementLocked;
             button.disabled = isBusy || locked;
             if (button.dataset.detectionAction === 'ask' || button.dataset.reviewAction === 'draft' || button.dataset.reviewAction === 'revise') {

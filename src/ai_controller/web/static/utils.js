@@ -51,28 +51,60 @@ function formatIntervalPreview(seconds) {
 }
 
 /**
- * Split a stored condition string such as "get_recent_alerts 1" into its parts.
+ * Split a stored condition string into name / limit / hours_back.
+ * Supports `get_recent_alerts 1` and `get_recent_alerts hours_back=24 limit=1`.
  */
 function splitConditionFunction(condition) {
     const raw = (condition || '').trim();
-    if (!raw) return { name: '', limit: '' };
+    if (!raw) return { name: '', limit: '', hoursBack: '' };
     const parts = raw.split(/\s+/);
-    const last = parts[parts.length - 1];
-    if (parts.length > 1 && /^\d+$/.test(last)) {
-        return { name: parts.slice(0, -1).join(' '), limit: last };
+    const nameParts = [];
+    let limit = '';
+    let hoursBack = '';
+    for (const part of parts) {
+        if (!part.includes('=')) {
+            nameParts.push(part);
+            continue;
+        }
+        const eq = part.indexOf('=');
+        const key = part.slice(0, eq).trim().toLowerCase();
+        const value = part.slice(eq + 1).trim();
+        if (!/^\d+$/.test(value)) {
+            nameParts.push(part);
+            continue;
+        }
+        if (key === 'limit' || key === 'max_alerts' || key === 'count') {
+            limit = value;
+        } else if (key === 'hours_back' || key === 'hours') {
+            hoursBack = value;
+        } else {
+            nameParts.push(part);
+        }
     }
-    return { name: raw, limit: '' };
+    if (!limit && nameParts.length > 1 && /^\d+$/.test(nameParts[nameParts.length - 1])) {
+        limit = nameParts.pop();
+    }
+    return { name: nameParts.join(' '), limit, hoursBack };
 }
 
 /**
- * Compose a condition string from a function name and an optional limit.
+ * Compose a condition string from a function name, optional limit, and lookback hours.
+ * Default lookback (1 hour) is omitted so older `get_recent_alerts 1` strings stay compact.
  */
-function joinConditionFunction(name, limit) {
+function joinConditionFunction(name, limit, hoursBack) {
     const fn = (name || '').trim();
     if (!fn) return '';
+    const parts = [fn];
+    const hours = Number.parseInt(hoursBack, 10);
     const count = Number.parseInt(limit, 10);
-    if (!Number.isFinite(count) || count < 1) return fn;
-    return `${fn} ${count}`;
+    const hasHours = Number.isFinite(hours) && hours >= 1 && hours !== 1;
+    if (hasHours) {
+        parts.push(`hours_back=${hours}`);
+    }
+    if (Number.isFinite(count) && count >= 1) {
+        parts.push(hasHours ? `limit=${count}` : String(count));
+    }
+    return parts.join(' ');
 }
 
 /**

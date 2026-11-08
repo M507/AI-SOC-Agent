@@ -1,0 +1,7 @@
+# Shared gitleaks configuration for local Docker hooks.
+# Extends the built-in rule set; add path allowlists here if needed.
+
+title = "SamiGPT gitleaks config"
+
+[extend]
+useDefault = true

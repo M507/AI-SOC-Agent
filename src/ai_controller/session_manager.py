@@ -262,8 +262,20 @@ class SessionManager:
         
         return entry
 
-    def update_entry(self, session_id: str, entry_id: str, result: Optional[Dict[str, Any]] = None, status: Optional[SessionStatus] = None):
-        """Update an entry in a session."""
+    def update_entry(
+        self,
+        session_id: str,
+        entry_id: str,
+        result: Optional[Dict[str, Any]] = None,
+        status: Optional[SessionStatus] = None,
+        *,
+        persist: bool = True,
+    ):
+        """Update an entry in a session.
+
+        When persist=False, only the in-memory cache is updated (used for
+        high-frequency autorun/LLM progress ticks). Call flush_session later.
+        """
         session = self.get_session(session_id)
         if not session:
             raise ValueError(f"Session {session_id} not found")
@@ -285,6 +297,14 @@ class SessionManager:
             entry.status.value,
             result is not None,
         )
+        if persist:
+            self._save_session(session)
+
+    def flush_session(self, session_id: str) -> None:
+        """Write the cached session to disk if it exists."""
+        session = self.get_session(session_id)
+        if session is None:
+            return
         self._save_session(session)
     
     def update_session_status(self, session_id: str, status: SessionStatus):

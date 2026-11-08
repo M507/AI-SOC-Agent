@@ -1,8 +1,8 @@
-"""Prompt text for asking about a finding and for drafting exceptions.
+"""Prompt text for asking about an alert and for drafting exceptions.
 
 These instructions are only used by Detection as Code. They are not the
 global SOC system prompt, so a draft cannot pick up tools or behavior
-from chat. The template ids returned to the Findings page are the keys
+from chat. The template ids returned to the Alerts page are the keys
 in ASK_TEMPLATES. The draft JSON contract is DRAFT_SYSTEM. See
 documentation/detection-as-code.md.
 """
@@ -13,6 +13,7 @@ import json
 from typing import Any, Dict, List, Optional
 
 MAX_PROMPT_CHARS = 6500
+MAX_DRAFT_PROMPT_CHARS = 24000
 
 ASK_TEMPLATES: List[Dict[str, str]] = [
     {
@@ -95,19 +96,40 @@ ASK_TEMPLATES: List[Dict[str, str]] = [
     },
 ]
 
-DRAFT_SYSTEM = """You are a senior Elastic Security detection engineer drafting narrow rule exceptions.
+DRAFT_SYSTEM = """You are a senior Elastic Security detection engineer drafting narrow, maintainable rule exceptions (Detection as Code).
 
-Rules you must follow:
-1. Prefer the analyst-selected fields. Do not invent field names that are not in the provided alert fields.
-2. Prefer values that appear across multiple selected alerts when building a shared exception.
-3. Prefer host, user, process, and path fields over volatile IPs and timestamps.
-4. Keep exceptions as a tight AND of exact matches. Do not use "*" or empty strings.
-5. If it is not safe to except, return an empty exceptions list and explain why.
-6. Respond with JSON only. No markdown fences. No prose outside JSON.
+Engineering bar:
+- Evidence-based only: ground every exception in the supplied rule, suggestion, and alert fields. Never invent field names or values.
+- Prefer precision: host, user, process, path, and code-signing style ANDs over volatile IPs and timestamps.
+- Prefer exact matches. Do not use "*" or "?" unless unavoidable; if you must, the analyst must allow wildcards later.
+- Prefer reusable, reviewable exception cards with clear names over one opaque catch-all.
+- If it is not safe to except, return an empty exceptions list, set safe_to_except to false, and explain why in rationale and notes.
+
+SIEM / teaching requirements:
+- Explain what kind of SIEM signal this is (Elastic detection) and what behavior the rule watches.
+- Paraphrase the actual rule logic you were given (query/EQL/threshold).
+- Describe how the exception improves precision without blinding true positives.
+- Give a short improvement_plan the analyst can skim before Implement.
+
+When analyst_instructions are provided in the user payload, treat them as binding focus constraints from the human reviewer: prioritize what to except vs leave alone, while still obeying evidence-only / no-invent rules.
+
+Output rules:
+- Respond with JSON only. No markdown fences. No prose outside JSON.
 
 Required JSON schema:
 {
-  "rationale": "short explanation",
+  "rationale": "2-5 sentences: what this SIEM signal is, how the rule fires today, why this is FP/BTP/noise, and how the exception improves precision without blinding true positives",
+  "siem_context": {
+    "platform": "elastic",
+    "rule_type": "query|eql|threshold|machine_learning|other",
+    "signal_summary": "what activity/behavior this detection watches",
+    "data_sources": ["index or beat hints from the rule"]
+  },
+  "rule_understanding": "short paraphrase of the actual rule logic (query/EQL) you were given",
+  "improvement_plan": [
+    "concrete step the exception implements",
+    "what remains detected after the change"
+  ],
   "safe_to_except": true,
   "exceptions": [
     {
@@ -118,7 +140,7 @@ Required JSON schema:
       ]
     }
   ],
-  "notes": "optional caveats for the analyst"
+  "notes": "residual risk, monitoring tips, when to revisit"
 }
 """
 
@@ -202,29 +224,207 @@ def ask_system_prompt(prompt_id: str) -> str:
     return _template(prompt_id)["instruction"]
 
 
+def _rule_document(rule_file: Dict[str, Any]) -> Dict[str, Any]:
+    """Keep the fields that matter for drafting; drop bulky unrelated keys when needed."""
+    rule = rule_file.get("rule") if isinstance(rule_file.get("rule"), dict) else {}
+    dac = rule_file.get("_dac") if isinstance(rule_file.get("_dac"), dict) else {}
+    items = rule_file.get("exception_items") if isinstance(rule_file.get("exception_items"), list) else []
+    return {
+        "rule_id": dac.get("rule_id") or rule.get("rule_id") or rule.get("id"),
+        "name": rule.get("name"),
+        "description": rule.get("description"),
+        "severity": rule.get("severity"),
+        "risk_score": rule.get("risk_score"),
+        "type": rule.get("type"),
+        "language": rule.get("language"),
+        "query": rule.get("query"),
+        "filters": rule.get("filters"),
+        "index": rule.get("index"),
+        "data_view_id": rule.get("data_view_id"),
+        "tags": rule.get("tags"),
+        "enabled": rule.get("enabled"),
+        "investigation_fields": rule.get("investigation_fields"),
+        "existing_exception_count": len(items),
+        "existing_exception_items": items[:20],
+        "_dac_status": dac.get("status"),
+    }
+
+
+def _siem_environment(rule_file: Dict[str, Any], cluster_id: Optional[str]) -> Dict[str, Any]:
+    rule = rule_file.get("rule") if isinstance(rule_file.get("rule"), dict) else {}
+    return {
+        "platform": "elastic",
+        "cluster_id": cluster_id or None,
+        "rule_language": rule.get("language"),
+        "rule_type": rule.get("type"),
+        "severity": rule.get("severity"),
+        "risk_score": rule.get("risk_score"),
+        "enabled": rule.get("enabled"),
+        "index": rule.get("index"),
+        "data_view_id": rule.get("data_view_id"),
+    }
+
+
+def _evidence_has_values(alerts: List[Dict[str, Any]]) -> bool:
+    for alert in alerts or []:
+        if not isinstance(alert, dict):
+            continue
+        for entry in alert.get("selected_fields") or []:
+            if isinstance(entry, dict) and str(entry.get("field") or "").strip() and str(entry.get("value") or "").strip():
+                return True
+    return False
+
+
 def build_draft_prompt(
     *,
     rule_file: Dict[str, Any],
     alerts: List[Dict[str, Any]],
     feedback: Optional[str] = None,
     previous: Optional[Dict[str, Any]] = None,
+    suggestion: Optional[str] = None,
+    suggestion_title: Optional[str] = None,
+    cluster_id: Optional[str] = None,
+    analyst_instructions: Optional[str] = None,
 ) -> str:
+    """Assemble a sectioned user prompt for Draft / Revise / Send-to-Review.
+
+    Includes the agent suggestion (when present), SIEM environment, the actual
+    rule document, and alert evidence. Truncates only under MAX_DRAFT_PROMPT_CHARS,
+    preferring to keep name/query/exceptions intact.
+    """
+    has_values = _evidence_has_values(alerts)
+    instructions = (analyst_instructions or "").strip()
+    task = (
+        "Fine-tune this Elastic detection. Produce narrow exception item(s) plus the "
+        "enriched rationale schema (siem_context, rule_understanding, improvement_plan). "
+        "Use selected_fields on each alert as primary evidence when values are present."
+    )
+    if instructions:
+        task += (
+            " Treat analyst_instructions as binding focus constraints from the human "
+            "reviewer (what to fine-tune vs leave alone), while still obeying "
+            "evidence-only / no-invent rules."
+        )
+    if not has_values:
+        task += (
+            " No concrete alert field values were supplied — constrain yourself to the "
+            "rule document and the agent/analyst suggestion. Do not invent alert values."
+        )
     payload: Dict[str, Any] = {
-        "task": (
-            "Recommend exception item(s) to fine-tune this rule. "
-            "Use selected_fields on each alert as the primary evidence."
-        ),
-        "rule_file": rule_file,
+        "task": task,
+        "agent_suggestion": {
+            "title": (suggestion_title or "").strip() or None,
+            "text": (suggestion or "").strip() or None,
+        },
+        "siem_environment": _siem_environment(rule_file, cluster_id),
+        "actual_rule": _rule_document(rule_file),
         "selected_alerts": alerts,
+        "evidence_note": (
+            "Alert field values are present."
+            if has_values
+            else "No alert field values — use only rule + suggestion; do not invent values."
+        ),
     }
+    if instructions:
+        payload["analyst_instructions"] = instructions
     if previous:
         payload["previous_suggestions"] = previous
     if feedback:
         payload["analyst_feedback"] = feedback
+        payload["validation_errors"] = feedback
     text = (
-        "Draft fine-tune exceptions for this rule using the payload below.\n\n"
+        "Draft fine-tune exceptions for this Elastic SIEM rule using the payload below.\n"
+        "Show clearly how to improve the detection; ground the exceptions in the actual rule.\n\n"
         + json.dumps(payload, ensure_ascii=False, indent=2)
     )
-    if len(text) > 24000:
-        text = text[:23999].rstrip() + "…"
+    if len(text) > MAX_DRAFT_PROMPT_CHARS:
+        # Prefer keeping query: shrink existing exceptions first, then truncate.
+        slim = dict(payload)
+        actual = dict(slim.get("actual_rule") or {})
+        actual["existing_exception_items"] = (actual.get("existing_exception_items") or [])[:5]
+        slim["actual_rule"] = actual
+        text = (
+            "Draft fine-tune exceptions for this Elastic SIEM rule using the payload below.\n"
+            "Show clearly how to improve the detection; ground the exceptions in the actual rule.\n\n"
+            + json.dumps(slim, ensure_ascii=False, indent=2)
+        )
+    if len(text) > MAX_DRAFT_PROMPT_CHARS:
+        text = text[: MAX_DRAFT_PROMPT_CHARS - 1].rstrip() + "…"
+    return text
+
+
+NEW_RULE_DRAFT_SYSTEM = """You are a senior Elastic Security detection engineer drafting a NEW query detection rule (Detection as Code).
+
+Engineering bar:
+- Draft only type "query" (KQL/kuery) rules. Do not propose EQL, threshold, or ML rules.
+- Evidence-based: ground name, query, index, and severity in the visibility suggestion and coverage_check. Never invent telemetry that was not described.
+- If an existing catalog rule already covers the behavior, set safe_to_create to false, leave proposed_rule empty/null, and name the overlapping rule in notes.
+- Prefer precise, maintainable queries over broad wildcards.
+
+Output rules:
+- Respond with JSON only. No markdown fences. No prose outside JSON.
+
+Required JSON schema:
+{
+  "rationale": "2-5 sentences: what gap this fills and why a new rule is warranted",
+  "safe_to_create": true,
+  "overlapping_rule": "",
+  "notes": "",
+  "improvement_plan": ["what the new rule detects", "what remains out of scope"],
+  "proposed_rule": {
+    "name": "short detection name",
+    "description": "what this detects",
+    "severity": "low|medium|high|critical",
+    "risk_score": 21,
+    "type": "query",
+    "language": "kuery",
+    "query": "KQL query",
+    "index": ["logs-*"],
+    "enabled": true,
+    "tags": ["tag"]
+  }
+}
+"""
+
+
+def build_new_rule_draft_prompt(
+    *,
+    suggestion: str,
+    suggestion_title: str = "",
+    coverage_check: Optional[Dict[str, Any]] = None,
+    source: str = "",
+    alerts: Optional[List[Dict[str, Any]]] = None,
+    feedback: Optional[str] = None,
+    previous: Optional[Dict[str, Any]] = None,
+    analyst_instructions: Optional[str] = None,
+    cluster_id: Optional[str] = None,
+) -> str:
+    """User prompt for drafting a net-new query rule from a visibility note."""
+    payload: Dict[str, Any] = {
+        "task": "draft_new_query_rule",
+        "suggestion_title": suggestion_title or "",
+        "suggestion": suggestion or "",
+        "source": source or "",
+        "coverage_check": coverage_check if isinstance(coverage_check, dict) else {},
+        "alerts": alerts or [],
+        "siem_environment": {"platform": "elastic", "cluster_id": cluster_id or ""},
+        "constraints": {
+            "rule_type": "query",
+            "language": "kuery",
+            "do_not_duplicate_catalog": True,
+        },
+    }
+    if analyst_instructions:
+        payload["analyst_instructions"] = analyst_instructions
+    if previous:
+        payload["previous_draft"] = previous
+    if feedback:
+        payload["analyst_feedback"] = feedback
+    text = (
+        "Draft a new Elastic query detection for the visibility gap below. "
+        "If coverage already exists, set safe_to_create=false and name the overlapping rule.\n\n"
+        + json.dumps(payload, ensure_ascii=False, indent=2)
+    )
+    if len(text) > MAX_DRAFT_PROMPT_CHARS:
+        text = text[: MAX_DRAFT_PROMPT_CHARS - 1].rstrip() + "…"
     return text

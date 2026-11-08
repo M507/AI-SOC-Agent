@@ -50,12 +50,18 @@ logger = get_logger(__name__)
 
 # Appended to irreversible MCP tools. The server queues these for the Requests view.
 _QUEUED_FOR_ANALYST = (
-    " Files a request in the SamiGPT Requests view and does not run until an analyst "
-    "approves it. Tell the analyst it is pending in Requests; do not claim the action already happened."
+    " Files a request under Requests → Approvals and does not run until an analyst "
+    "approves it. Tell the analyst it is pending in Approvals; do not claim the action already happened."
 )
 _INFORMATIONAL_FOR_ANALYST = (
-    " Files an informational note in the SamiGPT Requests view. Nothing is executed "
-    "and there is nothing to approve. Tell the analyst it is a suggestion only."
+    " Files an informational note under Requests → Notes. Nothing is executed "
+    "and there is nothing to approve. Tell the analyst it is a suggestion under Notes only. "
+    "When ENG is GitHub, a linked issue may also be opened."
+)
+_ISOLATION_DISABLED = (
+    " Host isolation is intentionally disabled: the request is filed under Approvals, "
+    "but Approve will not call Kibana Elastic Defend or EDR until isolation is re-enabled. "
+    "Tell the analyst it will not isolate the host."
 )
 
 
@@ -317,12 +323,14 @@ class SamiGPTMCPServer:
             "name": "create_approval_request",
             "description": (
                 "File an action for a human analyst in the SamiGPT Requests view. "
-                "Use this for irreversible or user-gated work: closing alerts, isolating hosts, "
-                "and 'is this you?' identity checks. Do not claim those actions already happened — "
-                "they wait for approval. Fine-tune and visibility notes are informational only "
-                "(no approve button). For identity_verify, set question "
-                "and follow_ups.yes / follow_ups.no to the next action (acknowledge/close vs escalate "
-                "to an Elastic Security case). Do not open IRIS or TheHive cases for this flow."
+                "Closures, alert notes, identity checks, and response actions appear under "
+                "Requests → Approvals and wait for Approve or Yes/No. Fine-tune, visibility, and "
+                "runbook-gap notes appear under Requests → Notes (no Approve; Done/Ignore only; "
+                "may open a linked GitHub issue when ENG is GitHub). Host isolation tools may be "
+                "filed but will not run on the host until isolation is re-enabled. "
+                "For identity_verify, set question and follow_ups.yes / follow_ups.no "
+                "(acknowledge/close vs escalate to an Elastic Security case). "
+                "Do not open IRIS or TheHive cases for this flow."
             ),
             "inputSchema": {
                 "type": "object",
@@ -368,6 +376,54 @@ class SamiGPTMCPServer:
                     },
                 },
                 "required": ["action_type", "title", "summary"],
+            },
+        }
+        self.tools["find_related_requests"] = {
+            "name": "find_related_requests",
+            "description": (
+                "Look up open Requests (Approvals/Notes) related to an alert_id and/or "
+                "detection rule before filing fine_tune, visibility, runbook_gap, "
+                "add_alert_note, or close_alert. If a match already covers the same "
+                "alert document or the same rule recommendation, do NOT file another — "
+                "cite the existing request_id instead."
+            ),
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "alert_id": {
+                        "type": "string",
+                        "description": "SIEM alert id — finds pending notes/closes for that document",
+                    },
+                    "action_type": {
+                        "type": "string",
+                        "description": "Single action type filter (e.g. fine_tune, add_alert_note, close_alert)",
+                    },
+                    "action_types": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Optional list of action types to include",
+                    },
+                    "rule_id": {
+                        "type": "string",
+                        "description": "Detection rule id for recommendation / note matching",
+                    },
+                    "rule_name": {
+                        "type": "string",
+                        "description": "Detection rule name for recommendation / note matching",
+                    },
+                    "query": {
+                        "type": "string",
+                        "description": "Optional free-text filter against title/summary",
+                    },
+                    "open_only": {
+                        "type": "boolean",
+                        "description": "Only open (pending/informational) requests (default true)",
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Max rows to return (default 25)",
+                    },
+                },
             },
         }
 
@@ -608,9 +664,13 @@ class SamiGPTMCPServer:
         self.tools["create_fine_tuning_recommendation"] = {
             "name": "create_fine_tuning_recommendation",
             "description": (
-                "Pull the matching Home Lab detection rule and file a fine-tune suggestion "
-                "(query, exceptions, or false-positive notes). Pass rule_id or rule_name when known; "
-                "otherwise search_lab_detection_rules first."
+                "File a fine-tune suggestion for an EXISTING Home Lab detection "
+                "(exceptions / false-positive narrowing only — not new rules). "
+                "Preflight: search_lab_detection_rules, then find_related_requests for fine_tune "
+                "and visibility; if an open note already covers this rule, cite that request_id "
+                "and do not file again. Pass rule_id or rule_name when known. "
+                "If no rule matches, the server reclassifies the note as Visibility. "
+                "For missing coverage / new detections use create_visibility_recommendation."
                 + _INFORMATIONAL_FOR_ANALYST
             ),
             "inputSchema": {
@@ -643,10 +703,14 @@ class SamiGPTMCPServer:
         self.tools["create_visibility_recommendation"] = {
             "name": "create_visibility_recommendation",
             "description": (
-                "File an informational visibility-gap note. Search first with search_lab_detection_rules "
-                "(1–3 short keyword queries) and load at most one or two rules with get_lab_detection_rule. "
-                "Only file this if the catalog does not already cover the behavior. Do not dump the catalog "
-                "into context. The server re-checks coverage when filing."
+                "File an informational visibility-gap note (missing telemetry or missing detection / new rule). "
+                "Preflight in order: (1) search_lab_detection_rules (1–3 short keyword queries) and at most "
+                "1–2 get_lab_detection_rule — if a rule already covers the behavior, use "
+                "create_fine_tuning_recommendation on that rule instead; (2) find_related_requests for "
+                "fine_tune and visibility — if an open note already covers the gap, cite request_id and "
+                "do not file again; (3) optionally list_visibility_recommendations when ENG is linked. "
+                "Only file if coverage is still missing. Do not dump the catalog into context. "
+                "The server re-checks coverage when filing."
                 + _INFORMATIONAL_FOR_ANALYST
             ),
             "inputSchema": {
@@ -1955,10 +2019,11 @@ class SamiGPTMCPServer:
         self.tools["isolate_endpoint"] = {
             "name": "isolate_endpoint",
             "description": (
-                "Request isolating an endpoint from the network via Elastic Defend "
+                "Recommend isolating an endpoint from the network via Elastic Defend "
                 "(Kibana Endpoint Security) on the bound cluster. Pass agent.id when known, "
                 "or a hostname to look up."
                 + _QUEUED_FOR_ANALYST
+                + _ISOLATION_DISABLED
             ),
             "inputSchema": {
                 "type": "object",
@@ -1983,8 +2048,9 @@ class SamiGPTMCPServer:
         self.tools["release_endpoint_isolation"] = {
             "name": "release_endpoint_isolation",
             "description": (
-                "Request releasing an endpoint from Elastic Defend isolation on the bound cluster."
+                "Recommend releasing an endpoint from Elastic Defend isolation on the bound cluster."
                 + _QUEUED_FOR_ANALYST
+                + _ISOLATION_DISABLED
             ),
             "inputSchema": {
                 "type": "object",
@@ -2342,9 +2408,10 @@ class SamiGPTMCPServer:
         self.tools["isolate_endpoint"] = {
             "name": "isolate_endpoint",
             "description": (
-                "Request isolating an endpoint from the network via Elastic Defend "
+                "Recommend isolating an endpoint from the network via Elastic Defend "
                 "(Kibana Endpoint Security) on the bound cluster."
                 + _QUEUED_FOR_ANALYST
+                + _ISOLATION_DISABLED
             ),
             "inputSchema": {
                 "type": "object",
@@ -2369,8 +2436,9 @@ class SamiGPTMCPServer:
         self.tools["release_endpoint_isolation"] = {
             "name": "release_endpoint_isolation",
             "description": (
-                "Request releasing an endpoint from network isolation."
+                "Recommend releasing an endpoint from network isolation."
                 + _QUEUED_FOR_ANALYST
+                + _ISOLATION_DISABLED
             ),
             "inputSchema": {
                 "type": "object",
@@ -3389,17 +3457,13 @@ To be populated during investigation.
         
         method = request.get("method")
         params = request.get("params", {})
-        from .cluster_context import (
-            extract_cluster_id,
-            reset_elastic_cluster_id,
-            set_elastic_cluster_id,
-        )
+        from .cluster_context import bind_request_context, reset_request_context
 
-        cluster_token = set_elastic_cluster_id(extract_cluster_id(params))
+        cluster_token, session_token = bind_request_context(params)
         try:
             return await self._dispatch_request(request, method, params)
         finally:
-            reset_elastic_cluster_id(cluster_token)
+            reset_request_context(cluster_token, session_token)
 
     async def _dispatch_request(
         self,
@@ -3580,9 +3644,14 @@ To be populated during investigation.
             )
 
         from ..ai_controller.approval_queue.mcp_bridge import enqueue_gated_tool
-        from .cluster_context import get_elastic_cluster_id
+        from .cluster_context import get_elastic_cluster_id, get_session_id
 
-        queued = enqueue_gated_tool(tool_name, tool_args, cluster_id=get_elastic_cluster_id())
+        queued = enqueue_gated_tool(
+            tool_name,
+            tool_args,
+            cluster_id=get_elastic_cluster_id(),
+            session_id=get_session_id() or (tool_args or {}).get("session_id"),
+        )
         if queued:
             result_text = json.dumps(queued, indent=2)
             self._mcp_logger.info(
@@ -3635,7 +3704,32 @@ To be populated during investigation.
 
     async def _execute_tool(self, tool_name: str, args: Dict[str, Any]) -> Any:
         """
-        Execute a tool by name.
+        Execute a tool by name off the asyncio event loop.
+
+        Sync SIEM/Elastic work runs in a worker thread so the web UI loop
+        stays responsive during in-process MCP calls. Cluster/session
+        contextvars are rebound inside the thread.
+        """
+        from .cluster_context import (
+            get_elastic_cluster_id,
+            get_session_id,
+            run_with_bound_context,
+        )
+
+        cluster_id = get_elastic_cluster_id()
+        session_id = get_session_id()
+        return await asyncio.to_thread(
+            run_with_bound_context,
+            cluster_id,
+            session_id,
+            self._execute_tool_sync,
+            tool_name,
+            args,
+        )
+
+    def _execute_tool_sync(self, tool_name: str, args: Dict[str, Any]) -> Any:
+        """
+        Execute a tool by name (synchronous body).
 
         Args:
             tool_name: Name of the tool to execute.
@@ -3650,7 +3744,7 @@ To be populated during investigation.
 
         if tool_name == "create_approval_request":
             from ..ai_controller.approval_queue.mcp_bridge import create_request_from_tool_args
-            from .cluster_context import get_elastic_cluster_id
+            from .cluster_context import get_elastic_cluster_id, get_session_id
 
             payload = args.get("payload")
             if isinstance(payload, str):
@@ -3659,11 +3753,26 @@ To be populated during investigation.
                     args["payload"] = json.loads(payload)
                 except json.JSONDecodeError:
                     pass
+            args = dict(args)
+            if not args.get("session_id"):
+                args["session_id"] = get_session_id()
             result = create_request_from_tool_args(args, cluster_id=get_elastic_cluster_id())
             self._mcp_logger.info(
                 "Tool %s filed approval request %s",
                 tool_name,
                 result.get("request_id"),
+            )
+            return result
+
+        if tool_name == "find_related_requests":
+            from ..ai_controller.approval_queue.mcp_bridge import find_related_requests_from_args
+            from .cluster_context import get_elastic_cluster_id
+
+            result = find_related_requests_from_args(args, cluster_id=get_elastic_cluster_id())
+            self._mcp_logger.info(
+                "Tool %s returned %s related request(s)",
+                tool_name,
+                result.get("count"),
             )
             return result
 
@@ -4075,10 +4184,13 @@ To be populated during investigation.
                 from ..ai_controller.approval_queue.mcp_bridge import enqueue_gated_tool
                 from .cluster_context import get_elastic_cluster_id
 
+                from .cluster_context import get_session_id as _get_session_id
+
                 queued_note = enqueue_gated_tool(
                     "add_alert_note",
                     {"alert_id": args["alert_id"], "note": note_text},
                     cluster_id=get_elastic_cluster_id(),
+                    session_id=_get_session_id(),
                 )
                 if isinstance(result, dict):
                     result["note_queued"] = queued_note

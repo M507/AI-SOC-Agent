@@ -12,7 +12,12 @@ from __future__ import annotations
 import hashlib
 from typing import Any, Dict, List
 
-from .rules_store import apply_additions, apply_disable
+from .rules_store import apply_additions, apply_disable, create_rule_file
+
+
+def default_exception_list_id(rule_id: str) -> str:
+    """Same stable list_id Home-Lab-Rules uses so Kibana refs stay shared."""
+    return f"dac-{rule_id[:8]}-exceptions"
 
 
 def _item_id(rule_id: str, entries: List[Dict[str, str]]) -> str:
@@ -37,7 +42,7 @@ def exception_item(rule_id: str, card: Dict[str, Any]) -> Dict[str, Any]:
     )
     return {
         "item_id": _item_id(rule_id, [{"field": entry["field"], "value": str(entry["value"])} for entry in entries]),
-        "list_id": f"sami-{rule_id[:8]}-exceptions",
+        "list_id": default_exception_list_id(rule_id),
         "type": "simple",
         "name": name[:120],
         "description": "Created by SamiGPT Detection as Code",
@@ -56,3 +61,8 @@ def write_exceptions(path, data, cards, expected_sha256: str, rule_id: str) -> D
 
 def write_disabled(path, data, expected_sha256: str) -> Dict[str, Any]:
     return apply_disable(path, data, expected_sha256)
+
+
+def write_new_rule(proposed: Dict[str, Any]) -> Dict[str, Any]:
+    """Create a new enabled rule file from a Visibility new_rule draft."""
+    return create_rule_file(proposed)

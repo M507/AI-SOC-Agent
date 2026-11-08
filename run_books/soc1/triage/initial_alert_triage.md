@@ -37,6 +37,7 @@ Standardized SOC1 triage for SIEM alerts: start from the alert queue, **before a
 **SIEM – alert management**
 - `get_recent_alerts`, `get_security_alert_by_id`, `get_siem_event_by_id`
 - `update_alert_verdict`, `add_alert_note`, `get_alert_notes`, `close_alert`
+- `find_related_requests` — **before** filing note/close/fine-tune/visibility/runbook-gap; skip if an open match already covers this alert or rule
 - `create_approval_request` — optional **Is this you?** (`action_type=identity_verify`) only when a Yes/No on identity/expected use would decide the alert
 
 **SIEM – past decisions (MANDATORY before assessment)**
@@ -90,6 +91,15 @@ Standardized SOC1 triage for SIEM alerts: start from the alert queue, **before a
 2. Before ending the runbook → set a **final** verdict: `false_positive`, `benign_true_positive`, `true_positive`, or `uncertain`.
 3. Never end a run leaving the alert only on `in-progress`.
 4. If triage cannot continue, still set `uncertain` with a comment explaining the blocker.
+
+## Requests awareness (before filing)
+
+Before `add_alert_note`, `close_alert`, `create_fine_tuning_recommendation`, `create_visibility_recommendation`, or `create_runbook_recommendation`:
+
+1. Call `find_related_requests` with this alert’s `alert_id` and/or `rule_id`/`rule_name` plus the intended `action_type`.
+2. If an open Approval already exists for **this `alert_id`** (note or close), **do not file a twin**. Cite the existing `request_id`. Only re-call `add_alert_note` when the new text adds material facts (the server updates the pending note in place when richer).
+3. If an open Note already covers the **same rule / same recommendation class** (`fine_tune` / `visibility` / `runbook_gap`), **do not file another** — cite that `request_id` in the alert note / final summary instead.
+4. Different `alert_id`s stay separate Approvals even when host/rule match; do not skip filing a note/close just because another alert for the same rule is open.
 
 ## Workflow Steps
 
@@ -164,33 +174,35 @@ Standardized SOC1 triage for SIEM alerts: start from the alert queue, **before a
 
 ### 6. FP/BTP closure request (no case) — MANDATORY final verdict
 
-1. `add_alert_note` citing `${HISTORICAL_DECISIONS}` (prior verdicts + note takeaways) + NetBox + IOC results. Queued for Requests — do not claim the note is already written.
-2. **MANDATORY:** `update_alert_verdict` → `false_positive` or `benign_true_positive` (set `${FINAL_VERDICT}`).
-3. `close_alert` (queued for Requests). Do not claim the alert is already closed.
-4. Optionally update/create a fine-tuning recommendation for noisy rules.
-5. **Post-investigation (non-blocking):** if no case playbook under `soc1/cases` covered this alert type, go to Step 8.
-6. Set `${ASSESSMENT}` and `${ACTION_TAKEN}`; **end** (or Step 8 first if a runbook gap applies).
+1. `find_related_requests` with `alert_id=${ALERT_ID}` (and `action_types` note/close). If a pending note/close already exists for this document, reuse its `request_id` instead of filing a twin (re-file note only if richer facts).
+2. `add_alert_note` citing `${HISTORICAL_DECISIONS}` (prior verdicts + note takeaways) + NetBox + IOC results. Queued for Requests — do not claim the note is already written.
+3. **MANDATORY:** `update_alert_verdict` → `false_positive` or `benign_true_positive` (set `${FINAL_VERDICT}`).
+4. `close_alert` (queued for Requests). Do not claim the alert is already closed.
+5. Optionally fine-tune noisy rules: first `find_related_requests` with `rule_id`/`rule_name` + `action_type=fine_tune`; file `create_fine_tuning_recommendation` only if none open for that rule.
+6. **Post-investigation (non-blocking):** if no case playbook under `soc1/cases` covered this alert type, go to Step 8.
+7. Set `${ASSESSMENT}` and `${ACTION_TAKEN}`; **end** (or Step 8 first if a runbook gap applies).
 
 ### 7. Enrichment when not closing (still no case) — MANDATORY final verdict
 
 1. Targeted SIEM searches / entity enrichment as needed (keep light).
 2. Re-check history if new entities suggest additional past decisions to read.
 3. Choose **final** working verdict: `uncertain` or `true_positive` only (do **not** leave `in-progress` when ending).
-4. `add_alert_note` MUST include (queued for Requests — do not claim the note is already written):
+4. `find_related_requests` with `alert_id=${ALERT_ID}` + `action_type=add_alert_note`. Skip filing a twin if a pending note already exists unless the new text adds material facts.
+5. `add_alert_note` MUST include (queued for Requests — do not claim the note is already written):
    - Rule name/id, key entities
    - `${HISTORICAL_DECISIONS}` (prior verdicts + `get_alert_notes` summary)
    - NetBox match/mismatch
    - IOC/enrichment highlights
    - Why it was not closed and what a human should check next
-5. **MANDATORY:** `update_alert_verdict` with that final assessment (set `${FINAL_VERDICT}`).
-6. **Optionally file Is this you?** — only if a Yes/No from the analyst would actually decide identity/expected use. Uncertain (even with a user on the alert) is **not** enough by itself. Skip this when the note is enough.
+6. **MANDATORY:** `update_alert_verdict` with that final assessment (set `${FINAL_VERDICT}`).
+7. **Optionally file Is this you?** — only if a Yes/No from the analyst would actually decide identity/expected use. Uncertain (even with a user on the alert) is **not** enough by itself. Skip this when the note is enough.
    - If filing: `create_approval_request` with `action_type=identity_verify`
    - `question` — yes/no the analyst can answer (e.g. "Was this ${activity} by ${username} from ${source_ip} actually you / expected?")
    - `payload` — `alert_id`, `username`, plus `source_ip` / `hostname` / `timestamp` / `activity` when known
    - Leave `follow_ups` empty so defaults apply: **Yes** → close as benign true positive; **No** → escalate
-   - Tell the analyst the question is **pending in Requests**. Do not claim they already answered.
-7. **Do not create a case.** Set `${ACTION_TAKEN}` = "Alert note requested; final verdict recorded; no case created." (add that Is this you? is pending only if you filed it.)
-8. **Post-investigation (non-blocking):** if no case playbook under `soc1/cases` covered this alert type, go to the case-runbook gap step below; otherwise **end**.
+   - Tell the analyst the question is **pending in Requests → Approvals**. Do not claim they already answered.
+8. **Do not create a case.** Set `${ACTION_TAKEN}` = "Alert note requested; final verdict recorded; no case created." (add that Is this you? is pending only if you filed it.)
+9. **Post-investigation (non-blocking):** if no case playbook under `soc1/cases` covered this alert type, go to the case-runbook gap step below; otherwise **end**.
 
 ### 8. Case-runbook gap request (AFTER investigation — never blocks triage)
 
@@ -199,7 +211,8 @@ Standardized SOC1 triage for SIEM alerts: start from the alert queue, **before a
 **Do not** pause enrichment, history review, or verdicts for this. File it last.
 
 1. Optionally `list_runbooks` with `soc_tier="soc1"`, `category="cases"` to confirm no match.
-2. Call `create_runbook_recommendation` with:
+2. `find_related_requests` with `rule_id`/`rule_name` + `action_type=runbook_gap`. If an open Note already covers this rule, cite it and skip filing.
+3. Call `create_runbook_recommendation` with:
    - `title` — e.g. `Need case runbook: ${RULE_NAME}`
    - `description` — author brief: objective, when to use, decision points, example steps that worked on this alert, pitfalls
    - `rule_name` / `rule_id` / `alert_type` / `alert_id`

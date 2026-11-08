@@ -1,11 +1,12 @@
-"""Open findings, checked fields, and acknowledge or close.
+"""Open alerts, checked fields, and acknowledge or close.
 
 Suggested means the dotted field is highlighted on the rule
 (investigation_fields) or listed in suggested_fields.json. It only
 changes the default checkbox. Acknowledge and close match other open
 alerts for the same rule that contain every checked value, inside the
 match lookback. A note is written only when the box has text. Neither
-action edits a rule file. See documentation/detection-as-code.md.
+action edits a rule file. Implement reuses the same matcher to close
+alerts that match selected exception cards. See documentation/detection-as-code.md.
 """
 
 from __future__ import annotations
@@ -17,7 +18,7 @@ from ...core.errors import IntegrationError
 from .errors import DetectionError
 from .settings import stored_settings
 
-logger = get_logger("sami.detection.findings")
+logger = get_logger("sami.detection.alerts")
 
 _SKIP_PREFIXES = (
     # Rule text and the highlight list itself are not analyst evidence.
@@ -133,6 +134,49 @@ def _lookup(source: Dict[str, Any], *names: str) -> str:
     return ""
 
 
+def _text(value: Any) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, list):
+        return ", ".join(part for part in (_text(item) for item in value) if part)
+    if isinstance(value, dict):
+        return ""
+    return str(value).strip()
+
+
+def _display_extras(source: Dict[str, Any], rule_name: str) -> Dict[str, str]:
+    """Extra list lines when the alert carries script / reason / target detail."""
+    ntopng = source.get("ntopng") if isinstance(source.get("ntopng"), dict) else {}
+    source_rule = source.get("rule") if isinstance(source.get("rule"), dict) else {}
+    event = source.get("event") if isinstance(source.get("event"), dict) else {}
+    url = source.get("url") if isinstance(source.get("url"), dict) else {}
+
+    subtitle = _text(
+        ntopng.get("script")
+        or source.get("ntopng.script")
+        or source_rule.get("name")
+        or source.get("rule.name")
+    )
+    if subtitle and subtitle.casefold() == str(rule_name or "").casefold():
+        subtitle = ""
+
+    reason = _text(
+        event.get("reason")
+        or source.get("event.reason")
+        or source.get("kibana.alert.original_event.reason")
+    )
+
+    target = _text(
+        ntopng.get("info")
+        or source.get("ntopng.info")
+        or url.get("full")
+        or url.get("domain")
+        or source.get("url.full")
+        or source.get("url.domain")
+    )
+    return {"subtitle": subtitle, "reason": reason, "target": target}
+
+
 def summarize_alert(alert_id: str, source: Dict[str, Any]) -> Dict[str, Any]:
     signal = source.get("signal") if isinstance(source.get("signal"), dict) else {}
     rule = signal.get("rule") if isinstance(signal.get("rule"), dict) else {}
@@ -150,6 +194,7 @@ def summarize_alert(alert_id: str, source: Dict[str, Any]) -> Dict[str, Any]:
         or source.get("kibana.alert.rule.rule_id")
         or ""
     )
+    extras = _display_extras(source, str(rule_name))
     return {
         "id": alert_id,
         "title": str(rule_name),
@@ -161,6 +206,9 @@ def summarize_alert(alert_id: str, source: Dict[str, Any]) -> Dict[str, Any]:
         "host_name": _lookup(source, "host.name", "host.hostname"),
         "user_name": _lookup(source, "user.name"),
         "verdict": str(signal_ai.get("verdict") or ""),
+        "subtitle": extras["subtitle"],
+        "reason": extras["reason"],
+        "target": extras["target"],
     }
 
 
@@ -180,7 +228,7 @@ def document_matches(source: Dict[str, Any], entries: List[Dict[str, str]]) -> b
     return True
 
 
-def finding_detail(client: Any, alert_id: str) -> Dict[str, Any]:
+def alert_detail(client: Any, alert_id: str) -> Dict[str, Any]:
     try:
         source = client.get_raw_alert_document(alert_id)
     except IntegrationError as exc:
@@ -190,8 +238,8 @@ def finding_detail(client: Any, alert_id: str) -> Dict[str, Any]:
     return {**summary, "fields": field_rows(source, names)}
 
 
-def list_findings(client: Any, *, hours: Optional[int] = None, query: str = "") -> List[Dict[str, Any]]:
-    lookback = stored_settings()["findings_hours"] if hours is None else max(1, int(hours))
+def list_alerts(client: Any, *, hours: Optional[int] = None, query: str = "") -> List[Dict[str, Any]]:
+    lookback = stored_settings()["alerts_hours"] if hours is None else max(1, int(hours))
     try:
         alerts = client.get_security_alerts(
             hours_back=lookback,
@@ -208,7 +256,10 @@ def list_findings(client: Any, *, hours: Optional[int] = None, query: str = "") 
         alert for alert in alerts
         if needle in " ".join(
             str(alert.get(key) or "")
-            for key in ("title", "rule_name", "rule_id", "severity", "host_name")
+            for key in (
+                "title", "rule_name", "rule_id", "severity", "host_name",
+                "subtitle", "reason", "target",
+            )
         ).lower()
     ]
 
@@ -238,7 +289,7 @@ def matching_alert_ids(client: Any, *, rule_id: str, alert_id: str, entries: Lis
     return ids
 
 
-def update_finding_status(
+def update_alert_status(
     client: Any,
     *,
     alert_id: str,
@@ -277,5 +328,75 @@ def update_finding_status(
         "updated": updated,
         "failed": failed,
         "notes_written": notes_written,
+        "note": bool(note_text),
+    }
+
+
+_IMPLEMENT_CLOSE_NOTE = "Closed by Detection as Code Implement (exception match)."
+
+
+def close_alerts_matching_exceptions(
+    client: Any,
+    *,
+    rule_id: str,
+    exception_cards: Optional[List[Dict[str, Any]]] = None,
+    note: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Close open alerts for ``rule_id`` that match any selected exception card.
+
+    Within a card, every field/value must match (AND). Across cards, one match
+    is enough (OR). Does not force-close a seed alert_id. Best-effort: search or
+    close failures are returned, not raised as a hard error for empty results.
+    """
+    rule_id = str(rule_id or "").strip()
+    note_text = (note if note is not None else _IMPLEMENT_CLOSE_NOTE).strip()
+    card_entries: List[List[Dict[str, str]]] = []
+    for card in exception_cards or []:
+        if not isinstance(card, dict) or card.get("selected") is False:
+            continue
+        entries = normalize_entries(card.get("entries") or [])
+        if entries:
+            card_entries.append(entries)
+    if not rule_id or not card_entries:
+        return {"updated": [], "failed": [], "matched": [], "note": bool(note_text)}
+
+    try:
+        documents = client.search_alert_documents(
+            rule_id=rule_id,
+            status="open",
+            hours_back=stored_settings()["match_hours"],
+        )
+    except IntegrationError as exc:
+        logger.warning("Could not search open alerts for exception close on %s: %s", rule_id, exc)
+        return {
+            "updated": [],
+            "failed": [{"alert_id": "", "error": str(exc)}],
+            "matched": [],
+            "note": bool(note_text),
+        }
+
+    matched: List[str] = []
+    for document in documents:
+        candidate = str(document.get("id") or "")
+        source = document.get("source") if isinstance(document.get("source"), dict) else {}
+        if not candidate or candidate in matched:
+            continue
+        if any(document_matches(source, entries) for entries in card_entries):
+            matched.append(candidate)
+
+    updated: List[str] = []
+    failed: List[Dict[str, str]] = []
+    for target in matched:
+        try:
+            if note_text:
+                client.add_alert_note(target, note_text)
+            client.close_alert(target, reason="false_positive", comment=None)
+            updated.append(target)
+        except IntegrationError as exc:
+            failed.append({"alert_id": target, "error": str(exc)})
+    return {
+        "updated": updated,
+        "failed": failed,
+        "matched": matched,
         "note": bool(note_text),
     }
