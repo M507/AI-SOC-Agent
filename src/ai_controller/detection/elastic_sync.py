@@ -203,6 +203,27 @@ def _upsert_exception_item(http: Any, item: Dict[str, Any]) -> Dict[str, Any]:
         return _kbn_post(http, EXCEPTION_ITEMS_PATH, payload)
 
 
+def _canonical_exception_list_id(
+    rule_id: str,
+    exceptions_list: List[Dict[str, Any]],
+    exception_items: List[Dict[str, Any]],
+) -> str:
+    """Prefer an existing dac-* list on the rule, else the Home-Lab-Rules default."""
+    from .apply import default_exception_list_id
+
+    preferred = default_exception_list_id(rule_id)
+    for ref in exceptions_list or []:
+        list_id = str((ref or {}).get("list_id") or "")
+        if list_id.startswith("dac-") and list_id.endswith("-exceptions"):
+            return list_id
+    for item in exception_items or []:
+        list_id = str((item or {}).get("list_id") or "")
+        if list_id.startswith("dac-") and list_id.endswith("-exceptions"):
+            return list_id
+    # Legacy sami-* items still map onto the shared dac list.
+    return preferred
+
+
 def _sync_exceptions(
     http: Any,
     *,
@@ -212,9 +233,13 @@ def _sync_exceptions(
     exception_items: List[Dict[str, Any]],
 ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
     if not exception_items:
-        return exceptions_list, exception_items
+        # Drop incomplete refs (no Kibana id) so a later PUT does not 400.
+        return [
+            ref for ref in (exceptions_list or [])
+            if isinstance(ref, dict) and ref.get("id") and ref.get("list_id")
+        ], exception_items
 
-    list_id = str(exception_items[0].get("list_id") or f"sami-{rule_id[:8]}-exceptions")
+    list_id = _canonical_exception_list_id(rule_id, exceptions_list, exception_items)
     namespace_type = str(exception_items[0].get("namespace_type") or "single")
     exc_list = _ensure_exception_list(
         http, list_id=list_id, rule_name=rule_name or rule_id, namespace_type=namespace_type
@@ -234,17 +259,28 @@ def _sync_exceptions(
         "type": exc_list.get("type", "detection"),
         "namespace_type": exc_list.get("namespace_type", namespace_type),
     }
-    refs = list(exceptions_list or [])
-    replaced = False
+    # Keep other complete remote/local refs; never keep id-less stubs (Kibana 400).
+    # Collapse legacy sami-* / duplicate dac refs into the canonical synced_ref.
     updated_refs: List[Dict[str, Any]] = []
-    for ref in refs:
-        if ref.get("list_id") == list_id:
-            updated_refs.append(synced_ref)
-            replaced = True
-        else:
-            updated_refs.append(ref)
-    if not replaced:
-        updated_refs.append(synced_ref)
+    seen_lists = {list_id}
+    updated_refs.append(synced_ref)
+    for ref in exceptions_list or []:
+        if not isinstance(ref, dict):
+            continue
+        other_id = str(ref.get("list_id") or "")
+        if not other_id or other_id in seen_lists:
+            continue
+        if other_id.startswith("sami-") and other_id.endswith("-exceptions"):
+            continue
+        if not ref.get("id"):
+            continue
+        updated_refs.append({
+            "id": ref["id"],
+            "list_id": other_id,
+            "type": ref.get("type") or "detection",
+            "namespace_type": ref.get("namespace_type") or namespace_type,
+        })
+        seen_lists.add(other_id)
     return updated_refs, synced_items
 
 
@@ -296,7 +332,14 @@ def push_rule_file(client: Any, path: Path) -> Dict[str, Any]:
         updated = _kbn_put(http, RULES_PATH, payload)
     except IntegrationError as exc:
         logger.exception("Elastic rule sync failed for %s", rule_id or path.name)
-        raise DetectionError(f"Elastic sync failed: {exc}", status_code=502) from exc
+        message = str(exc)
+        if "lists-all" in message or ("exception_lists" in message and "403" in message):
+            message = (
+                f"{exc}. The Elasticsearch API key cannot write exception lists. "
+                "Set elastic.clusters[].kibana_api_key (and kibana_url) to a Kibana "
+                "API key with lists-all / detection privileges, then Implement again."
+            )
+        raise DetectionError(f"Elastic sync failed: {message}", status_code=502) from exc
     except DetectionError:
         raise
     except Exception as exc:  # noqa: BLE001

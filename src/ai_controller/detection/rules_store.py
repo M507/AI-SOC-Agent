@@ -2,7 +2,7 @@
 
 The folder path is the only external input. Files are never copied into
 this repository. suggested_fields.json lives beside the rules and is not
-a rule: the indexer skips that name, and Findings unions its names with
+a rule: the indexer skips that name, and Alerts unions its names with
 each rule's investigation_fields. Writes go through a temp file in the
 same directory so a crash does not truncate the rule. The sha256 captured
 at draft time is checked again at Implement so a file edited outside the

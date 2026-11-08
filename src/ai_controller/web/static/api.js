@@ -765,6 +765,17 @@ class APIClient {
         return this._requestDecision(`/api/requests/${encodeURIComponent(requestId)}/ignore`, { comment });
     }
 
+    async sendFineTuneToReview(requestId, note = '') {
+        return this.request(
+            `/api/detections/reviews/from-request/${encodeURIComponent(requestId)}`,
+            {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ note: note || '' }),
+            },
+        );
+    }
+
     async answerRequest(requestId, answer, comment = '') {
         return this._requestDecision(`/api/requests/${encodeURIComponent(requestId)}/answer`, { answer, comment });
     }

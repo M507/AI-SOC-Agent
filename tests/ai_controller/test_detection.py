@@ -1,4 +1,4 @@
-"""Detection as Code checks, diffs, file writes, and finding status."""
+"""Detection as Code checks, diffs, file writes, and alert status."""
 
 import asyncio
 import json
@@ -9,16 +9,17 @@ import pytest
 from src.ai_controller.approval_queue import init_queue
 from src.ai_controller.approval_queue.lab_rules import clear_index_cache
 from src.ai_controller.detection.apply import write_exceptions
-from src.ai_controller.detection.ask import ask_about_finding
+from src.ai_controller.detection.ask import ask_about_alert
 from src.ai_controller.detection.diff import unified_diff
 from src.ai_controller.detection.errors import DetectionError
-from src.ai_controller.detection.findings import (
+from src.ai_controller.detection.alerts import (
+    close_alerts_matching_exceptions,
     field_rows,
     suggested_names_for,
     summarize_alert,
-    update_finding_status,
+    update_alert_status,
 )
-from src.ai_controller.detection.review import create_from_fields, implement
+from src.ai_controller.detection.review import create_from_fields, implement, review_view
 from src.ai_controller.detection import rules_store
 from src.ai_controller.detection.validation import validate_checked
 from src.llm.base import LLMResult
@@ -220,22 +221,89 @@ class _Alerts:
 def test_close_with_note_and_without_note():
     client = _Alerts()
     entries = [{"field": "host.name", "value": "lab"}]
-    without = update_finding_status(
+    without = update_alert_status(
         client, alert_id="alert-1", rule_id=RULE_ID, entries=entries, status="closed", note=""
     )
     assert without["note"] is False
     assert client.notes == []
     assert client.closed == ["alert-1"]
-    with_note = update_finding_status(
+    with_note = update_alert_status(
         client, alert_id="alert-1", rule_id=RULE_ID, entries=entries, status="closed", note="expected login"
     )
     assert with_note["note"] is True
     assert client.notes == [("alert-1", "expected login")]
-    ack = update_finding_status(
+    ack = update_alert_status(
         client, alert_id="alert-1", rule_id=RULE_ID, entries=entries, status="acknowledged", note=""
     )
     assert ack["note"] is False
     assert client.acknowledged == [("alert-1", "acknowledged")]
+
+
+def test_close_alerts_matching_exceptions_or_across_cards():
+    client = _Alerts()
+    client.search_alert_documents = lambda **_kwargs: [
+        {"id": "alert-1", "source": {"host": {"name": "lab"}}},
+        {"id": "alert-2", "source": {"user": {"name": "svc"}}},
+        {"id": "alert-3", "source": {"host": {"name": "other"}}},
+    ]
+    empty = close_alerts_matching_exceptions(
+        client,
+        rule_id=RULE_ID,
+        exception_cards=[{"selected": False, "entries": [{"field": "host.name", "value": "lab"}]}],
+    )
+    assert empty["updated"] == []
+    assert client.closed == []
+
+    result = close_alerts_matching_exceptions(
+        client,
+        rule_id=RULE_ID,
+        exception_cards=[
+            {"selected": True, "entries": [{"field": "host.name", "value": "lab"}]},
+            {"selected": True, "entries": [{"field": "user.name", "value": "svc"}]},
+        ],
+    )
+    assert set(result["updated"]) == {"alert-1", "alert-2"}
+    assert "alert-3" not in result["updated"]
+    assert set(client.closed) == {"alert-1", "alert-2"}
+    assert all("Implement" in note for _, note in client.notes)
+
+
+def test_implement_closes_matching_open_alerts(rules, monkeypatch):
+    from src.ai_controller.detection.review import update_selection
+
+    client = _Alerts()
+    client.search_alert_documents = lambda **_kwargs: [
+        {"id": "alert-1", "source": {"host": {"name": "lab"}}},
+        {"id": "alert-2", "source": {"host": {"name": "other"}}},
+    ]
+
+    def fake_sync(_client, *, file_path):
+        return {
+            "synced": True,
+            "file": file_path,
+            "file_sha256": "synced",
+            "revision": 1,
+            "rule_id": RULE_ID,
+            "rule_name": "pfSense Successful Login",
+            "enabled": True,
+            "exception_count": 1,
+        }
+
+    monkeypatch.setattr("src.ai_controller.detection.elastic_sync.push_rule_after_implement", fake_sync)
+    monkeypatch.setattr("src.core.elastic_clusters.client_for_id", lambda _cid=None: client)
+
+    created = create_from_fields(
+        alert={"id": "alert-1", "rule_id": RULE_ID, "rule_name": "pfSense Successful Login"},
+        entries=[{"field": "host.name", "value": "lab"}],
+    )
+    update_selection(created.id, [{"selected": True, "allow_wildcard": False}])
+    saved = implement(created.id)
+    assert saved.execution_result["alerts_closed"] == ["alert-1"]
+    assert saved.execution_result["alerts_close_failed"] == []
+    assert client.closed == ["alert-1"]
+    view = review_view(saved)
+    assert view["execution_result"]["alerts_closed"] == ["alert-1"]
+    assert view["result"]["alerts_closed"] == ["alert-1"]
 
 
 def test_ask_records_detection_usage(tmp_path, monkeypatch):
@@ -253,7 +321,7 @@ def test_ask_records_detection_usage(tmp_path, monkeypatch):
             )
 
     monkeypatch.setattr("src.ai_controller.detection.ask.get_active_provider", lambda: Provider())
-    result = asyncio.run(ask_about_finding(
+    result = asyncio.run(ask_about_alert(
         prompt_id="ask_about",
         alert={"id": "alert-1", "rule_name": "pfSense", "rule_id": RULE_ID, "severity": "medium", "status": "open"},
         entries=[{"field": "host.name", "value": "lab"}],

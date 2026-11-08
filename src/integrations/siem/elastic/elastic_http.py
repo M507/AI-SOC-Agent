@@ -204,6 +204,17 @@ class ElasticHttpClient:
             "POST", endpoint, json_data=json_data, extra_headers=extra_headers
         )
 
+    def put(
+        self,
+        endpoint: str,
+        json_data: Optional[Dict[str, Any]] = None,
+        extra_headers: Optional[Dict[str, str]] = None,
+    ) -> Dict[str, Any]:
+        """PUT request (Kibana exception items / detection rules upsert)."""
+        return self.request(
+            "PUT", endpoint, json_data=json_data, extra_headers=extra_headers
+        )
+
     def patch(
         self,
         endpoint: str,

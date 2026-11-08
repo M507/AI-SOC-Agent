@@ -21,22 +21,22 @@ def test_detection_section_is_in_the_shell():
     html = INDEX.read_text(encoding="utf-8")
     app_js = APP_JS.read_text(encoding="utf-8")
     detections_js = (WEB / "static" / "detections.js").read_text(encoding="utf-8")
-    assert 'id="nav-findings"' in html
+    assert 'id="nav-alerts"' in html
     assert 'id="nav-rules"' in html
     assert 'id="nav-detection-review"' in html
     assert 'id="detections-content"' in html
-    assert 'id="findings-search"' in html
+    assert 'id="alerts-search"' in html
     assert 'id="rules-search"' in html
     assert 'id="review-conditions"' in html
     assert 'id="review-diff"' in html
-    assert "Ask about this finding" in html
+    assert "Ask about this alert" in html
     assert "Create exception from checked fields" in html
     assert "detections.js" in html
     assert "detections.css" in html
     assert "'detections'" in app_js
     assert "DetectionsManager" in detections_js
     assert 'id="detection-rules-dir"' in html
-    assert 'id="detection-findings-hours"' in html
+    assert 'id="detection-alerts-hours"' in html
     assert 'id="detection-match-hours"' in html
     assert "saveDetectionSettings" in app_js
 
@@ -106,13 +106,13 @@ def test_detection_settings_save_the_rules_folder(tmp_path, monkeypatch):
     client = _client(tmp_path, monkeypatch, rules)
     saved = client.put(
         "/api/detections/settings",
-        json={"rules_dir": str(rules), "findings_hours": 48, "match_hours": 72},
+        json={"rules_dir": str(rules), "alerts_hours": 48, "match_hours": 72},
     )
     assert saved.status_code == 200, saved.text
     body = saved.json()["settings"]
     assert body["rules_dir"] == str(rules.resolve())
     assert body["configured"] is True
-    assert body["findings_hours"] == 48
+    assert body["alerts_hours"] == 48
     assert body["match_hours"] == 72
     monkeypatch.delenv("SAMI_LAB_RULES_DIR", raising=False)
     again = client.get("/api/detections/settings")
@@ -120,3 +120,40 @@ def test_detection_settings_save_the_rules_folder(tmp_path, monkeypatch):
     assert again.json()["settings"]["env_override"] is False
     missing = client.put("/api/detections/settings", json={"rules_dir": str(tmp_path / "missing-folder")})
     assert missing.status_code == 400
+
+
+def test_alerts_routes_replace_findings_and_settings_dual_read(tmp_path, monkeypatch):
+    rules = tmp_path / "alerts-rules"
+    rules.mkdir()
+    config_path = tmp_path / "config.json"
+    config_path.write_text(
+        json.dumps({
+            "detection": {"rules_dir": "", "findings_hours": 99, "match_hours": 200},
+            "web": {
+                "username": "admin",
+                "password": hash_password(TEST_PASSWORD),
+                "session_secret": "test-session-secret-value-minimum-32-chars-long",
+            },
+        }),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr("src.core.config_storage.CONFIG_FILE", str(config_path))
+    monkeypatch.delenv("SAMI_LAB_RULES_DIR", raising=False)
+    client = _client(tmp_path, monkeypatch, rules)
+
+    settings = client.get("/api/detections/settings").json()["settings"]
+    assert settings["alerts_hours"] == 99
+    assert "findings_hours" not in settings
+
+    assert client.get("/api/detections/findings").status_code == 404
+    listed = client.get("/api/detections/alerts")
+    # No Elastic cluster in unit test → 409; route itself must exist.
+    assert listed.status_code in (200, 409, 502)
+    assert listed.status_code != 404
+
+    detail = client.get("/api/detections/alerts/does-not-exist")
+    assert detail.status_code in (404, 409, 502)
+    assert client.post("/api/detections/alerts/x/ask", json={"entries": []}).status_code != 404
+    assert client.post("/api/detections/alerts/x/exception", json={"entries": []}).status_code != 404
+    assert client.post("/api/detections/alerts/x/suggest", json={"entries": []}).status_code != 404
+    assert client.post("/api/detections/alerts/x/status", json={"status": "closed", "entries": []}).status_code != 404

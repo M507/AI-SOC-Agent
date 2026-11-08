@@ -247,6 +247,53 @@ class GitHubClient:
             raise IntegrationError(f"GitHub close issue #{number} returned unexpected payload")
         return issue
 
+    def delete_issue(self, issue_number: str, comment: Optional[str] = None) -> Dict[str, Any]:
+        """Hard-delete a GitHub issue via GraphQL ``deleteIssue``.
+
+        REST cannot delete issues. Missing / already-deleted issues are treated
+        as success so Done / Implement / Send-to-Review stay idempotent.
+        """
+        number = str(issue_number).lstrip("#")
+        if comment and str(comment).strip():
+            try:
+                self._add_comment(number, str(comment).strip())
+            except IntegrationError as exc:
+                # Issue may already be gone; continue to delete attempt.
+                logger.warning("GitHub comment before delete #%s failed: %s", number, exc)
+        try:
+            issue = self.get_issue(number)
+        except IntegrationError:
+            return {"number": number, "deleted": True, "already_gone": True}
+        node_id = str(issue.get("node_id") or "").strip()
+        if not node_id:
+            raise IntegrationError(f"GitHub issue #{number} has no node_id for deleteIssue")
+        payload = self._http.post(
+            "/graphql",
+            json_data={
+                "query": (
+                    "mutation($id:ID!){ deleteIssue(input:{issueId:$id}) "
+                    "{ clientMutationId } }"
+                ),
+                "variables": {"id": node_id},
+            },
+        )
+        if isinstance(payload, dict) and payload.get("errors"):
+            messages = "; ".join(
+                str(err.get("message") or err)
+                for err in (payload.get("errors") or [])
+                if err
+            )
+            lowered = messages.lower()
+            if "could not resolve" in lowered or "not found" in lowered:
+                return {"number": number, "deleted": True, "already_gone": True, "node_id": node_id}
+            raise IntegrationError(f"GitHub deleteIssue failed: {messages or payload}")
+        return {
+            "number": issue.get("number") or number,
+            "deleted": True,
+            "node_id": node_id,
+            "url": issue.get("html_url"),
+        }
+
     def list_issue_comments(self, issue_number: str) -> List[Dict[str, Any]]:
         """Fetch comments on one issue."""
         number = str(issue_number).lstrip("#")

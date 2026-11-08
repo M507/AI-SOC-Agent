@@ -96,8 +96,14 @@ class ElasticSIEMClient:
         timeout_seconds: int = 30,
         verify_ssl: bool = True,
         kibana_url: Optional[str] = None,
+        kibana_api_key: Optional[str] = None,
     ) -> "ElasticSIEMClient":
-        """Build a client from explicit cluster credentials."""
+        """Build a client from explicit cluster credentials.
+
+        ``kibana_api_key`` is used for Kibana routes (cases, exception lists,
+        detection-engine rule writes). When omitted, the Elasticsearch
+        ``api_key`` is reused — which often lacks ``lists-all``.
+        """
         http_client = ElasticHttpClient(
             base_url=base_url,
             api_key=api_key,
@@ -109,11 +115,12 @@ class ElasticSIEMClient:
         kibana_http = None
         resolved_kibana = (kibana_url or "").strip().rstrip("/")
         if resolved_kibana and resolved_kibana != base_url.rstrip("/"):
+            kibana_key = (kibana_api_key or api_key or None)
             kibana_http = ElasticHttpClient(
                 base_url=resolved_kibana,
-                api_key=api_key,
-                username=username,
-                password=password,
+                api_key=kibana_key,
+                username=username if not kibana_api_key else None,
+                password=password if not kibana_api_key else None,
                 timeout_seconds=timeout_seconds,
                 verify_ssl=verify_ssl,
             )
@@ -1785,6 +1792,7 @@ class ElasticSIEMClient:
         kibana_url = derive_kibana_url(self._http.base_url)
         if kibana_url.rstrip("/") == (self._http.base_url or "").rstrip("/"):
             return self._http
+        # Fallback when from_settings did not pre-build a Kibana client.
         return ElasticHttpClient(
             base_url=kibana_url,
             api_key=self._http.api_key,

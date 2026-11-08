@@ -3696,7 +3696,32 @@ To be populated during investigation.
 
     async def _execute_tool(self, tool_name: str, args: Dict[str, Any]) -> Any:
         """
-        Execute a tool by name.
+        Execute a tool by name off the asyncio event loop.
+
+        Sync SIEM/Elastic work runs in a worker thread so the web UI loop
+        stays responsive during in-process MCP calls. Cluster/session
+        contextvars are rebound inside the thread.
+        """
+        from .cluster_context import (
+            get_elastic_cluster_id,
+            get_session_id,
+            run_with_bound_context,
+        )
+
+        cluster_id = get_elastic_cluster_id()
+        session_id = get_session_id()
+        return await asyncio.to_thread(
+            run_with_bound_context,
+            cluster_id,
+            session_id,
+            self._execute_tool_sync,
+            tool_name,
+            args,
+        )
+
+    def _execute_tool_sync(self, tool_name: str, args: Dict[str, Any]) -> Any:
+        """
+        Execute a tool by name (synchronous body).
 
         Args:
             tool_name: Name of the tool to execute.

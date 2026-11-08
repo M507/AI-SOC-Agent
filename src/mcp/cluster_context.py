@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 from contextvars import ContextVar, Token
-from typing import Optional, Tuple
+from typing import Callable, Optional, Tuple, TypeVar
 
 _elastic_cluster_id: ContextVar[Optional[str]] = ContextVar("elastic_cluster_id", default=None)
 _session_id: ContextVar[Optional[str]] = ContextVar("mcp_session_id", default=None)
+
+_T = TypeVar("_T")
 
 
 def get_elastic_cluster_id() -> Optional[str]:
@@ -70,3 +72,24 @@ def bind_request_context(params: Optional[dict]) -> Tuple[Token, Token]:
 def reset_request_context(cluster_token: Token, session_token: Token) -> None:
     reset_elastic_cluster_id(cluster_token)
     reset_session_id(session_token)
+
+
+def run_with_bound_context(
+    cluster_id: Optional[str],
+    session_id: Optional[str],
+    fn: Callable[..., _T],
+    *args,
+    **kwargs,
+) -> _T:
+    """
+    Run `fn` with cluster/session contextvars set.
+
+    Used when offloading MCP tool bodies to a worker thread — contextvars do
+    not automatically copy across threads.
+    """
+    cluster_token = set_elastic_cluster_id(cluster_id)
+    session_token = set_session_id(session_id)
+    try:
+        return fn(*args, **kwargs)
+    finally:
+        reset_request_context(cluster_token, session_token)

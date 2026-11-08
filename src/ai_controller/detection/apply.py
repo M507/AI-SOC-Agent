@@ -15,6 +15,11 @@ from typing import Any, Dict, List
 from .rules_store import apply_additions, apply_disable
 
 
+def default_exception_list_id(rule_id: str) -> str:
+    """Same stable list_id Home-Lab-Rules uses so Kibana refs stay shared."""
+    return f"dac-{rule_id[:8]}-exceptions"
+
+
 def _item_id(rule_id: str, entries: List[Dict[str, str]]) -> str:
     blob = "|".join(f"{entry['field']}={entry['value']}" for entry in entries)
     digest = hashlib.sha256(blob.encode("utf-8")).hexdigest()[:10]
@@ -37,7 +42,7 @@ def exception_item(rule_id: str, card: Dict[str, Any]) -> Dict[str, Any]:
     )
     return {
         "item_id": _item_id(rule_id, [{"field": entry["field"], "value": str(entry["value"])} for entry in entries]),
-        "list_id": f"sami-{rule_id[:8]}-exceptions",
+        "list_id": default_exception_list_id(rule_id),
         "type": "simple",
         "name": name[:120],
         "description": "Created by SamiGPT Detection as Code",

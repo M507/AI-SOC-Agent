@@ -95,7 +95,6 @@ execution_flow/*.dot
 stats/
 .tmp/*
 gitleaks
-gitleaks.toml
 leaks.txt
 tmp/*
 images/clean.sh

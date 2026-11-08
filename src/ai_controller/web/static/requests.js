@@ -965,24 +965,35 @@ class RequestsManager {
             const createRunbookBtn = this.canCreateRunbook(item)
                 ? '<button type="button" class="btn btn-primary" data-request-action="create-runbook">Create runbook</button>'
                 : '';
+            const isFineTune = item.action_type === 'fine_tune';
+            const dacStage = item.payload && item.payload.dac ? item.payload.dac.stage : '';
+            const canSendToReview = isFineTune && !['implemented', 'rejected'].includes(String(dacStage || ''));
+            const sendBtn = canSendToReview
+                ? '<button type="button" class="btn btn-primary" data-request-action="send-to-review">Send to Review</button>'
+                : '';
             const doneLabel = createRunbookBtn
                 ? 'Create runbook opens an Open WebUI session with the request + last alert, writes a new md under run_books/soc1/cases, then marks this Done. Ignore archives here and closes the GitHub issue when linked.'
-                : (this.canIgnore(item)
-                    ? 'Done keeps GitHub tracking open. Ignore archives here and closes the GitHub issue.'
-                    : 'No approval needed — review only, then mark Done.');
+                : (isFineTune
+                    ? 'Send to Review drafts exceptions (up to 3 auto-fixes), opens Detection as Code Review, and deletes the GitHub issue on success. Done archives and deletes the GitHub issue without writing the rule. Ignore closes the GitHub issue.'
+                    : (this.canIgnore(item)
+                        ? 'Done archives here. Ignore archives here and closes the GitHub issue when linked.'
+                        : 'No approval needed — review only, then mark Done.'));
             return `
                 <div class="request-decision-bar is-info">
                     <div class="request-decision-copy">
-                        <span class="request-decision-label">Review note</span>
+                        <span class="request-decision-label">${isFineTune ? 'Fine-tune' : 'Review note'}</span>
                         <span>${doneLabel}</span>
                     </div>
                     <div class="request-actions">
+                        ${sendBtn}
                         ${createRunbookBtn}
-                        <button type="button" class="btn ${createRunbookBtn ? 'btn-secondary' : 'btn-primary'}" data-request-action="done">Done</button>
+                        <button type="button" class="btn ${sendBtn || createRunbookBtn ? 'btn-secondary' : 'btn-primary'}" data-request-action="done">Done</button>
                         ${ignoreBtn}
                     </div>
                     <textarea id="request-comment" class="command-input request-comment" rows="2"
-                        placeholder="Optional note (kept on the audit trail)"></textarea>
+                        placeholder="${isFineTune
+                            ? 'Optional instructions for the fine-tune AI (e.g. focus on host X; ignore other noise)'
+                            : 'Optional note (kept on the audit trail)'}"></textarea>
                 </div>
             `;
         }
@@ -1428,6 +1439,9 @@ class RequestsManager {
         if (action === 'done' || action === 'acknowledge') {
             return many > 1 ? `Marking${suffix} done…` : 'Marking done…';
         }
+        if (action === 'send-to-review') {
+            return 'Sending to Detection as Code Review…';
+        }
         if (action === 'create-runbook') {
             return 'Starting runbook session…';
         }
@@ -1574,10 +1588,27 @@ class RequestsManager {
         if (action === 'create-runbook') {
             return api.createRunbookFromRequest(id, comment);
         }
+        if (action === 'send-to-review') {
+            return api.sendFineTuneToReview(id, comment);
+        }
         if (action === 'yes' || action === 'no') {
             return api.answerRequest(id, action, comment);
         }
         return Promise.resolve({ success: false, error: 'Unknown action' });
+    }
+
+    openDetectionReview(review) {
+        if (!review || !review.id || !this.controller) {
+            return;
+        }
+        this.controller.activeDetectionsPage = 'review';
+        if (this.controller.setActiveSection) {
+            this.controller.setActiveSection('detections');
+        }
+        const detections = this.controller.detectionsManager;
+        if (detections && typeof detections.openReviewFromPromote === 'function') {
+            detections.openReviewFromPromote(review);
+        }
     }
 
     async handleAction(action) {
@@ -1588,13 +1619,20 @@ class RequestsManager {
         this._inFlight.add(item.id);
         const comment = this.comment();
         const toastKey = `requests-${item.id}`;
-        this.settleLocally(item, action);
+        const isPromote = action === 'send-to-review';
+        if (!isPromote) {
+            this.settleLocally(item, action);
+        }
         if (window.toast) {
             window.toast.info(this.workingMessage(action), { key: toastKey, duration: 0 });
         }
         const result = await this.dispatchAction(action, item.id, comment);
         if (!result || !result.success) {
-            this.restoreLocal(item.id);
+            if (!isPromote) {
+                this.restoreLocal(item.id);
+            } else {
+                this._inFlight.delete(item.id);
+            }
             if (window.toast) {
                 window.toast.error(
                     (result && (result.error || result.detail)) || 'Could not update request',
@@ -1603,11 +1641,31 @@ class RequestsManager {
             }
             return;
         }
+        if (isPromote) {
+            this._inFlight.delete(item.id);
+            const review = result.review || {};
+            const needsFix = review.stage === 'needs_fix';
+            if (window.toast) {
+                if (needsFix) {
+                    window.toast.error(
+                        review.error || 'AI draft failed validation after 3 tries — review the log.',
+                        { key: toastKey },
+                    );
+                } else {
+                    window.toast.success('Opened Detection as Code Review with a validated draft.', { key: toastKey });
+                }
+            }
+            this.openDetectionReview(review);
+            this.load();
+            return;
+        }
         const updated = result.request;
         const github = updated && updated.execution_result && updated.execution_result.github;
         if (window.toast) {
             if (action === 'ignore' && github && github.attempted && github.success === false) {
                 window.toast.error(github.error || 'Ignored locally, but GitHub close failed.', { key: toastKey });
+            } else if (action === 'done' && github && github.attempted && github.success === false) {
+                window.toast.error(github.error || 'Marked Done locally, but GitHub delete failed.', { key: toastKey });
             } else {
                 window.toast.success(this.receiptMessage(action, updated), { key: toastKey });
             }

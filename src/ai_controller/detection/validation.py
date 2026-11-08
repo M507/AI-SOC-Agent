@@ -1,18 +1,22 @@
 """Checks that must pass before a review is written to disk.
 
 See documentation/detection-as-code.md for the full gate. Wildcards and
-fields that were not on the finding are blocked so a draft cannot widen
+fields that were not on the alert are blocked so a draft cannot widen
 the exception past the evidence the analyst saw. A single volatile field
 is only a warning: it is a valid exception, but a broad one.
+
+``evaluate_draft_gate`` combines structural checks with regression /
+teaching-quality checks used by Send-to-Review's auto-fix loop.
 """
 
 from __future__ import annotations
 
-from typing import Any, Dict, Iterable, List, Set, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
 
 from .errors import DetectionError
 
 _VOLATILE = {"source.ip", "destination.ip", "client.ip", "server.ip", "related.ip", "user.name", "source.address"}
+VOLATILE_FIELDS = frozenset(_VOLATILE)
 
 
 def _pair(entry: Dict[str, Any]) -> Tuple[str, str]:
@@ -75,7 +79,7 @@ def validate_checked(
             if not allow_wild and ("*" in value or "?" in value):
                 raise DetectionError(f"{field} uses a wildcard. Allow it on that card or remove it.")
             if evidence and field not in evidence:
-                raise DetectionError(f"{field} was not on the finding evidence stored with this review.")
+                raise DetectionError(f"{field} was not on the alert evidence stored with this review.")
             clean.append({"field": field, "value": value})
         signature = _signature(clean)
         if signature in already:
@@ -86,3 +90,105 @@ def validate_checked(
         if len(clean) == 1 and clean[0]["field"] in _VOLATILE:
             warnings.append(f"{clean[0]['field']} is a single volatile field. Confirm it is narrow enough.")
     return warnings
+
+
+def _cards_for_gate(revision: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Treat every card as selected for the auto-fix gate."""
+    cards = []
+    for card in revision.get("exceptions") or []:
+        if not isinstance(card, dict):
+            continue
+        updated = dict(card)
+        updated["selected"] = True
+        cards.append(updated)
+    return cards
+
+
+def validate_draft_regression(
+    revision: Dict[str, Any],
+    *,
+    diff_text: str = "",
+    require_teaching: bool = True,
+) -> List[str]:
+    """Return blocking regression / quality error strings (empty means pass).
+
+    Soft warnings are not returned here — callers use validate_checked for those.
+    """
+    errors: List[str] = []
+    safe = bool(revision.get("safe_to_except", True))
+    cards = [card for card in (revision.get("exceptions") or []) if isinstance(card, dict)]
+    if not safe:
+        errors.append("Model marked safe_to_except=false.")
+    if not cards:
+        errors.append("Draft produced no exception cards for this fine-tune.")
+    if require_teaching:
+        if not str(revision.get("rationale") or "").strip():
+            errors.append("Explain the SIEM signal and improvement plan in rationale.")
+        plan = revision.get("improvement_plan")
+        if not (isinstance(plan, list) and any(str(item).strip() for item in plan)):
+            if not str(revision.get("rule_understanding") or "").strip():
+                errors.append("Provide improvement_plan or rule_understanding for the analyst.")
+    volatile_only = True
+    for card in cards:
+        entries = [entry for entry in (card.get("entries") or []) if isinstance(entry, dict)]
+        if len(entries) != 1:
+            volatile_only = False
+            break
+        field = str(entries[0].get("field") or "").strip()
+        if field not in _VOLATILE:
+            volatile_only = False
+            break
+    if cards and volatile_only:
+        errors.append(
+            "Every exception is a single volatile field (IP/user). Narrow with host/process/path or multi-field ANDs."
+        )
+    if cards and not str(diff_text or "").strip():
+        errors.append("Draft does not change the rule file (empty diff).")
+    return errors
+
+
+def evaluate_draft_gate(
+    revision: Dict[str, Any],
+    *,
+    existing_items: Optional[List[Dict[str, Any]]] = None,
+    evidence_fields: Optional[List[str]] = None,
+    diff_text: str = "",
+    require_teaching: bool = True,
+) -> Dict[str, Any]:
+    """Run structural + regression checks for one draft revision.
+
+    Returns ``{ok, errors, warnings}``. Does not raise — suitable for the
+    Send-to-Review retry loop.
+    """
+    errors: List[str] = []
+    warnings: List[str] = []
+    cards = _cards_for_gate(revision)
+    try:
+        warnings = validate_checked(
+            cards,
+            existing_items=list(existing_items or []),
+            evidence_fields=list(evidence_fields or []),
+            enforce_selection=True,
+        )
+    except DetectionError as exc:
+        errors.append(str(exc))
+    errors.extend(
+        validate_draft_regression(
+            revision,
+            diff_text=diff_text,
+            require_teaching=require_teaching,
+        )
+    )
+    # Dedupe while preserving order
+    seen: Set[str] = set()
+    unique_errors: List[str] = []
+    for item in errors:
+        if item in seen:
+            continue
+        seen.add(item)
+        unique_errors.append(item)
+    return {
+        "ok": not unique_errors,
+        "errors": unique_errors,
+        "warnings": list(warnings or []),
+    }

@@ -1,4 +1,4 @@
-"""Ask about one finding. One completion, recorded as detection usage.
+"""Ask about one alert. One completion, recorded as detection usage.
 
 This does not open a review and does not write a rule. Checked fields
 are required so the model sees the evidence the analyst chose, not the
@@ -16,7 +16,7 @@ from .prompts import ask_system_prompt, build_ask_prompt
 from .usage import record_detection_usage
 
 
-async def ask_about_finding(
+async def ask_about_alert(
     *,
     prompt_id: str,
     alert: Dict[str, Any],

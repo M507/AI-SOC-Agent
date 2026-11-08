@@ -93,17 +93,15 @@ Isolate, kill process, disable user, and reset credentials after a Yes/No are **
 
 ## Informational (no Approve)
 
-Fine-tune, visibility gap, and runbook gap are review notes under **Notes**. **Done** only archives the card (GitHub issue stays open if linked). **Ignore** archives the card and closes the linked GitHub issue when ENG is GitHub.
+Fine-tune, visibility gap, and runbook gap are review notes. **Ignore** archives the card and **closes** the linked GitHub issue when ENG is GitHub.
 
-| Request | On file | On Done | On Ignore | On Create runbook |
+| Request | On file | Primary action | On Done | On Ignore |
 | --- | --- | --- | --- | --- |
-| **Fine-tune detection** | Stores the suggestion plus a snapshot of the rule file in the configured folder (`SAMI_LAB_RULES_DIR`). May open a GitHub issue. Filing the note does not call the model and does not edit the file. | Archives locally, still without writing the rule | Archives locally; closes GitHub issue if linked | — |
-| **Visibility gap** | Stores the gap note plus a catalog `coverage_check` | Same | Same | — |
-| **Runbook gap** | Stores that a `soc*/cases` playbook is missing, plus near-matches | Archives locally | Same as above | Starts an Open WebUI session to write `run_books/soc1/cases/*.md`, then marks Done |
+| **Fine-tune detection** | Stores the suggestion plus a Home Lab rule snapshot. May open a GitHub issue. Filing does not call the model or edit the file. | **Send to Review** drafts exceptions (SIEM context + actual rule, up to 3 auto-fix tries), opens Detection as Code Review, and **deletes** the GitHub issue on success | Archives; **deletes** the GitHub issue; does not write the rule | Archives; **closes** the GitHub issue |
+| **Visibility gap** | Stores the gap note plus a catalog `coverage_check` | Done / Ignore | Archives locally | Archives; closes GitHub if linked |
+| **Runbook gap** | Stores that a `soc*/cases` playbook is missing, plus near-matches | **Create runbook** then Done | Archives locally | Archives; closes GitHub if linked |
 
-None of these change an Elastic rule, sensor, or alert when they are filed.
-
-**Detection as Code** is documented in [detection-as-code.md](detection-as-code.md). That is where a fine-tune note is turned into a file change. **Ask about this finding** spends one model call and does not write a rule. **Draft** and **Ask for changes** each spend one model call and still do not write the file. **Implement** writes the selected exception items, or a disable, into the rule JSON in the configured folder. It does not close alerts and it does not push the rule to Kibana. **Acknowledge** and **Close** on Findings change alert workflow status only. A note is written when the note box has text, and omitted when it is empty. Unchecked exception conditions are left out of the file.
+None of these change an Elastic rule when they are only filed. Fine-tune **Implement** in Detection as Code is what writes the rule and syncs to Kibana (see [detection-as-code.md](detection-as-code.md)).
 
 ## Not a Requests item
 

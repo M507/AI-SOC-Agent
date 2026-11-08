@@ -274,7 +274,8 @@ def append_usage(record: Dict[str, Any]) -> Optional[Dict[str, Any]]:
             with open(path, "a", encoding="utf-8") as handle:
                 handle.write(line + "\n")
                 handle.flush()
-                os.fsync(handle.fileno())
+                # Intentionally no os.fsync on the hot path — autorun LLM rounds
+                # append often and fsync starved the shared web event loop.
         return row
     except Exception as exc:
         logger.exception("Could not append usage row to %s: %s", path, exc)

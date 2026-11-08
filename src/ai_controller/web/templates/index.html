@@ -98,7 +98,7 @@
                     <div class="sidebar-header">
                         <span class="sidebar-title">Detection as Code</span>
                     </div>
-                    <button type="button" id="nav-findings" class="nav-item" data-nav="detections" data-detections-page="findings">
+                    <button type="button" id="nav-alerts" class="nav-item" data-nav="detections" data-detections-page="alerts">
                         <span class="nav-label">Alerts</span>
                     </button>
                     <button type="button" id="nav-rules" class="nav-item" data-nav="detections" data-detections-page="rules">
@@ -664,9 +664,9 @@
                                         <p id="detection-rules-status" class="settings-help"></p>
                                     </div>
                                     <div class="settings-field">
-                                        <label for="detection-findings-hours">Findings lookback (hours)</label>
-                                        <input type="number" id="detection-findings-hours" min="1" max="2160" value="168">
-                                        <p class="settings-help">Default 168. How far back the Findings list searches open alerts.</p>
+                                        <label for="detection-alerts-hours">Alerts lookback (hours)</label>
+                                        <input type="number" id="detection-alerts-hours" min="1" max="2160" value="168">
+                                        <p class="settings-help">Default 168. How far back the Alerts list searches open alerts.</p>
                                     </div>
                                     <div class="settings-field">
                                         <label for="detection-match-hours">Match lookback (hours)</label>
@@ -835,42 +835,42 @@
                             </div>
                         </div>
                         <p id="detections-status" class="page-status" role="status" aria-live="polite" hidden></p>
-                        <div id="detections-findings" data-detections-page-content="findings">
+                        <div id="detections-alerts" data-detections-page-content="alerts">
                             <div class="detections-split">
                                 <aside class="detections-list-pane">
                                     <div class="detections-toolbar">
-                                        <input id="findings-search" type="search" placeholder="Search rule, host, or severity" aria-label="Search findings">
-                                        <button type="button" class="btn btn-secondary btn-sm" id="findings-refresh">Refresh</button>
+                                        <input id="alerts-search" type="search" placeholder="Search rule, host, or severity" aria-label="Search alerts">
+                                        <button type="button" class="btn btn-secondary btn-sm" id="alerts-refresh">Refresh</button>
                                     </div>
-                                    <p id="findings-count" class="detections-count"></p>
-                                    <div id="findings-list" class="detections-list" role="list" aria-label="Open findings"></div>
+                                    <p id="alerts-count" class="detections-count"></p>
+                                    <div id="alerts-list" class="detections-list" role="list" aria-label="Open alerts"></div>
                                 </aside>
-                                <section id="findings-detail" class="detections-detail" aria-live="polite">
-                                    <p id="findings-empty" class="detections-empty">Select a finding to review its evidence and decide what to do.</p>
-                                    <header id="findings-summary" class="detections-summary" hidden></header>
-                                    <div id="findings-field-block" hidden>
+                                <section id="alerts-detail" class="detections-detail" aria-live="polite">
+                                    <p id="alerts-empty" class="detections-empty">Select an alert to review its evidence and decide what to do.</p>
+                                    <header id="alerts-summary" class="detections-summary" hidden></header>
+                                    <div id="alerts-field-block" hidden>
                                         <div class="detections-section-head">
                                             <h3>Evidence</h3>
-                                            <p id="findings-selected" class="detections-meta">Checked fields go with every action.</p>
+                                            <p id="alerts-selected" class="detections-meta">Checked fields go with every action.</p>
                                             <div class="detections-inline-actions">
-                                                <button type="button" class="btn btn-secondary btn-sm" id="findings-select-suggested">Suggested</button>
-                                                <button type="button" class="btn btn-secondary btn-sm" id="findings-clear">Clear</button>
+                                                <button type="button" class="btn btn-secondary btn-sm" id="alerts-select-suggested">Suggested</button>
+                                                <button type="button" class="btn btn-secondary btn-sm" id="alerts-clear">Clear</button>
                                             </div>
                                         </div>
-                                        <ul id="findings-fields" class="detections-fields" hidden></ul>
+                                        <ul id="alerts-fields" class="detections-fields" hidden></ul>
                                     </div>
-                                    <div class="detections-actions" id="findings-actions" hidden>
+                                    <div class="detections-actions" id="alerts-actions" hidden>
                                         <section class="detections-action-group">
                                             <h3>Ask</h3>
-                                            <p class="detections-hint">One model call. The answer stays on this finding.</p>
+                                            <p class="detections-hint">One model call. The answer stays on this alert.</p>
                                             <div class="detections-ask-row">
                                                 <label>Template
-                                                    <select id="findings-ask-template" aria-label="Ask template"></select>
+                                                    <select id="alerts-ask-template" aria-label="Ask template"></select>
                                                 </label>
-                                                <input id="findings-ask-custom" type="text" placeholder="Your question" aria-label="Custom question" hidden>
-                                                <button type="button" class="btn btn-secondary btn-sm" data-detection-action="ask">Ask about this finding</button>
+                                                <input id="alerts-ask-custom" type="text" placeholder="Your question" aria-label="Custom question" hidden>
+                                                <button type="button" class="btn btn-secondary btn-sm" data-detection-action="ask">Ask about this alert</button>
                                             </div>
-                                            <pre id="findings-answer" class="detections-answer" hidden></pre>
+                                            <pre id="alerts-answer" class="detections-answer" hidden></pre>
                                         </section>
                                         <section class="detections-action-group">
                                             <h3>Exception</h3>
@@ -883,8 +883,8 @@
                                         <section class="detections-action-group">
                                             <h3>Workflow</h3>
                                             <p class="detections-hint">Updates every open alert for this rule that contains each checked field. Closing does not add an exception.</p>
-                                            <label class="detections-note" id="findings-note-label" for="findings-note">Optional note
-                                                <textarea id="findings-note" rows="3" placeholder="Leave empty to acknowledge or close without a note"></textarea>
+                                            <label class="detections-note" id="alerts-note-label" for="alerts-note">Optional note
+                                                <textarea id="alerts-note" rows="3" placeholder="Leave empty to acknowledge or close without a note"></textarea>
                                             </label>
                                             <div class="detections-button-row">
                                                 <button type="button" class="btn btn-secondary btn-sm" data-detection-action="acknowledge">Acknowledge</button>

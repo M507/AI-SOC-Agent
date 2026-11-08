@@ -41,6 +41,9 @@ logger = get_logger("sami.approval_queue")
 _CRITICAL_FOLLOW_UPS = {"isolate_endpoint", "kill_process", "disable_user", "reset_credentials"}
 _OPEN_STATUSES = {RequestStatus.PENDING, RequestStatus.INFORMATIONAL, RequestStatus.AWAITING_INTEGRATION}
 _IGNORE_GITHUB_COMMENT = "Manager decided to ignore this professionally."
+_DONE_GITHUB_DELETE_COMMENT = "Fine-tune marked Done in SamiGPT Requests; deleting the tracking issue."
+_PROMOTE_GITHUB_DELETE_COMMENT = "Moved to Detection as Code Review in SamiGPT; deleting the tracking issue."
+_IMPLEMENT_GITHUB_DELETE_COMMENT = "Fine-tune implemented in Detection as Code; deleting the tracking issue."
 _ENRICHMENT_RETRY_SECONDS = 900
 _QUEUE_KEYS = QUEUE_COUNT_KEYS
 
@@ -784,6 +787,72 @@ class ApprovalQueue:
     def _github_close_issue(self, request: ApprovalRequest, number: str, comment: str) -> Dict[str, Any]:
         return self._github_client_for(request).close_issue(number, comment=comment)
 
+    def _github_delete_issue(self, request: ApprovalRequest, number: str, comment: str) -> Dict[str, Any]:
+        return self._github_client_for(request).delete_issue(number, comment=comment)
+
+    def _apply_github_link_state(
+        self,
+        request: ApprovalRequest,
+        *,
+        link: Dict[str, Any],
+        state: str,
+        deleted: bool = False,
+    ) -> None:
+        """Update payload.engineering.issue after close or delete."""
+        payload = dict(request.payload or {})
+        engineering = dict(payload.get("engineering") or {})
+        issue = dict(engineering.get("issue") or {})
+        issue["number"] = link.get("number") or issue.get("number")
+        issue["url"] = link.get("url") or issue.get("url")
+        issue["state"] = state
+        if deleted:
+            issue["deleted"] = True
+        engineering["issue"] = issue
+        engineering["provider"] = engineering.get("provider") or link.get("provider") or "github"
+        engineering["repository"] = engineering.get("repository") or link.get("repository")
+        payload["engineering"] = engineering
+        request.payload = payload
+
+    def delete_linked_github_issue(
+        self,
+        request: ApprovalRequest,
+        *,
+        comment: str,
+    ) -> Dict[str, Any]:
+        """Hard-delete the linked GitHub issue when present. Idempotent if already gone.
+
+        Returns a github result dict ``{attempted, success?, error?, issue?}``.
+        Does not archive the request — callers decide local lifecycle.
+        """
+        result: Dict[str, Any] = {"attempted": False, "action": "delete"}
+        link = github_issue_link(request.payload)
+        if not link:
+            return result
+        # Already deleted locally — treat as success without another API call.
+        eng = (request.payload or {}).get("engineering") or {}
+        existing = eng.get("issue") if isinstance(eng, dict) else {}
+        if isinstance(existing, dict) and existing.get("deleted"):
+            result["attempted"] = True
+            result["success"] = True
+            result["issue"] = {"number": existing.get("number") or link.get("number"), "deleted": True}
+            return result
+        result["attempted"] = True
+        try:
+            deleted = self._github_delete_issue(request, str(link["number"]), comment)
+            result["success"] = True
+            result["issue"] = {
+                "number": (deleted or {}).get("number") or link.get("number"),
+                "deleted": True,
+                "url": (deleted or {}).get("url") or link.get("url"),
+                "already_gone": bool((deleted or {}).get("already_gone")),
+            }
+            self._apply_github_link_state(request, link=link, state="deleted", deleted=True)
+        except Exception as exc:
+            logger.warning("GitHub delete failed for request %s: %s", request.id, exc)
+            result["success"] = False
+            result["error"] = str(exc)
+        return result
+
     def deny(self, request_id: str, comment: Optional[str] = None, actor: str = "analyst") -> ApprovalRequest:
         request = self._require(request_id)
         if request.status == RequestStatus.INFORMATIONAL:
@@ -801,18 +870,40 @@ class ApprovalQueue:
         comment: Optional[str] = None,
         actor: str = "analyst",
     ) -> ApprovalRequest:
-        """Mark an informational request as reviewed (Done). Archives it out of Open."""
+        """Mark an informational request as reviewed (Done). Archives it out of Open.
+
+        Fine-tune notes also hard-delete the linked GitHub tracking issue.
+        """
         request = self._require(request_id)
         if request.status != RequestStatus.INFORMATIONAL:
             raise ValueError("Only informational requests can be marked Done")
+        github_result: Dict[str, Any] = {"attempted": False}
+        message = "Marked as reviewed and archived. No side effects."
+        if request.action_type == "fine_tune":
+            extra = (comment or "").strip()
+            gh_comment = _DONE_GITHUB_DELETE_COMMENT
+            if extra:
+                gh_comment = f"{gh_comment}\n\n{extra}"
+            github_result = self.delete_linked_github_issue(request, comment=gh_comment)
+            if github_result.get("success"):
+                message = "Marked Done. Linked GitHub issue was deleted."
+            elif github_result.get("attempted"):
+                message = "Marked Done locally. GitHub issue was not deleted."
+            else:
+                message = "Marked Done. No GitHub issue was linked."
         request.status = RequestStatus.ACKNOWLEDGED
         request.decision = Decision(action="acknowledge", actor=actor, comment=comment)
         request.execution_result = {
             "success": True,
             "informational": True,
             "archived": True,
-            "message": "Marked as reviewed and archived. No side effects.",
+            "message": message,
+            "github": github_result,
         }
+        if github_result.get("error"):
+            request.error = f"GitHub delete failed: {github_result['error']}"
+        else:
+            request.error = None
         self._mark_archived(request)
         return self.store.put(request)
 

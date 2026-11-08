@@ -1,0 +1,42 @@
+#!/usr/bin/env bash
+# Block pushes that contain secrets (gitleaks + trufflehog via Docker).
+set -euo pipefail
+
+hooks_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=common.sh
+source "${hooks_dir}/common.sh"
+
+prepare_scanners
+
+echo "Secret scan (pre-push): running gitleaks + trufflehog via Docker..." >&2
+
+while read -r local_ref local_sha remote_ref remote_sha; do
+  # Skip branch/tag deletes.
+  if [[ "$local_sha" == "$ZERO_SHA" ]]; then
+    continue
+  fi
+
+  if [[ "$remote_sha" == "$ZERO_SHA" ]]; then
+    # New remote ref: scan commits reachable from the tip that are not on remotes.
+    log_opts="${local_sha} --not --remotes"
+    since_commit=""
+  else
+    log_opts="${remote_sha}..${local_sha}"
+    since_commit="$remote_sha"
+  fi
+
+  echo "Scanning push ${local_ref} -> ${remote_ref}" >&2
+
+  if ! scan_range_gitleaks "$log_opts"; then
+    die "PUSH BLOCKED: gitleaks found secrets in commits being pushed (or the scan failed).
+Manual scan: ./.githooks/scan.sh --since ${since_commit:-HEAD}"
+  fi
+
+  if ! scan_range_trufflehog "$since_commit"; then
+    die "PUSH BLOCKED: trufflehog found secrets in commits being pushed (or the scan failed).
+Manual scan: ./.githooks/scan.sh --since ${since_commit:-HEAD}"
+  fi
+done
+
+echo "Secret scan (pre-push): clean." >&2
+exit 0

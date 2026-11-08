@@ -72,9 +72,9 @@
     "request_timeout_seconds": 180
   },
   "detection": {
-    "_comment": "Detection as Code. Edited on Settings, General. rules_dir is the folder of rule JSON. SAMI_LAB_RULES_DIR overrides rules_dir when set. findings_hours is how far back Findings looks. match_hours is how far back Acknowledge and Close search for the same fields.",
+    "_comment": "Detection as Code. Edited on Settings, General. rules_dir is the folder of rule JSON. SAMI_LAB_RULES_DIR overrides rules_dir when set. alerts_hours is how far back Alerts looks. match_hours is how far back Acknowledge and Close search for the same fields.",
     "rules_dir": "",
-    "findings_hours": 168,
+    "alerts_hours": 168,
     "match_hours": 2160
   },
   "llm": {

@@ -16,7 +16,7 @@ class AIController {
         this.activeSection = 'overview';
         this.activeSettingsPage = 'llm';
         this.activeLibraryPage = 'runbooks';
-        this.activeDetectionsPage = 'findings';
+        this.activeDetectionsPage = 'alerts';
         this.mcpReadiness = null;
         this.lastMCPAlertCode = null;
         
@@ -364,12 +364,12 @@ class AIController {
 
     fillDetectionSettings(settings) {
         const path = document.getElementById('detection-rules-dir');
-        const findings = document.getElementById('detection-findings-hours');
+        const alertsHours = document.getElementById('detection-alerts-hours');
         const match = document.getElementById('detection-match-hours');
         const status = document.getElementById('detection-rules-status');
         if (!settings) return;
         if (path) path.value = settings.rules_dir || '';
-        if (findings && settings.findings_hours != null) findings.value = settings.findings_hours;
+        if (alertsHours && settings.alerts_hours != null) alertsHours.value = settings.alerts_hours;
         if (match && settings.match_hours != null) match.value = settings.match_hours;
         if (status) {
             const bits = [];
@@ -397,14 +397,14 @@ class AIController {
 
     async saveDetectionSettings() {
         const path = (document.getElementById('detection-rules-dir') || {}).value || '';
-        const findings = Number((document.getElementById('detection-findings-hours') || {}).value);
+        const alertsHours = Number((document.getElementById('detection-alerts-hours') || {}).value);
         const match = Number((document.getElementById('detection-match-hours') || {}).value);
         const response = await this.api._fetch('/api/detections/settings', {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 rules_dir: path.trim(),
-                findings_hours: findings,
+                alerts_hours: alertsHours,
                 match_hours: match,
             }),
         });

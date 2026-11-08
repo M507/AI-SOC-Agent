@@ -3,7 +3,7 @@
 The folder is rules_dir(): SAMI_LAB_RULES_DIR, then Settings, then
 DEFAULT_RULES_DIR. The model never sees the full catalog: search returns
 compact hits, and get_rule loads one excerpt. suggested_fields.json in
-that folder is a field catalog for Findings, not a detection, so the
+that folder is a field catalog for Alerts, not a detection, so the
 indexer skips it. Behavior is documented in
 documentation/detection-as-code.md.
 """
@@ -145,7 +145,7 @@ def _load_index(force: bool = False) -> List[Dict[str, Any]]:
     if directory.is_dir():
         for path in sorted(directory.glob("*.json")):
             if path.name == "suggested_fields.json":
-                # Shared suggestion catalog for Findings. Indexing it would
+                # Shared suggestion catalog for Alerts. Indexing it would
                 # invent a rule named suggested_fields. See detection-as-code.md.
                 continue
             record = _record_from_file(path)

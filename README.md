@@ -281,6 +281,33 @@ pytest tests/
 pytest tests/integrations/case_management/
 ```
 
+### Git hooks / secret scanning
+
+Commits and pushes are gated by Docker-based secret scans (gitleaks + trufflehog). Docker must be installed and the daemon running; otherwise commit/push is blocked.
+
+Images:
+
+- `zricethezav/gitleaks:latest`
+- `trufflesecurity/trufflehog:latest`
+
+One-time setup after clone:
+
+```bash
+./.githooks/install.sh
+```
+
+That sets `core.hooksPath` to `.githooks`, makes the hooks executable, and pulls both images.
+
+Manual scan (anytime, prints findings):
+
+```bash
+./.githooks/scan.sh                 # full repository history
+./.githooks/scan.sh --staged        # staged changes only
+./.githooks/scan.sh --since HEAD~5  # since a ref
+./.githooks/scan.sh --gitleaks-only
+./.githooks/scan.sh --trufflehog-only
+```
+
 ## Contributing
 
 When contributing:
