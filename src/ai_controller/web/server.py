@@ -341,15 +341,20 @@ async def _run_autorun(autorun: AutorunConfig):
 
         # If the session was deleted or never created, create a new one and persist it
         if not session:
-            session_name = f"Autorun: {fresh_autorun.name}"
-            logger.debug("Creating new AUTORUN session for autorun %s (%s)", fresh_autorun.id, session_name)
+            created_name = f"Autorun: {fresh_autorun.name}"
+            logger.debug("Creating new AUTORUN session for autorun %s (%s)", fresh_autorun.id, created_name)
             session = session_manager.create_session(
-                session_name,
+                created_name,
                 SessionType.AUTORUN,
                 cluster_id=fresh_autorun.cluster_id,
             )
             session_manager.update_autorun(fresh_autorun.id, session_id=session.id)
             session_id = session.id
+
+        # Always resolve from the live session. Assigning only inside the create
+        # branch left session_name unbound on subsequent ticks (autoruns keep a
+        # persistent session_id), which crashed condition checks before any prompt ran.
+        session_name = session.name
 
         # Check condition function if configured
         # Validate that condition_function is not None and not empty string
