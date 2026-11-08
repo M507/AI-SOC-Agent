@@ -431,7 +431,11 @@ class DetectionsManager {
                 host.append(this.listButton({
                     id: item.id,
                     title: item.title,
-                    meta: [item.kind === 'disable' ? 'Disable' : 'Exception'],
+                    meta: [
+                        item.kind === 'disable'
+                            ? 'Disable'
+                            : (item.kind === 'new_rule' ? 'New rule' : 'Exception'),
+                    ],
                     badge: item.stage,
                     badgeClass: 'dac-stage dac-stage-' + String(item.stage || ''),
                     active: item.id === selected,
@@ -461,9 +465,13 @@ class DetectionsManager {
             info.severity,
             info.language,
             info.status,
-            review.kind === 'disable' ? 'Disable' : 'Exception',
+            review.kind === 'disable'
+                ? 'Disable'
+                : (review.kind === 'new_rule' ? 'New rule' : 'Exception'),
             review.stage,
-            typeof info.exception_count === 'number' ? info.exception_count + ' existing exceptions' : '',
+            review.kind === 'new_rule'
+                ? ''
+                : (typeof info.exception_count === 'number' ? info.exception_count + ' existing exceptions' : ''),
         ]));
         if (info.file) {
             const file = document.createElement('p');
@@ -543,8 +551,30 @@ class DetectionsManager {
         const conditionsBlock = document.getElementById('review-conditions-block');
         conditions.replaceChildren();
         const cards = review.exceptions || [];
-        if (conditionsBlock) conditionsBlock.hidden = review.kind === 'disable';
-        if (!cards.length) {
+        if (conditionsBlock) {
+            conditionsBlock.hidden = review.kind === 'disable';
+        }
+        if (review.kind === 'new_rule') {
+            const proposed = review.proposed_rule || {};
+            if (!proposed.query && !proposed.name) {
+                conditions.append(this.emptyNote('No proposed rule yet. Draft asks the model for one.'));
+            } else {
+                const box = document.createElement('div');
+                box.className = 'dac-condition-copy';
+                const title = document.createElement('span');
+                title.className = 'dac-condition-title';
+                title.textContent = proposed.name || 'Proposed query rule';
+                const entries = document.createElement('span');
+                entries.className = 'dac-entry';
+                entries.textContent = [
+                    proposed.severity ? 'severity=' + proposed.severity : '',
+                    proposed.language || 'kuery',
+                    proposed.query || '',
+                ].filter(Boolean).join(' · ');
+                box.append(title, entries);
+                conditions.append(box);
+            }
+        } else if (!cards.length) {
             conditions.append(this.emptyNote(
                 review.kind === 'disable'
                     ? 'Disabling a rule has no exception conditions. The change below is the whole file.'
@@ -609,15 +639,23 @@ class DetectionsManager {
         document.querySelector('[data-review-action="revise"]').hidden = (
             (review.stage !== 'drafted' && review.stage !== 'needs_fix') || review.kind === 'disable'
         );
-        const noneKept = review.kind !== 'disable' && cards.length > 0 && selectedCount === 0;
-        this.implementLocked = noneKept;
+        const noneKept = review.kind !== 'disable'
+            && review.kind !== 'new_rule'
+            && cards.length > 0
+            && selectedCount === 0;
+        const newRuleReady = review.kind === 'new_rule'
+            && review.proposed_rule
+            && review.proposed_rule.query
+            && (review.stage === 'drafted' || review.stage === 'needs_fix');
+        this.implementLocked = review.kind === 'new_rule' ? !newRuleReady : noneKept;
         const implement = document.querySelector('[data-review-action="implement"]');
-        if (implement) implement.disabled = noneKept || this.busy;
+        if (implement) implement.disabled = this.implementLocked || this.busy;
         const hint = document.getElementById('review-action-hint');
         if (hint) {
             if (review.stage === 'proposed') hint.textContent = 'Draft spends one model call. The file stays unchanged.';
             else if (review.stage === 'needs_fix') hint.textContent = 'AI draft failed validation after 3 tries. Ask for changes, fix selection, Implement, or Reject. GitHub issue stayed open.';
             else if (review.kind === 'disable') hint.textContent = 'Implement disables the rule file and syncs that change to Elastic. The alert stays open.';
+            else if (review.kind === 'new_rule') hint.textContent = 'Implement creates a new [enabled] rule file and syncs it to Elastic (POST create when missing remotely).';
             else if (noneKept) hint.textContent = 'Check the conditions to keep. The rule file is unchanged until you implement.';
             else hint.textContent = 'Implement writes the checked conditions, syncs the rule to Elastic, and closes open alerts that match those exceptions.';
         }

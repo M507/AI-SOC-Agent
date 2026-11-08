@@ -664,9 +664,13 @@ class SamiGPTMCPServer:
         self.tools["create_fine_tuning_recommendation"] = {
             "name": "create_fine_tuning_recommendation",
             "description": (
-                "Pull the matching Home Lab detection rule and file a fine-tune suggestion "
-                "(query, exceptions, or false-positive notes). Pass rule_id or rule_name when known; "
-                "otherwise search_lab_detection_rules first."
+                "File a fine-tune suggestion for an EXISTING Home Lab detection "
+                "(exceptions / false-positive narrowing only — not new rules). "
+                "Preflight: search_lab_detection_rules, then find_related_requests for fine_tune "
+                "and visibility; if an open note already covers this rule, cite that request_id "
+                "and do not file again. Pass rule_id or rule_name when known. "
+                "If no rule matches, the server reclassifies the note as Visibility. "
+                "For missing coverage / new detections use create_visibility_recommendation."
                 + _INFORMATIONAL_FOR_ANALYST
             ),
             "inputSchema": {
@@ -699,10 +703,14 @@ class SamiGPTMCPServer:
         self.tools["create_visibility_recommendation"] = {
             "name": "create_visibility_recommendation",
             "description": (
-                "File an informational visibility-gap note. Search first with search_lab_detection_rules "
-                "(1–3 short keyword queries) and load at most one or two rules with get_lab_detection_rule. "
-                "Only file this if the catalog does not already cover the behavior. Do not dump the catalog "
-                "into context. The server re-checks coverage when filing."
+                "File an informational visibility-gap note (missing telemetry or missing detection / new rule). "
+                "Preflight in order: (1) search_lab_detection_rules (1–3 short keyword queries) and at most "
+                "1–2 get_lab_detection_rule — if a rule already covers the behavior, use "
+                "create_fine_tuning_recommendation on that rule instead; (2) find_related_requests for "
+                "fine_tune and visibility — if an open note already covers the gap, cite request_id and "
+                "do not file again; (3) optionally list_visibility_recommendations when ENG is linked. "
+                "Only file if coverage is still missing. Do not dump the catalog into context. "
+                "The server re-checks coverage when filing."
                 + _INFORMATIONAL_FOR_ANALYST
             ),
             "inputSchema": {

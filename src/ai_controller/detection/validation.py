@@ -192,3 +192,84 @@ def evaluate_draft_gate(
         "errors": unique_errors,
         "warnings": list(warnings or []),
     }
+
+
+def evaluate_new_rule_gate(
+    revision: Dict[str, Any],
+    *,
+    coverage_check: Optional[Dict[str, Any]] = None,
+    require_teaching: bool = True,
+) -> Dict[str, Any]:
+    """Validate a new_rule draft revision. Returns ``{ok, errors, warnings}``."""
+    errors: List[str] = []
+    warnings: List[str] = []
+    coverage = coverage_check if isinstance(coverage_check, dict) else {}
+    if coverage.get("likely_covered"):
+        matches = coverage.get("matching_rules") or []
+        hint = ""
+        if isinstance(matches, list) and matches:
+            first = matches[0] if isinstance(matches[0], dict) else {}
+            name = first.get("name") or first.get("rule_id") or ""
+            if name:
+                hint = f" Matching rule: {name}."
+        errors.append(
+            "Catalog coverage check says this behavior is likely already covered."
+            f"{hint} Use Fine-tune on that rule instead of creating a duplicate."
+        )
+
+    safe = bool(revision.get("safe_to_create", True))
+    if not safe:
+        overlap = str(revision.get("overlapping_rule") or "").strip()
+        if overlap:
+            errors.append(f"Model marked safe_to_create=false (overlapping: {overlap}).")
+        else:
+            errors.append("Model marked safe_to_create=false.")
+
+    proposed = revision.get("proposed_rule")
+    if not isinstance(proposed, dict):
+        errors.append("Draft produced no proposed_rule for this visibility gap.")
+        return {"ok": False, "errors": errors, "warnings": warnings}
+
+    rule = proposed.get("rule") if isinstance(proposed.get("rule"), dict) else proposed
+    name = str(rule.get("name") or "").strip()
+    query = str(rule.get("query") or "").strip()
+    severity = str(rule.get("severity") or "").strip().lower()
+    rule_type = str(rule.get("type") or "query").strip().lower()
+    language = str(rule.get("language") or "kuery").strip().lower()
+    index = rule.get("index")
+    risk_score = rule.get("risk_score")
+
+    if rule_type and rule_type != "query":
+        errors.append(f"Only type=query rules are supported (got {rule_type!r}).")
+    if language and language not in {"kuery", "kql", "lucene"}:
+        errors.append(f"Unsupported query language {language!r}; use kuery.")
+    if not name:
+        errors.append("proposed_rule.name is required.")
+    if not query:
+        errors.append("proposed_rule.query is required.")
+    if not severity:
+        errors.append("proposed_rule.severity is required.")
+    if risk_score is None or risk_score == "":
+        errors.append("proposed_rule.risk_score is required.")
+    if not isinstance(index, list) or not any(str(item).strip() for item in index):
+        errors.append("proposed_rule.index must be a non-empty list.")
+
+    if require_teaching:
+        if not str(revision.get("rationale") or "").strip():
+            errors.append("Explain why this new rule is needed in rationale.")
+        plan = revision.get("improvement_plan")
+        if not (isinstance(plan, list) and any(str(item).strip() for item in plan)):
+            warnings.append("Consider adding an improvement_plan for the analyst.")
+
+    seen: Set[str] = set()
+    unique_errors: List[str] = []
+    for item in errors:
+        if item in seen:
+            continue
+        seen.add(item)
+        unique_errors.append(item)
+    return {
+        "ok": not unique_errors,
+        "errors": unique_errors,
+        "warnings": list(warnings or []),
+    }

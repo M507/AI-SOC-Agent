@@ -318,6 +318,7 @@ def push_rule_file(client: Any, path: Path) -> Dict[str, Any]:
     rule["enabled"] = enabled
 
     http = _kibana(client)
+    created = False
     try:
         exceptions_list, synced_items = _sync_exceptions(
             http,
@@ -327,9 +328,20 @@ def push_rule_file(client: Any, path: Path) -> Dict[str, Any]:
             exception_items=items,
         )
         rule["exceptions_list"] = exceptions_list
-        remote = _get_remote_rule(http, rule_id=rule_id, elastic_id=elastic_id)
-        payload = _merge_rule(rule, remote, enabled=enabled)
-        updated = _kbn_put(http, RULES_PATH, payload)
+        try:
+            remote = _get_remote_rule(http, rule_id=rule_id, elastic_id=elastic_id)
+        except IntegrationError as lookup_exc:
+            # Net-new Visibility rules are not in Kibana yet — create via POST.
+            if "404" not in str(lookup_exc):
+                raise
+            create_payload = _prepare_rule({**rule, "enabled": enabled})
+            if "rule_id" not in create_payload and rule_id:
+                create_payload["rule_id"] = rule_id
+            updated = _kbn_post(http, RULES_PATH, create_payload)
+            created = True
+        else:
+            payload = _merge_rule(rule, remote, enabled=enabled)
+            updated = _kbn_put(http, RULES_PATH, payload)
     except IntegrationError as exc:
         logger.exception("Elastic rule sync failed for %s", rule_id or path.name)
         message = str(exc)
@@ -373,6 +385,7 @@ def push_rule_file(client: Any, path: Path) -> Dict[str, Any]:
     )
     return {
         "synced": True,
+        "created": created,
         "rule_id": dac.get("rule_id") or rule_id,
         "rule_name": dac.get("name") or rule_name,
         "revision": updated.get("revision"),

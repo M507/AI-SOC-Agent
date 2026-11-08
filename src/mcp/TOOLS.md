@@ -19,7 +19,7 @@ Informational fine-tune / visibility / runbook-gap tools file under **Requests �
 
 `isolate_endpoint` / `release_endpoint_isolation` may still be **filed**, but host isolation is **intentionally disabled**: Approve will **not** call Kibana Elastic Defend or EDR until isolation is re-enabled.
 
-`create_fine_tuning_recommendation`, `create_visibility_recommendation`, and `create_runbook_recommendation` file **informational** notes only. Fine-tune / visibility pull Home Lab rules under `/root/Home-Lab-Rules/rules/elastic_1/rules/`. Runbook-gap notes request a missing `soc*/cases` playbook **after** investigation. There is no approve button.
+`create_fine_tuning_recommendation`, `create_visibility_recommendation`, and `create_runbook_recommendation` file **informational** notes only. Fine-tune is for **existing** Home Lab rules (exceptions / FP narrowing). Visibility is for **missing coverage / new detections** (and telemetry gaps). Both pull the catalog under `/root/Home-Lab-Rules/rules/elastic_1/rules/`. Always `search_lab_detection_rules` then `find_related_requests` (fine_tune **and** visibility) before filing — do not duplicate open work or invent a second rule when one already covers the behavior. Runbook-gap notes request a missing `soc*/cases` playbook **after** investigation. There is no approve button.
 
 Search first with `search_lab_detection_rules` (compact hits). Load at most one or two rules with `get_lab_detection_rule`. Do not dump the catalog into context.
 
@@ -2291,7 +2291,7 @@ If an open Note already covers the same rule / same fix theme, do **not** file a
 
 ### `create_fine_tuning_recommendation`
 
-Pull the matching Home Lab detection rule and file a **fine-tune suggestion** under Requests → Notes. **Informational only** — no approve button. When ENG is GitHub, a linked issue may also be opened.
+File a **fine-tune suggestion** for an **existing** Home Lab detection (exceptions / false-positive narrowing — **not** new rules). **Informational only** — no approve button. Preflight: `search_lab_detection_rules`, then `find_related_requests` for `fine_tune` and `visibility`; if an open note already covers this rule, cite that `request_id` and do not file again. Pass `rule_id` or `rule_name` when known. If no rule matches, the server reclassifies the note as Visibility. For missing coverage use `create_visibility_recommendation`. When ENG is GitHub, a linked issue may also be opened.
 
 **Parameters:**
 - `title` (string, required): Short title
@@ -2300,7 +2300,7 @@ Pull the matching Home Lab detection rule and file a **fine-tune suggestion** un
 - `rule_name` (string, optional): Detection rule name
 - `alert_id` (string, optional): Related alert
 
-**Returns:** queued informational request plus the pulled `rule` excerpt when found.
+**Returns:** queued informational request plus the pulled `rule` excerpt when found (or a reclassified visibility note).
 
 **Usage Example:**
 ```json
@@ -2318,9 +2318,9 @@ Pull the matching Home Lab detection rule and file a **fine-tune suggestion** un
 
 ### `create_visibility_recommendation`
 
-File an **informational visibility-gap note**. Search Home Lab rules first (`search_lab_detection_rules`, then at most 1–2 `get_lab_detection_rule` calls). Only file this if coverage is still missing. The server re-checks the catalog and stores `coverage_check`.
+File an **informational visibility-gap note** (missing telemetry or missing detection / new rule). Preflight in order: (1) `search_lab_detection_rules` (1–3 short keyword queries) and at most 1–2 `get_lab_detection_rule` — if a rule already covers the behavior, use `create_fine_tuning_recommendation` on that rule instead; (2) `find_related_requests` for `fine_tune` and `visibility` — if an open note already covers the gap, cite `request_id` and do not file again; (3) optionally `list_visibility_recommendations` when ENG is linked. Only file if coverage is still missing. The server re-checks the catalog and stores `coverage_check`. Analysts can **Send to Review** to draft a new query rule in Detection as Code when not `likely_covered`.
 
-**Informational only** — no approve button under Requests → Notes. When ENG is GitHub, a linked issue may also be opened.
+**Informational only** until Send to Review / Implement. When ENG is GitHub, a linked issue may also be opened.
 
 **Parameters:**
 - `title` (string, required): Short title
@@ -2342,7 +2342,7 @@ File an **informational visibility-gap note**. Search Home Lab rules first (`sea
 **Use Cases:**
 - Record a suspected telemetry or detection gap after searching the Home Lab catalog
 - Show the analyst whether an existing rule already covers the behavior
-- Keep the note informational until a board API exists
+- Promote to Detection as Code Review to author a new query rule when coverage is missing
 
 ---
 

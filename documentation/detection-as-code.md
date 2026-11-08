@@ -10,11 +10,15 @@ Rule JSON stays in the configured folder. It is not vendored, copied, or importe
 | --- | --- | --- |
 | Alerts | Search open alerts, check evidence, Ask, send checked fields to Review, ask the model to suggest an exception, acknowledge or close | Ask and Suggest do not write a rule file. Acknowledge and Close change Elastic workflow status only |
 | Rules | Search the folder, open one rule, start a disable review | Disable does not rename the file until Implement |
-| Review | Keep or drop conditions, Draft, Ask for changes, Implement, Reject | Implement writes the rule JSON **and syncs it to Kibana** (exceptions list/items + rule update), then closes matching open alerts. Reject archives the review and leaves the file unchanged |
+| Review | Keep or drop conditions (exceptions), Draft, Ask for changes, Implement, Reject; also **New rule** reviews from Visibility | Implement writes the rule JSON **and syncs it to Kibana** (exceptions: list/items + PUT update; new rule: create file + POST when missing remotely). Exception Implement may close matching open alerts. Reject archives the review and leaves the file unchanged |
 
 Not implemented: pulling or merging an upstream rules catalog, a Discord notifier, and the setup-wizard step that would store the folder path. The wizard step is still the TODO in [Setup](setup.md). **Settings → General** already saves that same `detection.rules_dir` field. Rule sync after Implement matches Home-Lab-Rules Fine-tune & Deploy / `cli.py --sync` for the one changed file.
 
-Filing a **Fine-tune detection** note from the agent still only stores an informational Requests card (no model call, no file write). **Send to Review** on that card promotes it into DaC: the model drafts exceptions with SIEM/rule context, validation runs (auto-revise up to 3 tries), then Review shows the suggestion, rationale, and exact JSON diff for **Implement** or **Reject**. On a successful Send (or on Requests **Done** / **Implement**), the linked GitHub tracking issue is **deleted**. **Ignore** only **closes** it. After 3 failed tries the stage is `needs_fix`, the issue stays open, and the attempt log is kept. See [Requests tab](requests.md).
+Filing a **Fine-tune detection** note from the agent still only stores an informational Requests card (no model call, no file write) for an **existing** Home Lab rule. If no rule matches, the server reclassifies the note as **Visibility**. **Send to Review** on a fine-tune card promotes it into DaC (`dac.kind=exceptions`): the model drafts exceptions with SIEM/rule context, validation runs (auto-revise up to 3 tries), then Review shows the suggestion, rationale, and exact JSON diff for **Implement** or **Reject**.
+
+Filing a **Visibility** note stores a coverage gap. Agents must search the catalog and open Requests first. **Send to Review** on a visibility card (blocked when `coverage_check.likely_covered`) promotes into DaC as `dac.kind=new_rule` (query rules only): draft/validate loop, then Implement **creates** `[enabled]_…_{uuid}.json` and syncs to Kibana (POST create when the rule is not remote yet). Kibana API keys need **create** detection-rule privileges for that path.
+
+On a successful Send (or on Requests **Done** / **Implement**), the linked GitHub tracking issue is **deleted**. **Ignore** only **closes** it. After 3 failed tries the stage is `needs_fix`, the issue stays open, and the attempt log is kept. See [Requests tab](requests.md).
 
 ## Rules folder
 
@@ -63,11 +67,11 @@ Each module below has a docstring that points back at this file.
 | `detection/prompts.py` | Ask templates and the draft JSON contract. Not the global SOC system prompt |
 | `detection/ask.py` | One model call about an alert. `mcp_client=None`, `max_tool_iterations=0` |
 | `detection/drafting.py` | Parse the draft JSON and normalize exception cards |
-| `detection/review.py` | Create, draft, revise, select, implement, reject. Stored as an informational `fine_tune` request |
-| `detection/validation.py` | Blocks a write that is empty, wildcarded, off-evidence, duplicated, or against a file that changed |
+| `detection/review.py` | Create, draft, revise, select, implement, reject. Fine-tune reviews use `fine_tune` + `dac`; new-rule reviews use `visibility` + `dac.kind=new_rule` |
+| `detection/validation.py` | Blocks a write that is empty, wildcarded, off-evidence, duplicated, or against a file that changed; `evaluate_new_rule_gate` for new query rules |
 | `detection/diff.py` | Unified diff used by the Review **Change** pane |
-| `detection/apply.py` | Builds an exception item and calls the store write |
-| `detection/elastic_sync.py` | After Implement, upserts exception lists/items and PUTs the rule to Kibana, then refreshes `_dac` sync hashes |
+| `detection/apply.py` | Builds an exception item and calls the store write; `write_new_rule` creates a new enabled file |
+| `detection/elastic_sync.py` | After Implement, upserts exception lists/items and PUTs the rule to Kibana (POST create when remote rule is missing), then refreshes `_dac` sync hashes |
 | `detection/usage.py` | One usage-ledger row per model round, `session_type=detection` |
 | `web/routes_detections.py` | `/api/detections`, behind the same session auth as the rest of the console |
 | `web/static/detections.js` | Alerts, Rules, and Review UI |
@@ -96,17 +100,17 @@ Ask templates (`prompts.py`): `ask_about`, `is_fp`, `suggest_exception`, `invest
 
 ## Review
 
-Reviews are informational `fine_tune` approval requests whose payload has a `dac` object. `GET /api/detections/reviews` returns the open ones (not archived). The Requests tab can still show the same note; Done or Ignore there does not write the file.
+Reviews are informational approval requests whose payload has a `dac` object: usually `fine_tune` (exceptions/disable), or `visibility` with `dac.kind=new_rule`. `GET /api/detections/reviews` returns the open ones (not archived). The Requests tab can still show the same note; Done or Ignore there does not write the file.
 
-`dac` holds `stage`, `kind` (`exceptions` or `disable`), `file`, `file_sha256`, `rule_id`, `evidence_fields`, and `revisions`. The current revision holds `rationale`, `exceptions` (cards), and for a model draft `safe_to_except` and `notes`.
+`dac` holds `stage`, `kind` (`exceptions`, `disable`, or `new_rule`), `file`, `file_sha256`, `rule_id`, `evidence_fields`, and `revisions`. The current revision holds `rationale`, `exceptions` (cards) for fine-tune, or `proposed_rule` / `safe_to_create` for new-rule drafts.
 
 | Stage | How you get there | Buttons |
 | --- | --- | --- |
 | `proposed` | Suggest with AI | **Draft** only. One model call. File unchanged |
-| `drafted` | After Draft, Send to Review (validated), field exception, or disable | Checkboxes, **Ask for changes** (exceptions only), **Implement**, **Reject** |
-| `needs_fix` | Send to Review exhausted 3 auto-fix attempts | **Ask for changes**, **Implement** (if selection validates), **Reject**. GitHub left open |
+| `drafted` | After Draft, Send to Review (validated), field exception, disable, or Visibility new-rule | Checkboxes (exceptions), **Ask for changes**, **Implement**, **Reject** |
+| `needs_fix` | Send to Review exhausted 3 auto-fix attempts | **Ask for changes**, **Implement** (if selection/gate validates), **Reject**. GitHub left open |
 | `implemented` | Implement succeeded | No further edits. The request is acknowledged; GitHub issue deleted if still linked |
-| `rejected` | Reject | File unchanged. The request is ignored (GitHub closed) |
+| `rejected` | Reject | File unchanged (new_rule never wrote a file). The request is ignored (GitHub closed) |
 
 A field exception card is one AND of the checked fields and starts with `selected: false`. Implement stays disabled in the UI until at least one card is checked, and the API rejects a write with no selected condition. Unchecked cards are omitted from the file and from the diff. Toggling a box is `POST /api/detections/reviews/{id}/selection`, which rebuilds the diff without a model call.
 
@@ -118,6 +122,7 @@ An unchecked field exception is a normal open review. The page does not treat "n
 
 - Exceptions: validates the checked cards, appends them to `exception_items`, writes the same path, then pushes exception lists/items and the rule to Kibana
 - Disable: writes a sibling `[disabled]_...` file first, then removes the `[enabled]_...` file, so a failed write leaves the original in place. Sets `rule.enabled` false and `_dac.status` to `disabled`, then syncs that disable to Kibana
+- New rule (`new_rule`): validates the proposed query rule (and catalog collision / `likely_covered` gates), writes a new `[enabled]_Name_{uuid}.json`, then syncs to Kibana (POST create when the rule id is not remote yet)
 - Exceptions Implement also closes open alerts for that rule that match a selected exception card (AND within a card, OR across cards), using the Alerts match lookback and `false_positive`. Close failures are best-effort and do not undo the write/sync. Disable Implement still leaves alerts open.
 - Updates `_dac.content_hash`, `_dac.last_synced_hash`, and `_dac.last_synced_at` after a successful Elastic push
 - If `file_sha256` no longer matches the bytes on disk, the write is refused (409) and the review must be drafted again

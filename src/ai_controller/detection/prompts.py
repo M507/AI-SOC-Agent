@@ -351,3 +351,80 @@ def build_draft_prompt(
     if len(text) > MAX_DRAFT_PROMPT_CHARS:
         text = text[: MAX_DRAFT_PROMPT_CHARS - 1].rstrip() + "…"
     return text
+
+
+NEW_RULE_DRAFT_SYSTEM = """You are a senior Elastic Security detection engineer drafting a NEW query detection rule (Detection as Code).
+
+Engineering bar:
+- Draft only type "query" (KQL/kuery) rules. Do not propose EQL, threshold, or ML rules.
+- Evidence-based: ground name, query, index, and severity in the visibility suggestion and coverage_check. Never invent telemetry that was not described.
+- If an existing catalog rule already covers the behavior, set safe_to_create to false, leave proposed_rule empty/null, and name the overlapping rule in notes.
+- Prefer precise, maintainable queries over broad wildcards.
+
+Output rules:
+- Respond with JSON only. No markdown fences. No prose outside JSON.
+
+Required JSON schema:
+{
+  "rationale": "2-5 sentences: what gap this fills and why a new rule is warranted",
+  "safe_to_create": true,
+  "overlapping_rule": "",
+  "notes": "",
+  "improvement_plan": ["what the new rule detects", "what remains out of scope"],
+  "proposed_rule": {
+    "name": "short detection name",
+    "description": "what this detects",
+    "severity": "low|medium|high|critical",
+    "risk_score": 21,
+    "type": "query",
+    "language": "kuery",
+    "query": "KQL query",
+    "index": ["logs-*"],
+    "enabled": true,
+    "tags": ["tag"]
+  }
+}
+"""
+
+
+def build_new_rule_draft_prompt(
+    *,
+    suggestion: str,
+    suggestion_title: str = "",
+    coverage_check: Optional[Dict[str, Any]] = None,
+    source: str = "",
+    alerts: Optional[List[Dict[str, Any]]] = None,
+    feedback: Optional[str] = None,
+    previous: Optional[Dict[str, Any]] = None,
+    analyst_instructions: Optional[str] = None,
+    cluster_id: Optional[str] = None,
+) -> str:
+    """User prompt for drafting a net-new query rule from a visibility note."""
+    payload: Dict[str, Any] = {
+        "task": "draft_new_query_rule",
+        "suggestion_title": suggestion_title or "",
+        "suggestion": suggestion or "",
+        "source": source or "",
+        "coverage_check": coverage_check if isinstance(coverage_check, dict) else {},
+        "alerts": alerts or [],
+        "siem_environment": {"platform": "elastic", "cluster_id": cluster_id or ""},
+        "constraints": {
+            "rule_type": "query",
+            "language": "kuery",
+            "do_not_duplicate_catalog": True,
+        },
+    }
+    if analyst_instructions:
+        payload["analyst_instructions"] = analyst_instructions
+    if previous:
+        payload["previous_draft"] = previous
+    if feedback:
+        payload["analyst_feedback"] = feedback
+    text = (
+        "Draft a new Elastic query detection for the visibility gap below. "
+        "If coverage already exists, set safe_to_create=false and name the overlapping rule.\n\n"
+        + json.dumps(payload, ensure_ascii=False, indent=2)
+    )
+    if len(text) > MAX_DRAFT_PROMPT_CHARS:
+        text = text[: MAX_DRAFT_PROMPT_CHARS - 1].rstrip() + "…"
+    return text

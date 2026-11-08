@@ -966,22 +966,52 @@ class RequestsManager {
                 ? '<button type="button" class="btn btn-primary" data-request-action="create-runbook">Create runbook</button>'
                 : '';
             const isFineTune = item.action_type === 'fine_tune';
-            const dacStage = item.payload && item.payload.dac ? item.payload.dac.stage : '';
-            const canSendToReview = isFineTune && !['implemented', 'rejected'].includes(String(dacStage || ''));
+            const isVisibility = item.action_type === 'visibility';
+            const payload = item.payload || {};
+            const dacStage = payload.dac ? payload.dac.stage : '';
+            const ruleFound = payload.rule_found === true
+                || (payload.rule && payload.rule.found !== false && (payload.rule.rule_id || payload.rule_id));
+            const likelyCovered = payload.coverage_check && payload.coverage_check.likely_covered === true;
+            const canSendFineTune = isFineTune
+                && ruleFound
+                && !['implemented', 'rejected'].includes(String(dacStage || ''));
+            const canSendVisibility = isVisibility
+                && !likelyCovered
+                && !['implemented', 'rejected'].includes(String(dacStage || ''));
+            const canSendToReview = canSendFineTune || canSendVisibility;
             const sendBtn = canSendToReview
                 ? '<button type="button" class="btn btn-primary" data-request-action="send-to-review">Send to Review</button>'
                 : '';
-            const doneLabel = createRunbookBtn
-                ? 'Create runbook opens an Open WebUI session with the request + last alert, writes a new md under run_books/soc1/cases, then marks this Done. Ignore archives here and closes the GitHub issue when linked.'
-                : (isFineTune
+            let doneLabel;
+            if (createRunbookBtn) {
+                doneLabel = 'Create runbook opens an Open WebUI session with the request + last alert, writes a new md under run_books/soc1/cases, then marks this Done. Ignore archives here and closes the GitHub issue when linked.';
+            } else if (isFineTune) {
+                doneLabel = canSendFineTune
                     ? 'Send to Review drafts exceptions (up to 3 auto-fixes), opens Detection as Code Review, and deletes the GitHub issue on success. Done archives and deletes the GitHub issue without writing the rule. Ignore closes the GitHub issue.'
-                    : (this.canIgnore(item)
-                        ? 'Done archives here. Ignore archives here and closes the GitHub issue when linked.'
-                        : 'No approval needed — review only, then mark Done.'));
+                    : 'Fine-tune needs a matching Home Lab rule before Send to Review. Done archives; Ignore closes the GitHub issue when linked.';
+            } else if (isVisibility) {
+                doneLabel = canSendVisibility
+                    ? 'Send to Review drafts a new query rule (up to 3 auto-fixes), opens Detection as Code Review, and deletes the GitHub issue on success. Done archives without writing a rule. Ignore closes the GitHub issue when linked.'
+                    : (likelyCovered
+                        ? 'Catalog likely already covers this — use Fine-tune on the matching rule instead of authoring a duplicate. Done / Ignore archive this note.'
+                        : (this.canIgnore(item)
+                            ? 'Done archives here. Ignore archives here and closes the GitHub issue when linked.'
+                            : 'No approval needed — review only, then mark Done.'));
+            } else {
+                doneLabel = this.canIgnore(item)
+                    ? 'Done archives here. Ignore archives here and closes the GitHub issue when linked.'
+                    : 'No approval needed — review only, then mark Done.';
+            }
+            const label = isFineTune ? 'Fine-tune' : (isVisibility ? 'Visibility' : 'Review note');
+            const placeholder = isFineTune
+                ? 'Optional instructions for the fine-tune AI (e.g. focus on host X; ignore other noise)'
+                : (isVisibility
+                    ? 'Optional instructions for the new-rule AI (e.g. focus on DNS telemetry)'
+                    : 'Optional note (kept on the audit trail)');
             return `
                 <div class="request-decision-bar is-info">
                     <div class="request-decision-copy">
-                        <span class="request-decision-label">${isFineTune ? 'Fine-tune' : 'Review note'}</span>
+                        <span class="request-decision-label">${label}</span>
                         <span>${doneLabel}</span>
                     </div>
                     <div class="request-actions">
@@ -991,9 +1021,7 @@ class RequestsManager {
                         ${ignoreBtn}
                     </div>
                     <textarea id="request-comment" class="command-input request-comment" rows="2"
-                        placeholder="${isFineTune
-                            ? 'Optional instructions for the fine-tune AI (e.g. focus on host X; ignore other noise)'
-                            : 'Optional note (kept on the audit trail)'}"></textarea>
+                        placeholder="${placeholder}"></textarea>
                 </div>
             `;
         }

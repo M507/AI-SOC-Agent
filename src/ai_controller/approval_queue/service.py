@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
@@ -49,17 +50,42 @@ _QUEUE_KEYS = QUEUE_COUNT_KEYS
 
 _queue: Optional["ApprovalQueue"] = None
 
+# Open fine-tune notes whose text asks for a net-new / dedicated detection.
+_NEW_RULE_INTENT = re.compile(
+    r"("
+    r"\b(create|add|author|write)\b.{0,40}\b(new |dedicated )?(detection )?rule\b"
+    r"|\bdedicated\b.{0,40}\brule\b"
+    r"|\breplace the generic\b"
+    r"|\bsplit\b.{0,60}\bout of\b"
+    r")",
+    re.IGNORECASE | re.DOTALL,
+)
+_EXCEPTION_INTENT = re.compile(
+    r"\b(exception|except|whitelist|exclude|suppress|false[\s-]?positive|"
+    r"fine[\s-]?tun|narrow the|noise)\b",
+    re.IGNORECASE,
+)
+
 
 def init_queue(storage_dir: Optional[str] = None) -> "ApprovalQueue":
     global _queue
     _queue = ApprovalQueue(storage_dir or "data/ai_controller")
+    try:
+        result = _queue.migrate_misfiled_fine_tunes()
+        if result.get("reclassified"):
+            logger.info(
+                "Reclassified %s legacy fine-tune note(s) to visibility",
+                result["reclassified"],
+            )
+    except Exception as exc:  # noqa: BLE001 — never block startup on migration
+        logger.warning("Legacy fine-tune → visibility migration skipped: %s", exc)
     return _queue
 
 
 def get_queue(storage_dir: Optional[str] = None) -> "ApprovalQueue":
     global _queue
     if _queue is None:
-        _queue = ApprovalQueue(storage_dir or "data/ai_controller")
+        return init_queue(storage_dir)
     return _queue
 
 
@@ -368,11 +394,114 @@ class ApprovalQueue:
         if spec.execution == "informational":
             request.payload = self._enrich_informational(spec.action_type, request.payload)
             request.status = RequestStatus.INFORMATIONAL
+            # Fine-tune requires an existing Home Lab rule. Gap filings become Visibility.
+            if action_type == "fine_tune" and not request.payload.get("rule_found"):
+                request = self._reclassify_fine_tune_as_visibility(request)
         else:
             from .enrichment import enrich_request
 
             request = enrich_request(request)
         return EnqueueOutcome(request=self.store.put(request), outcome="created")
+
+    @staticmethod
+    def _reclassify_fine_tune_as_visibility(
+        request: ApprovalRequest,
+        *,
+        reason: str = "",
+    ) -> ApprovalRequest:
+        """Keep the note but file it under Visibility (gap / new-rule path)."""
+        from .catalog import get_action_spec
+
+        payload = dict(request.payload or {})
+        payload["reclassified_from"] = "fine_tune"
+        payload["reclassified_reason"] = reason or (
+            "No matching Home Lab rule for fine-tune; filed as a visibility gap instead."
+        )
+        request.action_type = "visibility"
+        request.payload = ApprovalQueue._enrich_informational("visibility", payload)
+        vis = get_action_spec("visibility")
+        if vis is not None:
+            request.risk = vis.risk
+        return request
+
+    @staticmethod
+    def _looks_like_new_rule_request(request: ApprovalRequest) -> bool:
+        """True when the note asks to create/split a detection, not just except noise."""
+        payload = request.payload or {}
+        blob = " ".join(
+            str(part or "")
+            for part in (
+                request.title,
+                request.summary,
+                payload.get("description"),
+                payload.get("suggestion"),
+            )
+        )
+        if not _NEW_RULE_INTENT.search(blob):
+            return False
+        # Exception wording keeps Fine-tune unless clearly asking for a dedicated/new rule.
+        if _EXCEPTION_INTENT.search(blob) and not re.search(
+            r"("
+            r"\b(create|author|write)\b.{0,40}\b(new |dedicated )?(detection )?rule\b"
+            r"|\bdedicated\b.{0,40}\brule\b"
+            r"|\breplace the generic\b"
+            r"|\bsplit\b.{0,60}\bout of\b"
+            r")",
+            blob,
+            re.IGNORECASE | re.DOTALL,
+        ):
+            return False
+        return True
+
+    def migrate_misfiled_fine_tunes(self) -> Dict[str, Any]:
+        """Reclassify open fine-tune notes that belong under Visibility.
+
+        Covers: no ``rule_found`` after re-enrich, and clear new-rule / dedicated-rule
+        intent text. Leaves true exception fine-tunes and closed reviews alone.
+        """
+        from .lab_rules import enrich_fine_tune
+
+        reclassified: List[str] = []
+        skipped = 0
+        for item in self.store.snapshot():
+            if item.action_type != "fine_tune":
+                continue
+            if is_archived(item) or item.status != RequestStatus.INFORMATIONAL:
+                skipped += 1
+                continue
+            payload = dict(item.payload or {})
+            dac = payload.get("dac") if isinstance(payload.get("dac"), dict) else {}
+            if dac.get("stage") in {"implemented", "rejected", "drafted", "needs_fix"}:
+                # Already in (or past) DaC exception review — do not move.
+                skipped += 1
+                continue
+            enriched = enrich_fine_tune(payload)
+            item.payload = enriched
+            reason = ""
+            if not enriched.get("rule_found"):
+                reason = (
+                    "Legacy fine-tune had no matching Home Lab rule; "
+                    "moved to Visibility."
+                )
+            elif self._looks_like_new_rule_request(item):
+                reason = (
+                    "Legacy fine-tune asked for a new/dedicated detection; "
+                    "moved to Visibility."
+                )
+            else:
+                # Persist refreshed enrich only.
+                self.store.put(item)
+                skipped += 1
+                continue
+            moved = self._reclassify_fine_tune_as_visibility(item, reason=reason)
+            moved.updated_at = datetime.now()
+            self.store.put(moved)
+            reclassified.append(moved.id)
+        return {
+            "reclassified": len(reclassified),
+            "ids": reclassified,
+            "skipped": skipped,
+        }
 
     def _reuse_open_request(
         self,

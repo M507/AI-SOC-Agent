@@ -1,31 +1,31 @@
-"""Review lifecycle stored on a fine-tune note.
+"""Review lifecycle for Detection as Code notes.
 
-Draft / Revise / Send-to-Review call the model. Implement is the only
-rule-file writer (then Kibana sync). Done / Ignore on Requests do not
-write the file. Send-to-Review auto-drafts with a validation loop (max
-three tries), pre-selects cards on success, and deletes the linked
-GitHub issue. See documentation/detection-as-code.md.
+Fine-tune notes carry ``dac.kind`` exceptions/disable. Visibility notes may
+carry ``dac.kind=new_rule``. Draft / Revise / Send-to-Review call the model.
+Implement is the only rule-file writer (then Kibana sync). See
+documentation/detection-as-code.md.
 """
 
 from __future__ import annotations
 
 from datetime import datetime
 from typing import Any, Dict, List, Optional
+from uuid import uuid4
 
 from ..approval_queue import get_queue
 from ..approval_queue.models import ApprovalRequest, RequestStatus, is_archived
 from . import rules_store
 from .diff import unified_diff
-from .drafting import complete_draft
+from .drafting import complete_draft, complete_new_rule_draft
 from .errors import DetectionError
-from .apply import write_disabled, write_exceptions
+from .apply import write_disabled, write_exceptions, write_new_rule
 from .alerts import close_alerts_matching_exceptions
-from .validation import evaluate_draft_gate, validate_checked
+from .validation import evaluate_draft_gate, evaluate_new_rule_gate, validate_checked
 
 MAX_AUTO_FIX_ATTEMPTS = 3
 _EDITABLE_STAGES = frozenset({"proposed", "drafted", "needs_fix"})
 _PROMOTE_GITHUB_DELETE_COMMENT = "Moved to Detection as Code Review in SamiGPT; deleting the tracking issue."
-_IMPLEMENT_GITHUB_DELETE_COMMENT = "Fine-tune implemented in Detection as Code; deleting the tracking issue."
+_IMPLEMENT_GITHUB_DELETE_COMMENT = "Implemented in Detection as Code; deleting the tracking issue."
 
 
 def _now() -> str:
@@ -272,25 +272,53 @@ def create_disable(*, rule_id: str, cluster_id: Optional[str] = None) -> Approva
     return _save(request, dac)
 
 
+def _is_dac_review(item: ApprovalRequest) -> bool:
+    """True for fine-tune notes (DaC-capable) or visibility notes already seeded as new_rule."""
+    if item.action_type == "fine_tune":
+        return True
+    if item.action_type == "visibility" and _dac(item).get("kind") == "new_rule":
+        return True
+    return False
+
+
 def list_reviews() -> List[ApprovalRequest]:
     items = []
     for item in get_queue().list(queue="detection"):
-        if item.action_type != "fine_tune":
+        dac = _dac(item)
+        if not dac:
             continue
-        if not _dac(item):
-            continue
-        items.append(item)
+        if item.action_type == "fine_tune":
+            items.append(item)
+        elif item.action_type == "visibility" and dac.get("kind") == "new_rule":
+            items.append(item)
     return items
 
 
 def get_review(request_id: str) -> ApprovalRequest:
     request = get_queue().get(request_id)
-    if request is None or request.action_type != "fine_tune":
+    if request is None or not _is_dac_review(request):
         raise DetectionError("Review not found.", status_code=404)
     return request
 
 
 def _diff_for(request: ApprovalRequest, dac: Dict[str, Any]) -> str:
+    if dac.get("kind") == "new_rule":
+        revision = current_revision(dac)
+        proposed = revision.get("proposed_rule")
+        if not isinstance(proposed, dict):
+            return ""
+        after_doc = {
+            "_dac": {
+                "status": "enabled",
+                "rule_id": dac.get("rule_id") or "",
+                "name": proposed.get("name") or "",
+                "origin": "sami_visibility_new_rule",
+            },
+            "rule": proposed,
+            "exception_items": [],
+        }
+        return unified_diff("{}", rules_store.document_text(after_doc), "new_rule.json")
+
     path, data, _digest = rules_store.load_rule_file(rule_id=dac.get("rule_id") or (request.payload or {}).get("rule_id"))
     before = rules_store.document_text(data)
     if dac.get("kind") == "disable":
@@ -299,7 +327,6 @@ def _diff_for(request: ApprovalRequest, dac: Dict[str, Any]) -> str:
         revision = current_revision(dac)
         cards = revision.get("exceptions") or []
         checked = [card for card in cards if isinstance(card, dict) and card.get("selected") is not False]
-        additions = []
         from .apply import exception_item
 
         rule_id = str(dac.get("rule_id") or "")
@@ -356,27 +383,51 @@ def review_view(request: ApprovalRequest) -> Dict[str, Any]:
     diff = ""
     warnings: List[str] = []
     error = ""
+    proposed = revision.get("proposed_rule") if isinstance(revision.get("proposed_rule"), dict) else {}
     try:
-        detail = rules_store.rule_detail(str(dac.get("rule_id") or (request.payload or {}).get("rule_id") or ""))
-        overview = {
-            "rule_id": detail.get("rule_id"),
-            "name": detail.get("name"),
-            "severity": detail.get("severity"),
-            "language": detail.get("language"),
-            "query": detail.get("query"),
-            "exception_count": detail.get("exception_count"),
-            "file": detail.get("file"),
-            "status": detail.get("status"),
-        }
-        diff = _diff_for(request, dac)
-        if dac.get("kind") != "disable" and revision.get("exceptions"):
-            # Preview only. "Nothing checked yet" is a hint in the UI, not a failed load.
-            warnings = validate_checked(
-                revision.get("exceptions") or [],
-                existing_items=detail.get("exception_items") or [],
-                evidence_fields=list(dac.get("evidence_fields") or []),
-                enforce_selection=False,
+        if dac.get("kind") == "new_rule":
+            overview = {
+                "rule_id": dac.get("rule_id") or "",
+                "name": proposed.get("name") or "",
+                "severity": proposed.get("severity") or "",
+                "language": proposed.get("language") or "",
+                "query": proposed.get("query") or "",
+                "exception_count": 0,
+                "file": dac.get("file") or "",
+                "status": "new",
+            }
+            diff = _diff_for(request, dac)
+            gate = evaluate_new_rule_gate(
+                revision,
+                coverage_check=(request.payload or {}).get("coverage_check")
+                if isinstance((request.payload or {}).get("coverage_check"), dict)
+                else {},
+                require_teaching=False,
             )
+            warnings = list(gate.get("warnings") or [])
+            if dac.get("stage") in {"drafted", "needs_fix"} and gate.get("errors"):
+                warnings = warnings + [f"Gate: {item}" for item in gate.get("errors") or []]
+        else:
+            detail = rules_store.rule_detail(str(dac.get("rule_id") or (request.payload or {}).get("rule_id") or ""))
+            overview = {
+                "rule_id": detail.get("rule_id"),
+                "name": detail.get("name"),
+                "severity": detail.get("severity"),
+                "language": detail.get("language"),
+                "query": detail.get("query"),
+                "exception_count": detail.get("exception_count"),
+                "file": detail.get("file"),
+                "status": detail.get("status"),
+            }
+            diff = _diff_for(request, dac)
+            if dac.get("kind") != "disable" and revision.get("exceptions"):
+                # Preview only. "Nothing checked yet" is a hint in the UI, not a failed load.
+                warnings = validate_checked(
+                    revision.get("exceptions") or [],
+                    existing_items=detail.get("exception_items") or [],
+                    evidence_fields=list(dac.get("evidence_fields") or []),
+                    enforce_selection=False,
+                )
     except DetectionError as exc:
         error = str(exc)
     payload = request.payload or {}
@@ -391,11 +442,12 @@ def review_view(request: ApprovalRequest) -> Dict[str, Any]:
         "kind": dac.get("kind") or "exceptions",
         "alert_id": payload.get("alert_id") or "",
         "rule_id": dac.get("rule_id") or payload.get("rule_id") or "",
-        "rule_name": payload.get("rule_name") or "",
+        "rule_name": payload.get("rule_name") or proposed.get("name") or "",
         "suggestion": _suggestion_text(request),
         "analyst_instructions": _analyst_instructions(request, dac),
         "rationale": revision.get("rationale") or request.rationale or "",
         "safe_to_except": revision.get("safe_to_except"),
+        "safe_to_create": revision.get("safe_to_create"),
         "notes": revision.get("notes") or "",
         "siem_context": revision.get("siem_context") if isinstance(revision.get("siem_context"), dict) else {},
         "rule_understanding": revision.get("rule_understanding") or "",
@@ -403,6 +455,7 @@ def review_view(request: ApprovalRequest) -> Dict[str, Any]:
         if isinstance(revision.get("improvement_plan"), list)
         else [],
         "exceptions": revision.get("exceptions") or [],
+        "proposed_rule": proposed or None,
         "revision_count": len(dac.get("revisions") or []),
         "auto_fix": auto_fix,
         "overview": overview,
@@ -468,6 +521,26 @@ async def draft(
     if dac.get("stage") != "proposed":
         raise DetectionError("Draft runs only before the first suggestion.")
     instructions = (analyst_instructions or "").strip() or _analyst_instructions(request, dac)
+    if dac.get("kind") == "new_rule":
+        suggestions = await complete_new_rule_draft(
+            suggestion=_suggestion_text(request),
+            suggestion_title=request.title,
+            coverage_check=(request.payload or {}).get("coverage_check")
+            if isinstance((request.payload or {}).get("coverage_check"), dict)
+            else {},
+            source=str((request.payload or {}).get("source") or ""),
+            alerts=_alerts_for_draft(request, dac),
+            cluster_id=request.cluster_id,
+            request_id=request.id,
+            command="detection new_rule draft",
+            analyst_instructions=instructions or None,
+        )
+        revision = {"at": _now(), "feedback": "", **suggestions}
+        dac["stage"] = "drafted"
+        dac["revisions"] = [revision]
+        dac["current_revision"] = 0
+        return _save(request, dac)
+
     path, data, digest = rules_store.load_rule_file(rule_id=str(dac.get("rule_id") or ""))
     suggestions = await complete_draft(
         rule_file=data,
@@ -506,8 +579,38 @@ async def revise(
     if dac.get("stage") not in {"drafted", "needs_fix"}:
         raise DetectionError("Ask for changes after a draft exists.")
     instructions = (analyst_instructions or "").strip() or _analyst_instructions(request, dac)
-    _path, data, digest = rules_store.load_rule_file(rule_id=str(dac.get("rule_id") or ""))
     previous = current_revision(dac)
+    if dac.get("kind") == "new_rule":
+        suggestions = await complete_new_rule_draft(
+            suggestion=_suggestion_text(request),
+            suggestion_title=request.title,
+            coverage_check=(request.payload or {}).get("coverage_check")
+            if isinstance((request.payload or {}).get("coverage_check"), dict)
+            else {},
+            source=str((request.payload or {}).get("source") or ""),
+            alerts=_alerts_for_draft(request, dac),
+            feedback=text,
+            previous={
+                "rationale": previous.get("rationale"),
+                "proposed_rule": previous.get("proposed_rule"),
+                "notes": previous.get("notes"),
+                "improvement_plan": previous.get("improvement_plan"),
+                "safe_to_create": previous.get("safe_to_create"),
+            },
+            cluster_id=request.cluster_id,
+            request_id=request.id,
+            command="detection new_rule revise",
+            analyst_instructions=instructions or None,
+        )
+        revision = {"at": _now(), "feedback": text, **suggestions}
+        revisions = list(dac.get("revisions") or [])
+        revisions.append(revision)
+        dac["revisions"] = revisions
+        dac["current_revision"] = len(revisions) - 1
+        dac["stage"] = "drafted"
+        return _save(request, dac)
+
+    _path, data, digest = rules_store.load_rule_file(rule_id=str(dac.get("rule_id") or ""))
     suggestions = await complete_draft(
         rule_file=data,
         alerts=_alerts_for_draft(request, dac),
@@ -721,6 +824,193 @@ async def promote_from_request(
     return view
 
 
+def _open_visibility_new_rule(alert_id: str, title: str = "") -> Optional[ApprovalRequest]:
+    alert = str(alert_id or "").strip()
+    title_l = (title or "").strip().lower()
+    for item in get_queue().list(queue="detection"):
+        if item.action_type != "visibility" or is_archived(item):
+            continue
+        dac = _dac(item)
+        if dac.get("kind") != "new_rule":
+            continue
+        if dac.get("stage") in {"implemented", "rejected"}:
+            continue
+        payload = item.payload or {}
+        item_alert = str(payload.get("alert_id") or "").strip()
+        if alert and item_alert == alert:
+            return item
+        if not alert and title_l and (item.title or "").strip().lower() == title_l:
+            return item
+    return None
+
+
+def _new_rule_gate_feedback(errors: List[str]) -> str:
+    bullets = "\n".join(f"- {item}" for item in errors)
+    return (
+        "The previous new-rule draft failed validation. Fix every item below. "
+        "Only type=query rules are allowed; do not duplicate catalog coverage.\n"
+        f"{bullets}"
+    )
+
+
+async def promote_visibility_from_request(
+    request_id: str,
+    analyst_note: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Send a Visibility note into DaC Review as dac.kind=new_rule."""
+    request = get_queue().get(request_id)
+    if request is None:
+        raise DetectionError("Request not found.", status_code=404)
+    if is_archived(request) or request.status != RequestStatus.INFORMATIONAL:
+        raise DetectionError("Send to Review is only available while the visibility note is open.")
+    if request.action_type != "visibility":
+        raise DetectionError("Only visibility notes can be sent for new-rule Detection as Code Review.")
+
+    payload = dict(request.payload or {})
+    coverage = payload.get("coverage_check") if isinstance(payload.get("coverage_check"), dict) else {}
+    if coverage.get("likely_covered"):
+        matches = coverage.get("matching_rules") or []
+        hint = ""
+        if isinstance(matches, list) and matches and isinstance(matches[0], dict):
+            hint = f" Matching rule: {matches[0].get('name') or matches[0].get('rule_id') or ''}."
+        raise DetectionError(
+            "Catalog coverage check says this behavior is likely already covered."
+            f"{hint} Use Fine-tune on that rule instead of creating a new one.",
+            status_code=400,
+        )
+
+    dac = _dac(request)
+    stage = str(dac.get("stage") or "")
+    auto_fix = dac.get("auto_fix") if isinstance(dac.get("auto_fix"), dict) else {}
+    if stage == "drafted" and auto_fix.get("passed"):
+        return review_view(request)
+    if stage in {"implemented", "rejected"}:
+        raise DetectionError("This visibility review is already closed.")
+
+    existing = _open_visibility_new_rule(str(payload.get("alert_id") or ""), request.title)
+    if existing is not None and existing.id != request.id and _dac(existing).get("stage") not in {
+        "implemented",
+        "rejected",
+        "",
+    }:
+        # Prefer updating the already-open new_rule review for this alert/theme.
+        request = existing
+        payload = dict(request.payload or {})
+        dac = _dac(request)
+
+    instructions = (analyst_note or "").strip()
+    if instructions:
+        payload["analyst_instructions"] = instructions
+    rule_id = str(dac.get("rule_id") or payload.get("rule_id") or uuid4())
+    should_seed = (not dac) or (stage in {"", "proposed"} and not dac.get("revisions"))
+    if should_seed:
+        dac = _seed_dac(
+            kind="new_rule",
+            stage="proposed",
+            path="",
+            digest="",
+            rule_id=rule_id,
+            evidence_fields=list((dac or {}).get("evidence_fields") or []),
+        )
+    else:
+        dac = dict(dac)
+        dac["kind"] = "new_rule"
+        dac["rule_id"] = dac.get("rule_id") or rule_id
+        if dac.get("stage") not in {"proposed", "drafted", "needs_fix"}:
+            dac["stage"] = "proposed"
+    if instructions:
+        dac["analyst_instructions"] = instructions
+    elif payload.get("analyst_instructions"):
+        dac["analyst_instructions"] = str(payload.get("analyst_instructions") or "").strip()
+    if not payload.get("suggestion"):
+        payload["suggestion"] = _suggestion_text(request)
+    request.payload = payload
+    request = _save(request, dac)
+    instructions = _analyst_instructions(request, dac)
+
+    attempts: List[Dict[str, Any]] = list((dac.get("auto_fix") or {}).get("attempts") or [])
+    last_errors: List[str] = []
+
+    for attempt_number in range(1, MAX_AUTO_FIX_ATTEMPTS + 1):
+        live = _dac(request)
+        kind = "draft" if live.get("stage") == "proposed" else "revise"
+        try:
+            if kind == "draft":
+                request = await draft(request.id, analyst_instructions=instructions or None)
+            else:
+                request = await revise(
+                    request.id,
+                    _new_rule_gate_feedback(last_errors or ["Improve the new-rule draft."]),
+                    analyst_instructions=instructions or None,
+                )
+        except DetectionError as exc:
+            last_errors = [str(exc)]
+            attempts.append({
+                "at": _now(),
+                "kind": kind,
+                "errors": last_errors,
+                "warnings": [],
+                "safe_to_create": None,
+            })
+            dac = _dac(request)
+            dac["auto_fix"] = {"attempts": attempts, "passed": False, "max_attempts": MAX_AUTO_FIX_ATTEMPTS}
+            request = _save(request, dac)
+            continue
+
+        dac = _dac(request)
+        revision = current_revision(dac)
+        gate = evaluate_new_rule_gate(
+            revision,
+            coverage_check=payload.get("coverage_check")
+            if isinstance(payload.get("coverage_check"), dict)
+            else {},
+            require_teaching=True,
+        )
+        attempts.append({
+            "at": _now(),
+            "kind": kind,
+            "errors": list(gate.get("errors") or []),
+            "warnings": list(gate.get("warnings") or []),
+            "safe_to_create": revision.get("safe_to_create"),
+        })
+        if gate.get("ok"):
+            dac["stage"] = "drafted"
+            dac["auto_fix"] = {
+                "attempts": attempts,
+                "passed": True,
+                "max_attempts": MAX_AUTO_FIX_ATTEMPTS,
+                "passed_on_attempt": attempt_number,
+            }
+            request = _save(request, dac)
+            github = get_queue().delete_linked_github_issue(
+                request,
+                comment=_PROMOTE_GITHUB_DELETE_COMMENT,
+            )
+            request = get_queue().store.put(request)
+            view = review_view(request)
+            view["github"] = github
+            return view
+
+        last_errors = list(gate.get("errors") or []) or ["Draft failed validation."]
+        dac["auto_fix"] = {"attempts": attempts, "passed": False, "max_attempts": MAX_AUTO_FIX_ATTEMPTS}
+        request = _save(request, dac)
+
+    dac = _dac(request)
+    dac["stage"] = "needs_fix"
+    dac["auto_fix"] = {
+        "attempts": attempts,
+        "passed": False,
+        "max_attempts": MAX_AUTO_FIX_ATTEMPTS,
+        "exhausted": True,
+    }
+    request = _save(request, dac)
+    view = review_view(request)
+    view["error"] = view.get("error") or (
+        "AI draft failed validation after 3 tries — review the attempt log and fix or Reject."
+    )
+    return view
+
+
 def _card_signature(card: Dict[str, Any]) -> frozenset:
     return frozenset(
         (str(entry.get("field") or "").strip(), str(entry.get("value")))
@@ -754,6 +1044,71 @@ def implement(request_id: str) -> ApprovalRequest:
     if request.status != RequestStatus.INFORMATIONAL:
         raise DetectionError("Implement is only available while the review is open.")
     dac = _dac(request)
+
+    if dac.get("kind") == "new_rule":
+        revision = current_revision(dac)
+        coverage = (request.payload or {}).get("coverage_check")
+        gate = evaluate_new_rule_gate(
+            revision,
+            coverage_check=coverage if isinstance(coverage, dict) else {},
+            require_teaching=True,
+        )
+        if not gate.get("ok"):
+            raise DetectionError("; ".join(gate.get("errors") or ["New-rule draft failed validation."]))
+        proposed = revision.get("proposed_rule")
+        if not isinstance(proposed, dict):
+            raise DetectionError("No proposed_rule to implement.")
+        if dac.get("rule_id") and not proposed.get("rule_id"):
+            proposed = dict(proposed)
+            proposed["rule_id"] = dac.get("rule_id")
+        result = write_new_rule(proposed)
+        path = result.get("file")
+        digest = result.get("file_sha256")
+        rule_id = str(result.get("rule_id") or dac.get("rule_id") or "")
+        dac["rule_id"] = rule_id
+        dac["file_sha256"] = str(digest or "")
+        dac["file"] = str(path or "")
+        request = _save(request, dac)
+
+        from ...core.elastic_clusters import client_for_id
+        from .elastic_sync import push_rule_after_implement
+
+        client = client_for_id(request.cluster_id)
+        try:
+            sync = push_rule_after_implement(client, file_path=str(path))
+        except DetectionError as exc:
+            dac["sync_error"] = str(exc)
+            _save(request, dac)
+            raise
+        result = {**result, **sync, "file": sync.get("file") or result.get("file")}
+        comment = f"Created new rule in {result.get('file')} and synced to Elastic"
+        github = get_queue().delete_linked_github_issue(
+            request,
+            comment=_IMPLEMENT_GITHUB_DELETE_COMMENT,
+        )
+        if github.get("attempted"):
+            request = get_queue().store.put(request)
+        archived = get_queue().acknowledge(request.id, comment=comment)
+        stored = _dac(archived)
+        stored["stage"] = "implemented"
+        stored["file_sha256"] = result.get("file_sha256") or stored.get("file_sha256")
+        stored.pop("sync_error", None)
+        stored["result"] = {key: value for key, value in result.items() if key != "exception_items"}
+        saved = _save(archived, stored)
+        saved.execution_result = {
+            "success": True,
+            "implemented": True,
+            "synced": True,
+            "created": True,
+            "message": comment,
+            "file": result.get("file"),
+            "revision": result.get("revision"),
+            "github": github,
+            "alerts_closed": [],
+            "alerts_close_failed": [],
+        }
+        return get_queue().store.put(saved)
+
     path, data, digest = rules_store.load_rule_file(rule_id=str(dac.get("rule_id") or ""))
     expected = str(dac.get("file_sha256") or "")
     rule_id = str(dac.get("rule_id") or "")

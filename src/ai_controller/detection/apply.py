@@ -12,7 +12,7 @@ from __future__ import annotations
 import hashlib
 from typing import Any, Dict, List
 
-from .rules_store import apply_additions, apply_disable
+from .rules_store import apply_additions, apply_disable, create_rule_file
 
 
 def default_exception_list_id(rule_id: str) -> str:
@@ -61,3 +61,8 @@ def write_exceptions(path, data, cards, expected_sha256: str, rule_id: str) -> D
 
 def write_disabled(path, data, expected_sha256: str) -> Dict[str, Any]:
     return apply_disable(path, data, expected_sha256)
+
+
+def write_new_rule(proposed: Dict[str, Any]) -> Dict[str, Any]:
+    """Create a new enabled rule file from a Visibility new_rule draft."""
+    return create_rule_file(proposed)

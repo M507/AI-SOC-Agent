@@ -97,11 +97,11 @@ Fine-tune, visibility gap, and runbook gap are review notes. **Ignore** archives
 
 | Request | On file | Primary action | On Done | On Ignore |
 | --- | --- | --- | --- | --- |
-| **Fine-tune detection** | Stores the suggestion plus a Home Lab rule snapshot. May open a GitHub issue. Filing does not call the model or edit the file. | **Send to Review** drafts exceptions (SIEM context + actual rule, up to 3 auto-fix tries), opens Detection as Code Review, and **deletes** the GitHub issue on success | Archives; **deletes** the GitHub issue; does not write the rule | Archives; **closes** the GitHub issue |
-| **Visibility gap** | Stores the gap note plus a catalog `coverage_check` | Done / Ignore | Archives locally | Archives; closes GitHub if linked |
+| **Fine-tune detection** | Stores the suggestion plus a Home Lab rule snapshot for an **existing** rule. May open a GitHub issue. Filing does not call the model or edit the file. If no rule matches, the server reclassifies the note as **Visibility**. On queue init, open legacy fine-tunes with no match or clear new/dedicated-rule intent are migrated the same way. | **Send to Review** (only when a rule was found) drafts exceptions (SIEM context + actual rule, up to 3 auto-fix tries), opens Detection as Code Review, and **deletes** the GitHub issue on success | Archives; **deletes** the GitHub issue; does not write the rule | Archives; **closes** the GitHub issue |
+| **Visibility gap** | Stores the gap note plus a catalog `coverage_check` (missing telemetry or missing detection). Agents must search the catalog and `find_related_requests` before filing. | **Send to Review** (blocked when `likely_covered`) drafts a **new query rule** (`dac.kind=new_rule`, up to 3 auto-fix tries), opens Detection as Code Review, and **deletes** the GitHub issue on success. Done / Ignore still archive without writing. | Archives locally | Archives; closes GitHub if linked |
 | **Runbook gap** | Stores that a `soc*/cases` playbook is missing, plus near-matches | **Create runbook** then Done | Archives locally | Archives; closes GitHub if linked |
 
-None of these change an Elastic rule when they are only filed. Fine-tune **Implement** in Detection as Code is what writes the rule and syncs to Kibana (see [detection-as-code.md](detection-as-code.md)).
+None of these change an Elastic rule when they are only filed. **Implement** in Detection as Code is what writes: Fine-tune mutates an existing rule (exceptions/disable); Visibility **creates** a new `[enabled]_…` rule file and POSTs it to Kibana when missing remotely (see [detection-as-code.md](detection-as-code.md)). Query rules only for new-rule MVP. The Kibana API key needs **create** detection-rule privileges for new rules, not only update.
 
 ## Not a Requests item
 

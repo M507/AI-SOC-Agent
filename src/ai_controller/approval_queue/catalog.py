@@ -219,7 +219,10 @@ ACTION_CATALOG: Tuple[ActionSpec, ...] = (
     ActionSpec(
         action_type="fine_tune",
         label="Fine-tune detection",
-        description="Informational suggestion to tune a Home Lab detection rule. No action is taken.",
+        description=(
+            "Informational suggestion to tune an existing Home Lab detection "
+            "(exceptions / false-positive narrowing). Not for missing coverage."
+        ),
         category="detections",
         risk="low",
         execution="informational",
@@ -227,7 +230,8 @@ ACTION_CATALOG: Tuple[ActionSpec, ...] = (
         queue_tab="fine_tune",
         gated_mcp_tool="create_fine_tuning_recommendation",
         notes=(
-            "Looks up the rule in Home-Lab-Rules and stores a suggestion under Requests → Fine-tune. "
+            "Requires a matching Home Lab rule. Stores under Requests → Fine-tune. "
+            "If no rule matches, the server reclassifies the note as Visibility. "
             "No Approve button. When ENG is GitHub, may also open a linked issue."
         ),
         fields=_fields(
@@ -241,7 +245,10 @@ ACTION_CATALOG: Tuple[ActionSpec, ...] = (
     ActionSpec(
         action_type="visibility",
         label="Visibility gap",
-        description="Informational note that telemetry or a detection may be missing. No action is taken.",
+        description=(
+            "Informational note that telemetry or a detection may be missing "
+            "(including proposing a new rule). Not for tuning an existing rule."
+        ),
         category="detections",
         risk="low",
         execution="informational",
@@ -250,6 +257,7 @@ ACTION_CATALOG: Tuple[ActionSpec, ...] = (
         gated_mcp_tool="create_visibility_recommendation",
         notes=(
             "Searches the Home Lab rule catalog first. Filed under Requests → Visibility with coverage evidence. "
+            "Send to Review can draft a new query rule when coverage is missing. "
             "No Approve button. When ENG is GitHub, may also open a linked issue."
         ),
         fields=_fields(

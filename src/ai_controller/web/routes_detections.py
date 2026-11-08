@@ -254,13 +254,22 @@ async def promote_review_from_request(
     request_id: str,
     body: PromoteFromRequestBody = PromoteFromRequestBody(),
 ):
-    """Send a Fine-tune Requests note to DaC Review (draft + validate loop)."""
+    """Send a Fine-tune or Visibility Requests note to DaC Review (draft + validate)."""
     analyst_note = (body.note or body.comment or "").strip()
     try:
-        review = await review_service.promote_from_request(
-            request_id,
-            analyst_note=analyst_note or None,
-        )
+        from ..approval_queue import get_queue
+
+        existing = get_queue().get(request_id)
+        if existing is not None and existing.action_type == "visibility":
+            review = await review_service.promote_visibility_from_request(
+                request_id,
+                analyst_note=analyst_note or None,
+            )
+        else:
+            review = await review_service.promote_from_request(
+                request_id,
+                analyst_note=analyst_note or None,
+            )
     except DetectionError as exc:
         raise _http(exc) from exc
     return {"success": True, "review": review}
