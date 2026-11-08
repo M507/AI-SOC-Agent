@@ -122,6 +122,8 @@ The platform enables automated triage, investigation, correlation, and response 
 - **Threat Intelligence**: IOC enrichment and reputation analysis
 - **Infrastructure Lookup**: Resolve IPs, hosts, and prefixes against NetBox DCIM/IPAM for asset context
 - **Multi-Tier SOC Workflows**: Structured workflows for SOC1 (triage) and SOC2 (investigation)
+- **Detection as Code**: Work Home Lab Elastic rules from the console (Alerts / Rules / Review), promote Fine-tune or Visibility Requests into AI-drafted reviews, and Implement writes + Kibana sync (see [v0.3.01](#v0301))
+- **Analyst Requests queue**: Gated response actions, Fine-tune / Visibility / runbook notes, GitHub tracking, and reopen from Archived
 
 ### Agent Profiles & Runbooks
 
@@ -227,7 +229,6 @@ SamiGPT/
 
 Configuration is managed through `config.json` and can be edited via the web interface or directly.
 
-
 ### Configuration File Structure
 
 See `config.json.example` for the complete configuration schema. Key sections:
@@ -262,6 +263,7 @@ SamiGPT provides comprehensive logging:
 4. **Register in configuration**
 
 Example structure:
+
 ```
 src/integrations/case_management/new_vendor/
 ├── __init__.py
@@ -334,6 +336,15 @@ The following projects helped and inspired us during the literature review:
 
 ## Changelog
 
+### v0.3.01
+
+- **Detection as Code**: **Alerts**, **Rules**, and **Review** over an external Elastic rules folder — draft exception, disable, or new-rule changes with the model, then **Implement** writes the rule file and syncs to Kibana ([documentation/detection-as-code.md](documentation/detection-as-code.md))
+- **Fine-tune & Visibility notes**: Fine-tune for exceptions on existing Home Lab rules; Visibility for missing coverage and new detections
+- **Send to Review**: AI-drafted Detection as Code reviews from Fine-tune (exceptions) or Visibility (new query rules), with validation before Implement
+- **Requests tabs**: Closures, Alert notes, Questions, Response, Fine-tune, Visibility, and Runbooks, plus a GitHub facet and **Create runbook** for runbook-gap notes
+- **Close with notes**: approving Close alert (or Yes on identity verify) also applies pending Add alert note cards for the same alert
+- **Local secret scanning**: Docker-based gitleaks + trufflehog on commit and push, with a manual `./.githooks/scan.sh` (see [Git hooks / secret scanning](#git-hooks--secret-scanning))
+
 ### v0.3
 
 - **Setup wizard**: a new install can be configured in the browser, so the console password, integrations, and MCP are ready without hand-editing `config.json`
@@ -348,7 +359,7 @@ The following projects helped and inspired us during the literature review:
 
 ### v0.2
 
-- **Single entry point (`app.py`)** serving an authenticated, HTTPS-only web UI (session login, auto-generated self-signed cert)
+- **Single entry point (**`app.py`**)** serving an authenticated, HTTPS-only web UI (session login, auto-generated self-signed cert)
 - **MCP server as a separate HTTPS listener** with its own health check, supervisor, and start/stop/restart controls from the UI
 - **Pluggable LLM providers**: Cursor Agent, OpenAI, OpenRouter, Open WebUI, and custom OpenAI-compatible endpoints, selectable and testable from Settings
 - **Open WebUI integration path**: SamiGPT registers as an MCP tool server in Open WebUI, so it can be driven from any LLM provider Open WebUI supports
@@ -366,6 +377,7 @@ The following projects helped and inspired us during the literature review:
 Presented at Black Hat MEA 2025.
 
 **Performance & Cost**
+
 - ~ $0.18 per alert
 - ~ 50 seconds to investigate an alert per agent/tab
 
