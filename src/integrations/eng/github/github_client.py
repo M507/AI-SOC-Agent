@@ -235,14 +235,27 @@ class GitHubClient:
         return issue
 
     def close_issue(self, issue_number: str, comment: Optional[str] = None) -> Dict[str, Any]:
-        """Comment (optional) and close an issue."""
+        """Comment (optional) and close an issue.
+
+        If the issue is already deleted/missing, return an idempotent success
+        payload instead of failing on the comment step (common 404/410).
+        """
         number = str(issue_number).lstrip("#")
         if comment and str(comment).strip():
-            self._add_comment(number, str(comment).strip())
-        issue = self._http.patch(
-            f"/repos/{self.repository}/issues/{number}",
-            json_data={"state": "closed"},
-        )
+            try:
+                self._add_comment(number, str(comment).strip())
+            except IntegrationError as exc:
+                logger.warning("GitHub comment before close #%s failed: %s", number, exc)
+        try:
+            issue = self._http.patch(
+                f"/repos/{self.repository}/issues/{number}",
+                json_data={"state": "closed"},
+            )
+        except IntegrationError as exc:
+            text = str(exc).lower()
+            if "this issue was deleted" in text or "not found" in text:
+                return {"number": number, "state": "closed", "already_gone": True}
+            raise
         if not isinstance(issue, dict) or not issue.get("number"):
             raise IntegrationError(f"GitHub close issue #{number} returned unexpected payload")
         return issue

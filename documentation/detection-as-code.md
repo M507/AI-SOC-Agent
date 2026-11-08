@@ -18,7 +18,7 @@ Filing a **Fine-tune detection** note from the agent still only stores an inform
 
 Filing a **Visibility** note stores a coverage gap. Agents must search the catalog and open Requests first. **Send to Review** on a visibility card (blocked when `coverage_check.likely_covered`) promotes into DaC as `dac.kind=new_rule` (query rules only): draft/validate loop, then Implement **creates** `[enabled]_…_{uuid}.json` and syncs to Kibana (POST create when the rule is not remote yet). Kibana API keys need **create** detection-rule privileges for that path.
 
-On a successful Send (or on Requests **Done** / **Implement**), the linked GitHub tracking issue is **deleted**. **Ignore** only **closes** it. After 3 failed tries the stage is `needs_fix`, the issue stays open, and the attempt log is kept. See [Requests tab](requests.md).
+On a successful Send (or on Requests **Done** / **Implement** / **Ignore**), the linked GitHub tracking issue is **deleted**. Already-deleted issues are treated as success. After 3 failed tries the stage is `needs_fix`, the issue stays open, and the attempt log is kept. See [Requests tab](requests.md).
 
 ## Rules folder
 
@@ -110,7 +110,7 @@ Reviews are informational approval requests whose payload has a `dac` object: us
 | `drafted` | After Draft, Send to Review (validated), field exception, disable, or Visibility new-rule | Checkboxes (exceptions), **Ask for changes**, **Implement**, **Reject** |
 | `needs_fix` | Send to Review exhausted 3 auto-fix attempts | **Ask for changes**, **Implement** (if selection/gate validates), **Reject**. GitHub left open |
 | `implemented` | Implement succeeded | No further edits. The request is acknowledged; GitHub issue deleted if still linked |
-| `rejected` | Reject | File unchanged (new_rule never wrote a file). The request is ignored (GitHub closed) |
+| `rejected` | Reject | File unchanged (new_rule never wrote a file). The request is ignored (GitHub deleted) |
 
 A field exception card is one AND of the checked fields and starts with `selected: false`. Implement stays disabled in the UI until at least one card is checked, and the API rejects a write with no selected condition. Unchecked cards are omitted from the file and from the diff. Toggling a box is `POST /api/detections/reviews/{id}/selection`, which rebuilds the diff without a model call.
 

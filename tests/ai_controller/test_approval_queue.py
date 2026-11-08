@@ -675,9 +675,13 @@ class _FakeGitHub:
         self.issues = issues or {}
         self.comments = []
         self.closed = []
+        self.deleted = []
 
     def get_issue(self, number):
-        return dict(self.issues[str(number)])
+        key = str(number)
+        if key not in self.issues:
+            raise RuntimeError(f"GitHub API error: This issue was deleted")
+        return dict(self.issues[key])
 
     def close_issue(self, number, comment=None):
         if comment:
@@ -686,6 +690,15 @@ class _FakeGitHub:
         issue["state"] = "closed"
         self.closed.append(str(number))
         return dict(issue)
+
+    def delete_issue(self, number, comment=None):
+        if comment:
+            self.comments.append((str(number), comment))
+        key = str(number)
+        if key in self.issues:
+            del self.issues[key]
+        self.deleted.append(key)
+        return {"number": key, "deleted": True}
 
 
 def _engineering_payload(number=42, state="open"):
@@ -799,7 +812,7 @@ def test_github_closed_sync_archives_open_note(tmp_path, monkeypatch):
     assert stored.decision.comment == "Closed on GitHub #42"
 
 
-def test_ignore_closes_github_issue_and_archives(tmp_path, monkeypatch):
+def test_ignore_deletes_github_issue_and_archives(tmp_path, monkeypatch):
     queue = ApprovalQueue(str(tmp_path))
     github = _FakeGitHub(
         {
@@ -807,6 +820,7 @@ def test_ignore_closes_github_issue_and_archives(tmp_path, monkeypatch):
                 "number": 42,
                 "state": "open",
                 "html_url": "https://github.com/org/HomeLab-DaC/issues/42",
+                "node_id": "I_kwDOTest42",
             }
         }
     )
@@ -822,21 +836,43 @@ def test_ignore_closes_github_issue_and_archives(tmp_path, monkeypatch):
     assert ignored.status is RequestStatus.ACKNOWLEDGED
     assert ignored.archived is True
     assert ignored.decision.action == "ignore"
-    assert github.closed == ["42"]
+    assert github.deleted == ["42"]
     assert github.comments
     assert "Manager decided to ignore this professionally." in github.comments[0][1]
     assert "noise for this lab" in github.comments[0][1]
-    assert ignored.payload["engineering"]["issue"]["state"] == "closed"
+    assert ignored.payload["engineering"]["issue"]["deleted"] is True
+    assert ignored.execution_result["github"]["success"] is True
+    assert "deleted" in ignored.execution_result["message"].lower()
     assert queue.list(status="open", queue="engineering", sync_github=False) == []
     archived = queue.list(status="archived", queue="engineering", sync_github=False)
     assert {item.id for item in archived} == {note.id}
 
 
-def test_ignore_archives_when_github_close_fails(tmp_path, monkeypatch):
+def test_ignore_treats_already_deleted_github_issue_as_success(tmp_path, monkeypatch):
+    """Matches production: comment/close 404/410 when the issue was already removed."""
+    queue = ApprovalQueue(str(tmp_path))
+    github = _FakeGitHub(issues={})  # nothing left on GitHub
+    monkeypatch.setattr(ApprovalQueue, "_github_client_for", lambda self, request: github)
+    note = queue.create(
+        "fine_tune",
+        "Tune encoded PS",
+        "admin script",
+        payload={"title": "Tune encoded PS", "description": "Exclude signed admin tool"},
+    )
+    queue.attach_engineering(note.id, _engineering_payload())
+    ignored = queue.ignore(note.id)
+    assert ignored.status is RequestStatus.ACKNOWLEDGED
+    assert ignored.archived is True
+    assert ignored.execution_result["github"]["success"] is True
+    assert ignored.error is None
+    assert ignored.payload["engineering"]["issue"].get("deleted") is True
+
+
+def test_ignore_archives_when_github_delete_fails(tmp_path, monkeypatch):
     queue = ApprovalQueue(str(tmp_path))
 
     class _BrokenGitHub(_FakeGitHub):
-        def close_issue(self, number, comment=None):
+        def delete_issue(self, number, comment=None):
             raise RuntimeError("GitHub 502")
 
     github = _BrokenGitHub(
@@ -861,6 +897,27 @@ def test_ignore_archives_when_github_close_fails(tmp_path, monkeypatch):
     assert ignored.archived is True
     assert ignored.execution_result["github"]["success"] is False
     assert "GitHub 502" in (ignored.error or "")
+
+
+def test_github_sync_archives_when_issue_already_deleted(tmp_path, monkeypatch):
+    queue = ApprovalQueue(str(tmp_path))
+    github = _FakeGitHub(issues={})
+    monkeypatch.setattr(ApprovalQueue, "_github_client_for", lambda self, request: github)
+    note = queue.create(
+        "visibility",
+        "Missing DNS telemetry",
+        "no coverage",
+        payload={"title": "Missing DNS telemetry", "description": "Need DNS logs"},
+    )
+    queue.attach_engineering(note.id, _engineering_payload())
+    synced = queue.sync_external_closed()
+    assert synced["checked"] == 1
+    assert synced["closed"] == 1
+    assert synced["errors"] == 0
+    stored = queue.get(note.id)
+    assert stored.status is RequestStatus.ACKNOWLEDGED
+    assert stored.archived is True
+    assert "Deleted on GitHub" in (stored.decision.comment or "")
 
 
 def test_approve_close_alert_uses_kibana_detection_engine(tmp_path, monkeypatch):
@@ -1111,7 +1168,7 @@ def test_different_alert_ids_stay_separate_with_observable_titles(tmp_path, monk
 def test_fine_tune_same_rule_dedupes_informational_note(tmp_path, monkeypatch):
     monkeypatch.setattr(
         "src.ai_controller.approval_queue.service.ApprovalQueue._enrich_informational",
-        lambda self, action_type, payload: payload,
+        lambda self, action_type, payload: {**payload, "rule_found": True},
     )
     queue = ApprovalQueue(str(tmp_path))
     first = queue.enqueue(
@@ -1123,6 +1180,7 @@ def test_fine_tune_same_rule_dedupes_informational_note(tmp_path, monkeypatch):
             "description": "Exclude empty UA for connectivity-check.ubuntu.com",
             "rule_name": "ntopng Security Alert",
             "rule_id": "rule-ntop-1",
+            "rule_found": True,
         },
         session_id="sess-ft",
     )
@@ -1135,6 +1193,7 @@ def test_fine_tune_same_rule_dedupes_informational_note(tmp_path, monkeypatch):
             "description": "Whitelist Ubuntu connectivity-check / empty UA",
             "rule_name": "ntopng Security Alert",
             "rule_id": "rule-ntop-1",
+            "rule_found": True,
         },
         session_id="sess-ft",
     )
@@ -1153,7 +1212,7 @@ def test_find_related_requests_by_rule_and_alert(tmp_path, monkeypatch):
     )
     monkeypatch.setattr(
         "src.ai_controller.approval_queue.service.ApprovalQueue._enrich_informational",
-        lambda self, action_type, payload: payload,
+        lambda self, action_type, payload: {**payload, "rule_found": True},
     )
     queue = ApprovalQueue(str(tmp_path))
     note = queue.enqueue(
@@ -1176,6 +1235,7 @@ def test_find_related_requests_by_rule_and_alert(tmp_path, monkeypatch):
             "description": "whitelist connectivity-check",
             "rule_name": "ntopng Security Alert",
             "rule_id": "rule-ntop-1",
+            "rule_found": True,
         },
     )
     by_alert = queue.find_related_requests(alert_id="alert-rel-1", action_type="add_alert_note")

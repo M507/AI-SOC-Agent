@@ -272,6 +272,15 @@ async def ignore_request(request_id: str, body: DecisionPayload = DecisionPayloa
     return {"success": True, "request": _payload(request)}
 
 
+@router.post("/{request_id}/reopen")
+async def reopen_request(request_id: str, body: DecisionPayload = DecisionPayload()):
+    """Move an archived Done/Ignore/Deny request back to Open (local queue only)."""
+    queue = get_queue()
+    request = await _run_queue(queue.reopen, request_id, comment=body.comment)
+    logger.info("Reopened request %s -> %s", request_id, request.status.value)
+    return {"success": True, "request": _payload(request)}
+
+
 @router.post("/{request_id}/create-runbook")
 async def create_runbook_from_request(request_id: str, body: DecisionPayload = DecisionPayload()):
     """Start an Open WebUI / LLM session that authors a soc*/cases runbook, then mark Done."""

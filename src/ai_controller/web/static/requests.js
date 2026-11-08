@@ -142,14 +142,16 @@ class RequestsManager {
                 return;
             }
             const action = actionBtn.dataset.requestAction;
-            if (action === 'bulk-approve' || action === 'bulk-deny' || action === 'bulk-done' || action === 'bulk-ignore') {
+            if (action === 'bulk-approve' || action === 'bulk-deny' || action === 'bulk-done' || action === 'bulk-ignore' || action === 'bulk-reopen') {
                 const bulkAction = action === 'bulk-approve'
                     ? 'approve'
                     : action === 'bulk-deny'
                         ? 'deny'
                         : action === 'bulk-ignore'
                             ? 'ignore'
-                            : 'acknowledge';
+                            : action === 'bulk-reopen'
+                                ? 'reopen'
+                                : 'acknowledge';
                 this.handleBulk(bulkAction);
                 return;
             }
@@ -501,7 +503,8 @@ class RequestsManager {
         }
         const selectBtn = document.querySelector('#requests-content [data-request-select-all]');
         if (selectBtn) {
-            selectBtn.hidden = this.filter === 'archived';
+            // Archived allows select-all for bulk Reopen; Open uses it for Done/Ignore/Approve.
+            selectBtn.hidden = false;
         }
         document.querySelectorAll('[data-request-filter]').forEach((btn) => {
             const key = btn.dataset.requestFilter;
@@ -648,6 +651,26 @@ class RequestsManager {
             && item.status === 'informational'
             && !item.archived
         );
+    }
+
+    canReopen(item) {
+        if (!item) {
+            return false;
+        }
+        const archived = Boolean(item.archived)
+            || ['acknowledged', 'denied', 'executed', 'failed'].includes(item.status);
+        if (!archived) {
+            return false;
+        }
+        // Executed/failed keep side effects; implemented DaC reviews stay closed.
+        if (item.status === 'executed' || item.status === 'failed') {
+            return false;
+        }
+        const dac = (item.payload && item.payload.dac) || {};
+        if (dac.stage === 'implemented') {
+            return false;
+        }
+        return item.status === 'acknowledged' || item.status === 'denied';
     }
 
     githubIssue(item) {
@@ -821,17 +844,26 @@ class RequestsManager {
         const denyCount = selected.filter((item) => this.isActionable(item)).length;
         const doneCount = selected.filter((item) => this.canMarkDone(item)).length;
         const ignoreCount = selected.filter((item) => this.canIgnore(item)).length;
+        const reopenCount = selected.filter((item) => this.canReopen(item)).length;
         const hasSelection = selected.length > 0;
         bar.hidden = !hasSelection;
         if (!hasSelection) {
             return;
         }
+        const onArchived = this.filter === 'archived';
         bar.innerHTML = `
             <div class="requests-bulk-summary">
                 <strong>${selected.length}</strong> selected
-                <span class="requests-bulk-hint">${approveCount} approvable · ${denyCount} deniable · ${doneCount} review notes</span>
+                <span class="requests-bulk-hint">${onArchived
+                    ? `${reopenCount} re-openable`
+                    : `${approveCount} approvable · ${denyCount} deniable · ${doneCount} review notes`}</span>
             </div>
             <div class="requests-bulk-actions">
+                ${onArchived ? `
+                <button type="button" class="btn btn-primary btn-sm" data-request-action="bulk-reopen"
+                    ${reopenCount ? '' : 'disabled'} title="Move selected archived requests back to Open">
+                    Reopen ${reopenCount || ''}
+                </button>` : `
                 <button type="button" class="btn btn-primary btn-sm" data-request-action="bulk-approve"
                     ${approveCount ? '' : 'disabled'} title="Approve selected closable / response actions">
                     Approve ${approveCount || ''}
@@ -845,9 +877,9 @@ class RequestsManager {
                     Done ${doneCount || ''}
                 </button>
                 <button type="button" class="btn btn-secondary btn-sm" data-request-action="bulk-ignore"
-                    ${ignoreCount ? '' : 'disabled'} title="Ignore selected review notes and close linked GitHub issues">
+                    ${ignoreCount ? '' : 'disabled'} title="Ignore selected review notes and delete linked GitHub issues">
                     Ignore ${ignoreCount || ''}
-                </button>
+                </button>`}
                 <button type="button" class="btn btn-secondary btn-sm" data-request-clear-selection>Clear</button>
             </div>
             <textarea id="request-bulk-comment" class="command-input request-comment" rows="2"
@@ -984,22 +1016,22 @@ class RequestsManager {
                 : '';
             let doneLabel;
             if (createRunbookBtn) {
-                doneLabel = 'Create runbook opens an Open WebUI session with the request + last alert, writes a new md under run_books/soc1/cases, then marks this Done. Ignore archives here and closes the GitHub issue when linked.';
+                doneLabel = 'Create runbook opens an Open WebUI session with the request + last alert, writes a new md under run_books/soc1/cases, then marks this Done. Ignore archives here and deletes the GitHub issue when linked.';
             } else if (isFineTune) {
                 doneLabel = canSendFineTune
-                    ? 'Send to Review drafts exceptions (up to 3 auto-fixes), opens Detection as Code Review, and deletes the GitHub issue on success. Done archives and deletes the GitHub issue without writing the rule. Ignore closes the GitHub issue.'
-                    : 'Fine-tune needs a matching Home Lab rule before Send to Review. Done archives; Ignore closes the GitHub issue when linked.';
+                    ? 'Send to Review drafts exceptions (up to 3 auto-fixes), opens Detection as Code Review, and deletes the GitHub issue on success. Done archives and deletes the GitHub issue without writing the rule. Ignore deletes the GitHub issue.'
+                    : 'Fine-tune needs a matching Home Lab rule before Send to Review. Done archives; Ignore deletes the GitHub issue when linked.';
             } else if (isVisibility) {
                 doneLabel = canSendVisibility
-                    ? 'Send to Review drafts a new query rule (up to 3 auto-fixes), opens Detection as Code Review, and deletes the GitHub issue on success. Done archives without writing a rule. Ignore closes the GitHub issue when linked.'
+                    ? 'Send to Review drafts a new query rule (up to 3 auto-fixes), opens Detection as Code Review, and deletes the GitHub issue on success. Done archives without writing a rule. Ignore deletes the GitHub issue when linked.'
                     : (likelyCovered
                         ? 'Catalog likely already covers this — use Fine-tune on the matching rule instead of authoring a duplicate. Done / Ignore archive this note.'
                         : (this.canIgnore(item)
-                            ? 'Done archives here. Ignore archives here and closes the GitHub issue when linked.'
+                            ? 'Done archives here. Ignore archives here and deletes the GitHub issue when linked.'
                             : 'No approval needed — review only, then mark Done.'));
             } else {
                 doneLabel = this.canIgnore(item)
-                    ? 'Done archives here. Ignore archives here and closes the GitHub issue when linked.'
+                    ? 'Done archives here. Ignore archives here and deletes the GitHub issue when linked.'
                     : 'No approval needed — review only, then mark Done.';
             }
             const label = isFineTune ? 'Fine-tune' : (isVisibility ? 'Visibility' : 'Review note');
@@ -1076,16 +1108,31 @@ class RequestsManager {
                     ? 'Approved'
                     : decision.action === 'deny'
                         ? 'Denied'
-                        : this.statusLabel(item);
+                        : decision.action === 'reopen'
+                            ? 'Reopened'
+                            : this.statusLabel(item);
         const actor = decision.actor ? ` by ${decision.actor}` : '';
         const comment = decision.comment ? ` — ${decision.comment}` : '';
+        const reopenBtn = this.canReopen(item)
+            ? `<div class="request-actions">
+                    <button type="button" class="btn btn-primary" data-request-action="reopen">Reopen</button>
+               </div>
+               <textarea id="request-comment" class="command-input request-comment" rows="2"
+                    placeholder="Optional note when reopening (kept on the audit trail)"></textarea>`
+            : '';
+        const reopenHint = this.canReopen(item)
+            ? ' Reopen moves this card back to Open. It does not recreate a deleted GitHub issue or undo executed side effects.'
+            : (item.status === 'executed' || item.status === 'failed'
+                ? ' Executed or failed requests cannot be reopened — side effects already ran.'
+                : '');
         return `
             <div class="request-decision-bar is-settled">
                 <div class="request-decision-copy">
                     <span class="request-decision-label">Decision</span>
                     <span class="status-badge ${escapeHtml(this.statusClass(item))}">${escapeHtml(this.statusLabel(item))}</span>
-                    <span>${escapeHtml(`${action}${actor}${comment}`)}</span>
+                    <span>${escapeHtml(`${action}${actor}${comment}`)}${escapeHtml(reopenHint)}</span>
                 </div>
+                ${reopenBtn}
             </div>
         `;
     }
@@ -1150,7 +1197,7 @@ class RequestsManager {
             ? `<div class="request-info-banner">${this.canCreateRunbook(item)
                 ? 'Runbook gap — <strong>Create runbook</strong> starts an Open WebUI session with this request and the last investigated alert to write a new file under <code>run_books/soc1/cases</code>, then marks Done.'
                 : (this.canIgnore(item)
-                ? 'Review note — <strong>Done</strong> archives here and leaves GitHub open. <strong>Ignore</strong> archives here and closes the GitHub issue.'
+                ? 'Review note — <strong>Done</strong> and <strong>Ignore</strong> archive here. <strong>Ignore</strong> also deletes the linked GitHub issue (Fine-tune <strong>Done</strong> deletes it too).'
                 : 'Informational only — nothing is executed. Mark <strong>Done</strong> when you have reviewed it.')}</div>`
             : awaitingHtml;
         const settled = !pending && !(informational && item.status === 'informational');
@@ -1408,12 +1455,15 @@ class RequestsManager {
         if (action === 'ignore') {
             const github = updated && updated.execution_result && updated.execution_result.github;
             if (github && github.attempted && github.success === false) {
-                return 'Ignored here. GitHub issue was not closed — the board may be out of sync.';
+                return 'Ignored here. GitHub issue was not deleted — the board may be out of sync.';
             }
             if (github && github.success) {
-                return 'Ignored. Linked GitHub issue was closed.';
+                return 'Ignored. Linked GitHub issue was deleted.';
             }
             return 'Ignored and archived.';
+        }
+        if (action === 'reopen') {
+            return 'Reopened and moved back to Open.';
         }
         const status = updated && updated.status;
         if (status === 'executed') {
@@ -1463,6 +1513,9 @@ class RequestsManager {
         }
         if (action === 'ignore') {
             return many > 1 ? `Ignoring${suffix}…` : 'Ignoring…';
+        }
+        if (action === 'reopen') {
+            return many > 1 ? `Reopening${suffix}…` : 'Reopening…';
         }
         if (action === 'done' || action === 'acknowledge') {
             return many > 1 ? `Marking${suffix} done…` : 'Marking done…';
@@ -1613,6 +1666,9 @@ class RequestsManager {
         if (action === 'ignore') {
             return api.ignoreRequest(id, comment);
         }
+        if (action === 'reopen') {
+            return api.reopenRequest(id, comment);
+        }
         if (action === 'create-runbook') {
             return api.createRunbookFromRequest(id, comment);
         }
@@ -1648,7 +1704,9 @@ class RequestsManager {
         const comment = this.comment();
         const toastKey = `requests-${item.id}`;
         const isPromote = action === 'send-to-review';
-        if (!isPromote) {
+        const isReopen = action === 'reopen';
+        // Reopen un-archives; skip the settle-to-archived optimistic path.
+        if (!isPromote && !isReopen) {
             this.settleLocally(item, action);
         }
         if (window.toast) {
@@ -1656,7 +1714,7 @@ class RequestsManager {
         }
         const result = await this.dispatchAction(action, item.id, comment);
         if (!result || !result.success) {
-            if (!isPromote) {
+            if (!isPromote && !isReopen) {
                 this.restoreLocal(item.id);
             } else {
                 this._inFlight.delete(item.id);
@@ -1687,11 +1745,23 @@ class RequestsManager {
             this.load();
             return;
         }
+        if (isReopen) {
+            this._inFlight.delete(item.id);
+            if (window.toast) {
+                window.toast.success(this.receiptMessage(action, result.request), { key: toastKey });
+            }
+            if (this.filter === 'archived') {
+                this.filter = 'open';
+            }
+            this.selectedId = item.id;
+            this.load();
+            return;
+        }
         const updated = result.request;
         const github = updated && updated.execution_result && updated.execution_result.github;
         if (window.toast) {
             if (action === 'ignore' && github && github.attempted && github.success === false) {
-                window.toast.error(github.error || 'Ignored locally, but GitHub close failed.', { key: toastKey });
+                window.toast.error(github.error || 'Ignored locally, but GitHub delete failed.', { key: toastKey });
             } else if (action === 'done' && github && github.attempted && github.success === false) {
                 window.toast.error(github.error || 'Marked Done locally, but GitHub delete failed.', { key: toastKey });
             } else {
@@ -1736,6 +1806,9 @@ class RequestsManager {
         } else if (action === 'ignore') {
             ids = selected.filter((item) => this.canIgnore(item)).map((item) => item.id);
             label = 'ignore';
+        } else if (action === 'reopen') {
+            ids = selected.filter((item) => this.canReopen(item)).map((item) => item.id);
+            label = 'reopen';
         } else {
             ids = selected.filter((item) => this.canMarkDone(item)).map((item) => item.id);
             label = 'mark done';
@@ -1748,37 +1821,48 @@ class RequestsManager {
                         ? 'No selected pending items to deny.'
                         : action === 'ignore'
                             ? 'No selected review notes to ignore.'
-                            : 'No selected informational notes to mark Done.';
+                            : action === 'reopen'
+                                ? 'No selected archived requests can be reopened (executed/failed stay closed).'
+                                : 'No selected informational notes to mark Done.';
                 window.toast.info(emptyMsg, { key: 'requests' });
             }
             return;
         }
         const ok = window.confirm(
             action === 'ignore'
-                ? `Ignore ${ids.length} review note${ids.length === 1 ? '' : 's'}? Linked GitHub issues will be closed.`
-                : action === 'acknowledge' || action === 'done'
-                    ? `Mark ${ids.length} informational note${ids.length === 1 ? '' : 's'} as Done?`
-                    : `${label.charAt(0).toUpperCase() + label.slice(1)} ${ids.length} request${ids.length === 1 ? '' : 's'}?`,
+                ? `Ignore ${ids.length} review note${ids.length === 1 ? '' : 's'}? Linked GitHub issues will be deleted.`
+                : action === 'reopen'
+                    ? `Reopen ${ids.length} archived request${ids.length === 1 ? '' : 's'}? They return to Open; GitHub issues are not recreated.`
+                    : action === 'acknowledge' || action === 'done'
+                        ? `Mark ${ids.length} informational note${ids.length === 1 ? '' : 's'} as Done?`
+                        : `${label.charAt(0).toUpperCase() + label.slice(1)} ${ids.length} request${ids.length === 1 ? '' : 's'}?`,
         );
         if (!ok) {
             return;
         }
         const toastKey = 'requests-bulk';
         const originals = new Map(selected.map((item) => [item.id, item]));
+        const optimisticArchive = action !== 'reopen';
         ids.forEach((id) => {
             const current = originals.get(id);
             if (!current || this._inFlight.has(id)) {
                 return;
             }
             this._inFlight.add(id);
-            this.settleLocally(current, action === 'acknowledge' ? 'done' : action);
+            if (optimisticArchive) {
+                this.settleLocally(current, action === 'acknowledge' ? 'done' : action);
+            }
         });
         if (window.toast) {
             window.toast.info(this.workingMessage(action, ids.length), { key: toastKey, duration: 0 });
         }
         const result = await this.controller.api.bulkRequests(action, ids, this.comment(true));
         if (!result || !result.success) {
-            ids.forEach((id) => this.restoreLocal(id));
+            if (optimisticArchive) {
+                ids.forEach((id) => this.restoreLocal(id));
+            } else {
+                ids.forEach((id) => this._inFlight.delete(id));
+            }
             if (window.toast) {
                 window.toast.error((result && (result.error || result.detail)) || 'Bulk action failed', { key: toastKey });
             }
@@ -1796,7 +1880,11 @@ class RequestsManager {
                 this.finishLocal(entry.id);
                 return;
             }
-            this.restoreLocal(entry.id);
+            if (optimisticArchive) {
+                this.restoreLocal(entry.id);
+            } else {
+                this._inFlight.delete(entry.id);
+            }
         });
         ids.forEach((id) => {
             if (this._inFlight.has(id)) {
@@ -1804,7 +1892,13 @@ class RequestsManager {
             }
         });
         if (window.toast) {
-            const verb = action === 'acknowledge' ? 'marked done' : action === 'ignore' ? 'ignored' : `${label}d`;
+            const verb = action === 'acknowledge'
+                ? 'marked done'
+                : action === 'ignore'
+                    ? 'ignored'
+                    : action === 'reopen'
+                        ? 'reopened'
+                        : `${label}d`;
             const parts = [`${succeeded} ${verb}`];
             if (skipped) {
                 parts.push(`${skipped} skipped`);
@@ -1820,6 +1914,9 @@ class RequestsManager {
         }
         this.selectedIds.clear();
         this._skipDetailRebuild = false;
+        if (action === 'reopen' && this.filter === 'archived') {
+            this.filter = 'open';
+        }
         this.load();
     }
 }

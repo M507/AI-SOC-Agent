@@ -765,6 +765,10 @@ class APIClient {
         return this._requestDecision(`/api/requests/${encodeURIComponent(requestId)}/ignore`, { comment });
     }
 
+    async reopenRequest(requestId, comment = '') {
+        return this._requestDecision(`/api/requests/${encodeURIComponent(requestId)}/reopen`, { comment });
+    }
+
     async sendFineTuneToReview(requestId, note = '') {
         return this.request(
             `/api/detections/reviews/from-request/${encodeURIComponent(requestId)}`,
