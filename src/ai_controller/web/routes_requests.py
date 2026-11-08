@@ -98,6 +98,7 @@ def _payload(
             "cluster_id": request.cluster_id,
             "cluster": cluster,
             "category": spec.category if spec else None,
+            "queue_tab": spec.queue_tab if spec else None,
             "github_issue": github,
             "created_at": created,
             "archived": archived,
@@ -107,6 +108,7 @@ def _payload(
     data["cluster"] = cluster
     data["archived"] = archived
     data["category"] = spec.category if spec else None
+    data["queue_tab"] = spec.queue_tab if spec else None
     data["github_issue"] = github
     return data
 

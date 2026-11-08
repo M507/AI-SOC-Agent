@@ -118,7 +118,8 @@ This runbook explicitly **excludes**:
         *   **Analyze if a fine-tuning recommendation should be created:**
             *   Extract detection rule name from `${ALERT_COMPLETE_DETAILS}` (if available).
             *   Extract alert type/pattern from alert details (e.g., "Impossible Travel", "Login from Untrusted Location").
-            *   Use `list_fine_tuning_recommendations` with `include_closed=false` to search for existing recommendations matching the alert type or rule name.
+            *   Call `find_related_requests` with this rule and `action_type=fine_tune`; if an open Note exists, cite its `request_id` and do **not** file another.
+            *   Else use `list_fine_tuning_recommendations` with `include_closed=false` to search for existing recommendations matching the alert type or rule name.
             *   **If matching recommendation found:**
                 *   Extract `task_id` from the matching task.
                 *   Prepare comment: `FINE_TUNING_COMMENT = "Additional false positive observed. Alert ID: ${ALERT_ID}. Case ID: ${CASE_ID} (if created). Assessment: ${ASSESSMENT}. User: ${USER_ID}. Source IP: ${SOURCE_IP}. Details: [user context, IP context, login patterns]. Consider this additional data point for rule improvement."`

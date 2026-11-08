@@ -205,8 +205,13 @@
                         <div class="tab-group" id="requests-tab-group" style="display: none;">
                             <span class="tab-group-label">Requests</span>
                             <div class="tabs" id="requests-tabs">
-                                <button class="tab active" type="button" id="requests-tab" data-request-queue="approvals">Approvals</button>
-                                <button class="tab" type="button" data-request-queue="notes">Notes</button>
+                                <button class="tab active" type="button" id="requests-tab" data-request-queue="closures">Closures</button>
+                                <button class="tab" type="button" data-request-queue="alert_notes">Alert notes</button>
+                                <button class="tab" type="button" data-request-queue="questions">Questions</button>
+                                <button class="tab" type="button" data-request-queue="response">Response</button>
+                                <button class="tab" type="button" data-request-queue="fine_tune">Fine-tune</button>
+                                <button class="tab" type="button" data-request-queue="visibility">Visibility</button>
+                                <button class="tab" type="button" data-request-queue="runbooks">Runbooks</button>
                                 <button class="tab" type="button" data-request-queue="all">All</button>
                             </div>
                         </div>
@@ -1168,6 +1173,10 @@
                     Set to 1 to triage a single alert per run. The condition results are passed
                     into the prompt, so the agent starts with the alert already loaded.
                 </small>
+                <p class="form-warning" style="margin: 0.5rem 0; color: var(--warning, #b45309); font-size: 0.9em;">
+                    Short intervals (&lt; 60s) with limit &gt; 1 multiply Approvals/Notes per tick.
+                    Prefer <code>limit=1</code> for clean one-alert-at-a-time triage.
+                </p>
                 
                 <label for="autorun-interval">Interval (seconds):</label>
                 <input type="number" id="autorun-interval" value="300" min="5" step="5">
@@ -1216,6 +1225,10 @@
                 <label for="edit-autorun-condition-limit">Items per run (optional):</label>
                 <input type="number" id="edit-autorun-condition-limit" min="1" step="1" placeholder="All (default)">
                 <small>Set to 1 to triage a single alert per run.</small>
+                <p class="form-warning" style="margin: 0.5rem 0; color: var(--warning, #b45309); font-size: 0.9em;">
+                    Short intervals (&lt; 60s) with limit &gt; 1 multiply Approvals/Notes per tick.
+                    Prefer <code>limit=1</code> for clean one-alert-at-a-time triage.
+                </p>
 
                 <label for="edit-autorun-interval">Interval (seconds):</label>
                 <input type="number" id="edit-autorun-interval" min="5" step="5">

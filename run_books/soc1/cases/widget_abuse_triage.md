@@ -103,10 +103,11 @@ This runbook explicitly **excludes**:
     *   Set `${ASSESSMENT}` accordingly.
 
 7.  **FP/BTP Closure (no case) — MANDATORY final verdict:**
+    *   `find_related_requests` with `alert_id` (+ note/close) before filing; skip twins for the same document.
     *   `add_alert_note` citing history (verdicts + note takeaways), NetBox role match, pivot summary (host `lab-1` / user `bob` as applicable), and IOC results. Queued for Requests — do not claim the note is already written.
     *   **MANDATORY:** `update_alert_verdict` → `false_positive` or `benign_true_positive` (set `${FINAL_VERDICT}`).
     *   `close_alert` with appropriate reason + comment. Close is **queued for Requests** — do not claim the alert is already closed.
-    *   If the rule is noisy for known lab/widget roles, create/update a fine-tuning recommendation (`list_fine_tuning_recommendations` → comment or `create_fine_tuning_recommendation` with tags like `["false-positive", "fine-tuning", "soc1-triage", "widget-abuse"]`).
+    *   If the rule is noisy for known lab/widget roles: `find_related_requests` with rule + `fine_tune` first; only then create/update (`list_fine_tuning_recommendations` → comment or `create_fine_tuning_recommendation` with tags like `["false-positive", "fine-tuning", "soc1-triage", "widget-abuse"]`).
     *   Set `${ACTION_TAKEN}` = "AI verdict recorded; close requested (pending analyst approval)." End.
 
 8.  **TP / Uncertain Handoff (still no case) — MANDATORY final verdict:**

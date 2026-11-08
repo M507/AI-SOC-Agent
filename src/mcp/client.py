@@ -25,6 +25,7 @@ class MCPToolClient:
         api_token: Optional[str] = None,
         verify: Any = None,
         cluster_id: Optional[str] = None,
+        session_id: Optional[str] = None,
         tls: Optional[bool] = None,
     ) -> None:
         if host in {"0.0.0.0", "::", "[::]"}:
@@ -33,6 +34,7 @@ class MCPToolClient:
         self.port = port
         self.api_token = api_token or ""
         self.cluster_id = cluster_id
+        self.session_id = session_id
         if tls is None:
             try:
                 from ..core.config_storage import get_section
@@ -76,10 +78,13 @@ class MCPToolClient:
 
     async def _rpc(self, method: str, params: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         request = {"jsonrpc": "2.0", "id": 1, "method": method, "params": params}
-        if self.cluster_id:
+        if self.cluster_id or self.session_id:
             params = dict(params or {})
             meta = dict(params.get("_meta") or {})
-            meta["elastic_cluster_id"] = self.cluster_id
+            if self.cluster_id:
+                meta["elastic_cluster_id"] = self.cluster_id
+            if self.session_id:
+                meta["session_id"] = self.session_id
             params["_meta"] = meta
             request["params"] = params
         inproc = await self._inprocess(request)

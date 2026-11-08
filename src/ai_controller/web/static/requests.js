@@ -12,6 +12,25 @@ const REQUEST_STATUS_LABELS = {
 
 const DETECTION_CATEGORIES = new Set(['detections', 'runbooks']);
 const ENG_ACTION_TYPES = new Set(['fine_tune', 'visibility', 'runbook_gap']);
+const PRIMARY_QUEUE_TABS = new Set([
+    'closures', 'alert_notes', 'questions', 'response',
+    'fine_tune', 'visibility', 'runbooks',
+]);
+const APPROVALS_UNION_TABS = new Set(['closures', 'alert_notes', 'questions', 'response']);
+const NOTES_UNION_TABS = new Set(['fine_tune', 'visibility', 'runbooks']);
+const GITHUB_FACET_TABS = new Set(['fine_tune', 'visibility', 'runbooks', 'all', 'notes']);
+const QUEUE_TAB_LABELS = {
+    closures: 'Closures',
+    alert_notes: 'Alert notes',
+    questions: 'Questions',
+    response: 'Response',
+    fine_tune: 'Fine-tune',
+    visibility: 'Visibility',
+    runbooks: 'Runbooks',
+    all: 'All',
+    approvals: 'Approvals',
+    notes: 'Notes',
+};
 const REQUESTS_POLL_MS = 15000;
 
 class RequestsManager {
@@ -23,7 +42,7 @@ class RequestsManager {
         this.selectedId = null;
         this.selectedIds = new Set();
         this.filter = 'open';
-        this.queueTab = 'approvals';
+        this.queueTab = 'closures';
         this.githubFacet = false;
         this.counts = { pending: 0, open: 0, archived: 0, all: 0, actionable: 0 };
         this.tabCounts = { open: 0, archived: 0, all: 0 };
@@ -139,24 +158,22 @@ class RequestsManager {
     }
 
     setQueueTab(queue) {
-        let next = (queue || 'approvals').toLowerCase();
-        if (next === 'soc' || next === 'response') {
-            next = 'approvals';
-        } else if (next === 'detection' || next === 'detections' || next === 'detection_engineering') {
-            next = 'notes';
+        let next = (queue || 'closures').toLowerCase();
+        if (next === 'soc' || next === 'approvals') {
+            next = 'closures';
+        } else if (next === 'detection' || next === 'detections' || next === 'detection_engineering' || next === 'notes') {
+            next = 'fine_tune';
         } else if (next === 'engineering' || next === 'eng') {
-            next = 'notes';
+            next = 'fine_tune';
             this.githubFacet = true;
         }
         if (this.queueTab === next) {
             this.syncQueueTabs();
-            if (next === 'notes' || next === 'all') {
-                this.syncGithubFacet();
-            }
+            this.syncGithubFacet();
             return;
         }
         this.queueTab = next;
-        if (next === 'approvals') {
+        if (!GITHUB_FACET_TABS.has(next)) {
             this.githubFacet = false;
         }
         this.selectedIds.clear();
@@ -297,17 +314,39 @@ class RequestsManager {
         }
     }
 
+    queueTabFor(item) {
+        if (item && item.queue_tab) {
+            return item.queue_tab;
+        }
+        const spec = item && this.specFor(item.action_type);
+        if (spec && spec.queue_tab) {
+            return spec.queue_tab;
+        }
+        const action = item && item.action_type;
+        if (action === 'close_alert' || action === 'close_case') return 'closures';
+        if (action === 'add_alert_note') return 'alert_notes';
+        if (action === 'identity_verify') return 'questions';
+        if (ENG_ACTION_TYPES.has(action)) {
+            if (action === 'runbook_gap') return 'runbooks';
+            return action === 'visibility' ? 'visibility' : 'fine_tune';
+        }
+        return 'response';
+    }
+
     matchesQueue(item, queue) {
-        const key = (queue || this.queueTab || 'approvals').toLowerCase();
+        const key = (queue || this.queueTab || 'closures').toLowerCase();
         if (key === 'all' || key === '' || key === 'pending') {
             return true;
         }
-        const category = item && item.category;
-        if (key === 'approvals' || key === 'soc' || key === 'response') {
-            return !DETECTION_CATEGORIES.has(category);
+        const tab = this.queueTabFor(item);
+        if (PRIMARY_QUEUE_TABS.has(key)) {
+            return tab === key;
+        }
+        if (key === 'approvals' || key === 'soc') {
+            return APPROVALS_UNION_TABS.has(tab);
         }
         if (key === 'notes' || key === 'detection' || key === 'detections' || key === 'detection_engineering') {
-            return DETECTION_CATEGORIES.has(category);
+            return NOTES_UNION_TABS.has(tab);
         }
         if (key === 'engineering' || key === 'eng') {
             return Boolean(this.githubIssue(item));
@@ -479,7 +518,7 @@ class RequestsManager {
         if (!btn) {
             return;
         }
-        const show = this.queueTab === 'notes' || this.queueTab === 'all';
+        const show = GITHUB_FACET_TABS.has(this.queueTab);
         btn.hidden = !show;
         btn.classList.toggle('active', Boolean(this.githubFacet));
         btn.setAttribute('aria-pressed', this.githubFacet ? 'true' : 'false');
@@ -487,16 +526,11 @@ class RequestsManager {
     }
 
     queueLabel() {
-        if (this.queueTab === 'approvals' || this.queueTab === 'soc') {
-            return 'Approvals';
+        const base = QUEUE_TAB_LABELS[this.queueTab] || this.queueTab || 'All';
+        if (this.githubFacet && GITHUB_FACET_TABS.has(this.queueTab)) {
+            return `${base} · GitHub`;
         }
-        if (this.queueTab === 'notes' || this.queueTab === 'detection') {
-            return this.githubFacet ? 'Notes · GitHub' : 'Notes';
-        }
-        if (this.queueTab === 'engineering') {
-            return 'GitHub';
-        }
-        return this.githubFacet ? 'All · GitHub' : 'All';
+        return base;
     }
 
     specFor(actionType) {
@@ -601,7 +635,7 @@ class RequestsManager {
         if (!this.canMarkDone(item)) {
             return false;
         }
-        if (this.queueTab === 'notes' || this.queueTab === 'engineering' || this.queueTab === 'detection') {
+        if (NOTES_UNION_TABS.has(this.queueTab) || this.queueTab === 'notes' || this.queueTab === 'engineering' || this.queueTab === 'detection') {
             return true;
         }
         return this.isEngNote(item);
@@ -713,7 +747,7 @@ class RequestsManager {
             ? this.requests.filter((item) => item.status !== 'awaiting_integration')
             : this.requests;
         let html = rest.map((item) => this.cardHtml(item)).join('');
-        if (awaiting.length && (this.queueTab === 'approvals' || this.queueTab === 'soc' || this.queueTab === 'all')) {
+        if (awaiting.length && (this.queueTab === 'response' || this.queueTab === 'all' || this.queueTab === 'approvals' || this.queueTab === 'soc')) {
             html += `
                 <div class="requests-muted-section">
                     <div class="requests-muted-copy">
@@ -742,18 +776,37 @@ class RequestsManager {
         if (this.githubFacet) {
             return 'No GitHub-linked requests in this view.';
         }
+        if (tab === 'closures') {
+            return 'No open closures. Close-alert and close-case requests appear here.';
+        }
+        if (tab === 'alert_notes') {
+            return 'No open alert notes. Add-alert-note requests appear here.';
+        }
+        if (tab === 'questions') {
+            return 'No open questions. Is this you? cards appear here.';
+        }
+        if (tab === 'response') {
+            return 'No open response actions. Isolation, kill process, escalate, and related actions appear here.';
+        }
+        if (tab === 'fine_tune') {
+            return 'No fine-tune suggestions in this view.';
+        }
+        if (tab === 'visibility') {
+            return 'No visibility-gap notes in this view.';
+        }
+        if (tab === 'runbooks') {
+            return 'No runbook-gap notes in this view.';
+        }
         if (tab === 'approvals' || tab === 'soc') {
-            return this.filter === 'all'
-                ? 'No approvals yet. Close, notes on alerts, identity checks, and response actions appear here.'
-                : 'No open approvals. Fine-tune and visibility suggestions live under Notes.';
+            return 'No open decision requests in this legacy Approvals view.';
         }
         if (tab === 'notes' || tab === 'detection') {
-            return 'No review notes in this view. Fine-tune, visibility, and runbook gaps appear here.';
+            return 'No review notes in this legacy Notes view.';
         }
         if (this.filter === 'all') {
-            return 'No requests yet. The agent files Approvals when it needs a decision, and Notes for detection suggestions.';
+            return 'No requests yet. Closures, alert notes, questions, response, and engineering suggestions appear under their tabs.';
         }
-        return 'No open requests. Archived approvals and reviewed notes are hidden — switch to Archived to see them.';
+        return 'No open requests. Archived items are hidden — switch to Archived to see them.';
     }
 
     renderListChrome() {

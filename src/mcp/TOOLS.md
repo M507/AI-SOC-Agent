@@ -27,6 +27,10 @@ Search first with `search_lab_detection_rules` (compact hits). Load at most one 
 
 `create_approval_request` is used for identity checks ("is this you?") and custom follow-ups. A **No** answer opens an Elastic Security case (`create_elastic_case`), not IRIS or TheHive.
 
+`find_related_requests` lists open Approvals/Notes for an `alert_id` and/or detection rule before you file another note, close, fine-tune, visibility, or runbook-gap request. Call it first; if a match already covers the same alert document or the same rule recommendation, **do not file another** — cite the existing `request_id`.
+
+Same-alert re-files are also collapsed server-side: a second `add_alert_note` on a pending alert **updates** the existing request when richer; `close_alert` and informational Notes for the same rule/theme reuse the open request (`deduplicated` / `updated` in the tool result).
+
 `create_elastic_case` runs immediately against the bound Elastic cluster.
 
 ## Table of Contents
@@ -2254,6 +2258,36 @@ Request forensic artifact collection from an endpoint. **Queued for analyst appr
 Engineering tools enable creating and managing recommendations for fine-tuning detection rules and improving security visibility. These tools integrate with engineering platforms (ClickUp, Trello, GitHub) to track improvement tasks.
 
 **Note:** Currently, only ClickUp is fully supported. Trello and GitHub support for listing and commenting is planned for future releases.
+
+### `find_related_requests`
+
+Look up open Requests (Approvals / Notes) related to an alert and/or detection rule **before** filing `add_alert_note`, `close_alert`, `create_fine_tuning_recommendation`, `create_visibility_recommendation`, or `create_runbook_recommendation`.
+
+**Parameters:**
+- `alert_id` (string, optional): SIEM alert id — finds pending notes/closes for that document
+- `action_type` (string, optional): Single action filter (e.g. `fine_tune`, `add_alert_note`, `close_alert`)
+- `action_types` (array, optional): Multiple action types
+- `rule_id` / `rule_name` (string, optional): Detection rule for recommendation matching
+- `query` (string, optional): Free-text filter against title/summary
+- `open_only` (boolean, optional): Default `true`
+- `limit` (integer, optional): Max rows (default 25)
+
+**Returns:** `count`, `requests[]` with `id`, `action_type`, `status`, `title`, `summary`, `alert_id`, `rule_name`, `created_at`, `session_id`, plus a guidance `message`.
+
+**Usage Example:**
+```json
+{
+  "name": "find_related_requests",
+  "arguments": {
+    "rule_name": "ntopng Security Alert",
+    "action_type": "fine_tune"
+  }
+}
+```
+
+If an open Note already covers the same rule / same fix theme, do **not** file another — cite that `request_id` in the alert note instead.
+
+---
 
 ### `create_fine_tuning_recommendation`
 

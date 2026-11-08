@@ -13,11 +13,22 @@ from .catalog import (
     github_issue_link,
     matches_queue,
     wants_github_facet,
+    queue_tab_for,
+    ACTIONABLE_QUEUE_TABS,
     SOC_CATEGORIES,
     DETECTION_CATEGORIES,
     QUEUE_COUNT_KEYS,
 )
 from .clients import resolve_clients
+from .dedupe import (
+    ALERT_SCOPED_ACTIONS,
+    INFORMATIONAL_ACTIONS,
+    EnqueueOutcome,
+    find_open_alert_match,
+    find_open_informational_match,
+    find_related_requests as _find_related_requests,
+    note_is_richer,
+)
 from .models import ApprovalRequest, Decision, FollowUpPlan, RequestStatus, is_archived
 from .store import RequestStore
 
@@ -94,13 +105,13 @@ class ApprovalQueue:
         items = sorted(items, key=lambda item: item.created_at, reverse=True)
         counts = self._counts_from(snapshot)
         queue_counts = self._queue_counts_from(snapshot)
-        # Map legacy / alias queue keys onto primary tab count buckets.
+        # Map legacy / alias queue keys onto a count bucket when needed.
         tab_aliases = {
             "soc": "approvals",
-            "response": "approvals",
             "detection": "notes",
             "detections": "notes",
             "detection_engineering": "notes",
+            "eng": "engineering",
         }
         tab_key = tab_aliases.get(queue_key, queue_key)
         if tab_key not in queue_counts:
@@ -174,13 +185,35 @@ class ApprovalQueue:
         detection_open = 0
         engineering_open = 0
         soc_open = 0
+        closures_open = 0
+        alert_notes_open = 0
+        questions_open = 0
+        response_open = 0
+        fine_tune_open = 0
+        visibility_open = 0
+        runbooks_open = 0
         for item in open_items:
             spec = get_action_spec(item.action_type)
             category = spec.category if spec else ""
+            tab = queue_tab_for(item.action_type)
             is_note = category in DETECTION_CATEGORIES
-            # Nav badge: pending Approvals (including verification questions).
-            if item.status == RequestStatus.PENDING and not is_note:
+            # Nav badge: pending Closures + Questions + Response only.
+            if item.status == RequestStatus.PENDING and tab in ACTIONABLE_QUEUE_TABS:
                 actionable += 1
+            if tab == "closures":
+                closures_open += 1
+            elif tab == "alert_notes":
+                alert_notes_open += 1
+            elif tab == "questions":
+                questions_open += 1
+            elif tab == "response":
+                response_open += 1
+            elif tab == "fine_tune":
+                fine_tune_open += 1
+            elif tab == "visibility":
+                visibility_open += 1
+            elif tab == "runbooks":
+                runbooks_open += 1
             if is_note:
                 notes_open += 1
                 detection_open += 1
@@ -202,6 +235,13 @@ class ApprovalQueue:
             "soc_open": soc_open,
             "detection_open": detection_open,
             "engineering_open": engineering_open,
+            "closures_open": closures_open,
+            "alert_notes_open": alert_notes_open,
+            "questions_open": questions_open,
+            "response_open": response_open,
+            "fine_tune_open": fine_tune_open,
+            "visibility_open": visibility_open,
+            "runbooks_open": runbooks_open,
             "all": len(items),
         }
 
@@ -243,7 +283,44 @@ class ApprovalQueue:
         follow_ups: Optional[Dict[str, Any]] = None,
         parent_request_id: Optional[str] = None,
         created_by: str = "ai",
+        *,
+        dedupe: bool = True,
     ) -> ApprovalRequest:
+        outcome = self.enqueue(
+            action_type=action_type,
+            title=title,
+            summary=summary,
+            payload=payload,
+            rationale=rationale,
+            cluster_id=cluster_id,
+            session_id=session_id,
+            source=source,
+            question=question,
+            follow_ups=follow_ups,
+            parent_request_id=parent_request_id,
+            created_by=created_by,
+            dedupe=dedupe,
+        )
+        return outcome.request
+
+    def enqueue(
+        self,
+        action_type: str,
+        title: str,
+        summary: str,
+        payload: Optional[Dict[str, Any]] = None,
+        rationale: str = "",
+        cluster_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        source: str = "mcp",
+        question: Optional[str] = None,
+        follow_ups: Optional[Dict[str, Any]] = None,
+        parent_request_id: Optional[str] = None,
+        created_by: str = "ai",
+        *,
+        dedupe: bool = True,
+    ) -> EnqueueOutcome:
+        """Create a request, or reuse/update an open IR-equivalent match."""
         spec = get_action_spec(action_type)
         if spec is None:
             raise ValueError(f"Unknown action type {action_type!r}")
@@ -251,6 +328,19 @@ class ApprovalQueue:
         missing = [name for name in spec.required_fields if not payload.get(name)]
         if missing:
             raise ValueError(f"{spec.label} is missing required fields: {', '.join(missing)}")
+
+        if dedupe:
+            reused = self._reuse_open_request(
+                action_type=action_type,
+                title=title,
+                summary=summary,
+                payload=payload,
+                rationale=rationale,
+                cluster_id=cluster_id,
+                session_id=session_id,
+            )
+            if reused is not None:
+                return reused
 
         request = ApprovalRequest(
             action_type=action_type,
@@ -275,7 +365,118 @@ class ApprovalQueue:
             from .enrichment import enrich_request
 
             request = enrich_request(request)
-        return self.store.put(request)
+        return EnqueueOutcome(request=self.store.put(request), outcome="created")
+
+    def _reuse_open_request(
+        self,
+        *,
+        action_type: str,
+        title: str,
+        summary: str,
+        payload: Dict[str, Any],
+        rationale: str,
+        cluster_id: Optional[str],
+        session_id: Optional[str],
+    ) -> Optional[EnqueueOutcome]:
+        snapshot = self.store.snapshot()
+        existing: Optional[ApprovalRequest] = None
+        if action_type in ALERT_SCOPED_ACTIONS:
+            alert_id = str(payload.get("alert_id") or "").strip()
+            if alert_id:
+                existing = find_open_alert_match(
+                    snapshot,
+                    action_type=action_type,
+                    alert_id=alert_id,
+                    cluster_id=cluster_id,
+                )
+        elif action_type in INFORMATIONAL_ACTIONS:
+            existing = find_open_informational_match(
+                snapshot,
+                action_type=action_type,
+                payload=payload,
+                title=title,
+                summary=summary,
+                cluster_id=cluster_id,
+            )
+        if existing is None:
+            return None
+
+        if action_type == "add_alert_note":
+            new_note = str(payload.get("note") or summary or "").strip()
+            old_note = str(
+                (existing.payload or {}).get("note") or existing.summary or ""
+            ).strip()
+            if note_is_richer(old_note, new_note):
+                existing.payload = dict(existing.payload or {})
+                existing.payload["note"] = new_note
+                if payload.get("rule_name"):
+                    existing.payload.setdefault("rule_name", payload.get("rule_name"))
+                existing.summary = summary or new_note or existing.summary
+                if rationale:
+                    existing.rationale = rationale
+                if session_id and not existing.session_id:
+                    existing.session_id = session_id
+                existing.updated_at = datetime.now()
+                from .enrichment import enrich_request
+
+                existing = enrich_request(existing, force=True)
+                return EnqueueOutcome(request=self.store.put(existing), outcome="updated")
+
+        if action_type == "close_alert":
+            changed = False
+            existing.payload = dict(existing.payload or {})
+            for key in ("reason", "comment"):
+                value = payload.get(key)
+                if value and value != existing.payload.get(key):
+                    existing.payload[key] = value
+                    changed = True
+            if rationale and rationale != existing.rationale:
+                existing.rationale = rationale
+                changed = True
+            if summary and summary != existing.summary:
+                existing.summary = summary
+                changed = True
+            if session_id and not existing.session_id:
+                existing.session_id = session_id
+                changed = True
+            if changed:
+                existing.updated_at = datetime.now()
+                return EnqueueOutcome(request=self.store.put(existing), outcome="updated")
+            return EnqueueOutcome(request=existing, outcome="deduplicated")
+
+        if session_id and not existing.session_id:
+            existing.session_id = session_id
+            existing.updated_at = datetime.now()
+            return EnqueueOutcome(request=self.store.put(existing), outcome="deduplicated")
+        return EnqueueOutcome(request=existing, outcome="deduplicated")
+
+    def find_related_requests(
+        self,
+        *,
+        alert_id: Optional[str] = None,
+        action_type: Optional[str] = None,
+        action_types: Optional[List[str]] = None,
+        rule_id: Optional[str] = None,
+        rule_name: Optional[str] = None,
+        query: Optional[str] = None,
+        cluster_id: Optional[str] = None,
+        open_only: bool = True,
+        limit: int = 25,
+    ) -> List[Dict[str, Any]]:
+        types = list(action_types or [])
+        if action_type:
+            types.append(action_type)
+        return _find_related_requests(
+            self.store.snapshot(),
+            alert_id=alert_id,
+            action_types=types or None,
+            rule_id=rule_id,
+            rule_name=rule_name,
+            query=query,
+            cluster_id=cluster_id,
+            open_only=open_only,
+            limit=limit,
+        )
 
     def create_from_mcp_tool(
         self,
@@ -284,6 +485,20 @@ class ApprovalQueue:
         cluster_id: Optional[str] = None,
         session_id: Optional[str] = None,
     ) -> ApprovalRequest:
+        return self.enqueue_from_mcp_tool(
+            tool_name,
+            arguments,
+            cluster_id=cluster_id,
+            session_id=session_id,
+        ).request
+
+    def enqueue_from_mcp_tool(
+        self,
+        tool_name: str,
+        arguments: Optional[Dict[str, Any]] = None,
+        cluster_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+    ) -> EnqueueOutcome:
         from .catalog import spec_for_mcp_tool
 
         spec = spec_for_mcp_tool(tool_name)
@@ -313,7 +528,7 @@ class ApprovalQueue:
         }
         if "title" not in payload and title:
             payload["title"] = title
-        return self.create(
+        return self.enqueue(
             action_type=spec.action_type,
             title=str(title),
             summary=str(summary),

@@ -17,8 +17,9 @@ This document provides general guidelines for creating, maintaining, and executi
 Irreversible MCP tools **file a request** instead of executing. Analysts review them under **Requests → Approvals** or **Requests → Notes**.
 
 *   `close_alert`, `add_alert_note`, `kill_process_on_endpoint`, `collect_forensic_artifacts` — file under **Approvals** and wait for Approve.
+*   Before filing note/close/fine-tune/visibility/runbook-gap: call `find_related_requests` with the alert id and/or rule. Skip if an open request already covers the same alert document or the same rule recommendation; cite that `request_id` instead. Server-side dedupe also collapses twins (`deduplicated` / `updated` in the tool result).
 *   `isolate_endpoint` / `release_endpoint_isolation` — may be filed under Approvals, but **host isolation is disabled**: Approve will not call Elastic Defend or EDR. Tell the analyst it will not isolate the host.
-*   `create_fine_tuning_recommendation` and `create_visibility_recommendation` file **informational** notes under **Notes** (Home Lab rule lookup / coverage check). No Approve button. When ENG is GitHub, a linked issue may also be opened.
+*   `create_fine_tuning_recommendation` and `create_visibility_recommendation` file **informational** notes under **Notes** (Home Lab rule lookup / coverage check). No Approve button. When ENG is GitHub, a linked issue may also be opened. One open Note per rule+recommendation class — do not spam duplicates.
 *   `create_runbook_recommendation` files an **informational** note under **Notes** that a case-specific playbook is missing under `soc*/cases/`. Call it **only after** investigation finishes (final verdict). Never block triage for it. Server attaches existing case-runbook coverage evidence.
 *   Analysts can press **Create runbook** on that Notes card to open an Open WebUI session that authors a new `run_books/soc1/cases/*.md` via `save_case_runbook`.
 *   Before a visibility note: `search_lab_detection_rules` (1–3 keyword searches) then at most 1–2 `get_lab_detection_rule` calls. Only file a gap if the catalog does not already cover it.

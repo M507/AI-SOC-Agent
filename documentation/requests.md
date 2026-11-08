@@ -18,15 +18,22 @@ Action types live in `src/ai_controller/approval_queue/catalog.py`. Handlers liv
 
 | Tab | What it shows |
 | --- | --- |
-| Approvals (default) | Closures, alert notes, identity checks, response actions, stubs |
-| Notes | Fine-tune, visibility gap, runbook gap |
+| Closures (default) | `close_alert`, `close_case` |
+| Alert notes | `add_alert_note` |
+| Questions | `identity_verify` (Is this you?) |
+| Response | Isolate / release, kill process, forensics, escalate, open case, IAM / network / email stubs |
+| Fine-tune | `fine_tune` informational notes |
+| Visibility | `visibility` informational notes |
+| Runbooks | `runbook_gap` informational notes (+ Create runbook) |
 | All | Everything |
 
-**GitHub facet** (on Notes and All): show only items mirrored to a GitHub issue. This replaces the old Engineering top tab.
+**Nav badge:** pending items on Closures + Questions + Response only (not Alert notes or informational engineering tabs).
+
+**GitHub facet** (on Fine-tune, Visibility, Runbooks, and All): show only items mirrored to a GitHub issue. This replaces the old Engineering top tab.
 
 Open vs Archived: pending, informational, and waiting-on-integration stay Open. Denied, executed (Executed), failed, and acknowledged (Reviewed) are Archived. Ignored informational notes stay Archived with an Ignored label.
 
-Legacy API aliases: `queue=soc` → Approvals, `queue=detection` → Notes, `queue=engineering` → GitHub-linked items only.
+Legacy API aliases: `queue=approvals` / `soc` → Closures+Alert notes+Questions+Response; `queue=notes` / `detection` → Fine-tune+Visibility+Runbooks; `queue=engineering` → GitHub-linked items only.
 
 ## Actionable (Approve / Deny)
 

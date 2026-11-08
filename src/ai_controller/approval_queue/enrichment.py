@@ -41,10 +41,21 @@ def enrich_request(request: ApprovalRequest, *, force: bool = False) -> Approval
             payload["alert"] = alert
             _copy_alert_fields_into_payload(payload, alert)
             already = False
+    elif alert:
+        _copy_alert_fields_into_payload(payload, alert)
 
     if already and not force:
-        request.payload = payload
-        return request
+        from .dedupe import distinguishing_observables
+
+        observables = distinguishing_observables(payload, alert)
+        title_ok = not (
+            _title_is_generic(request.title or "", request.action_type, payload.get("alert_id"))
+            or _title_lacks_observables(request.title or "", observables)
+        )
+        summary_ok = not _summary_is_generic(request.summary or "", "")
+        if title_ok and summary_ok:
+            request.payload = payload
+            return request
 
     spec = get_action_spec(request.action_type)
     catalog_description = (spec.description if spec else "") or ""
@@ -75,6 +86,15 @@ def needs_enrichment(request: ApprovalRequest) -> bool:
         return True
     if not (request.rationale or "").strip() and payload.get("alert_id"):
         return True
+    if request.action_type in {"add_alert_note", "close_alert"}:
+        from .dedupe import distinguishing_observables
+
+        alert = payload.get("alert") if isinstance(payload.get("alert"), dict) else None
+        observables = distinguishing_observables(payload, alert)
+        if _title_is_generic(request.title or "", request.action_type, payload.get("alert_id")):
+            return True
+        if observables and _title_lacks_observables(request.title or "", observables):
+            return True
     return False
 
 
@@ -156,6 +176,10 @@ def _compact_alert(alert: Dict[str, Any]) -> Dict[str, Any]:
         "related_entities": [str(item) for item in entities if item not in (None, "")],
         "events": events,
         "comments": comments,
+        "subtitle": alert.get("subtitle") or "",
+        "target": alert.get("target") or "",
+        "reason": alert.get("reason") or "",
+        "host_name": alert.get("host_name") or "",
     }
 
 
@@ -175,6 +199,10 @@ def _copy_alert_fields_into_payload(payload: Dict[str, Any], alert: Dict[str, An
     _set("hostname", payload.get("hostname"), entity_map.get("host"), _host_from_events(alert))
     _set("username", payload.get("username"), entity_map.get("user"))
     _set("source_ip", payload.get("source_ip"), entity_map.get("ip"))
+    _set("destination_ip", payload.get("destination_ip"), entity_map.get("destination_ip"), entity_map.get("dst"))
+    _set("target", payload.get("target"), alert.get("target"))
+    _set("subtitle", payload.get("subtitle"), alert.get("subtitle"))
+    _set("ntopng_script", payload.get("ntopng_script"), alert.get("subtitle"), alert.get("ntopng_script"))
     if not payload.get("rule_name") and alert.get("title"):
         payload["rule_name"] = alert.get("title")
     if not payload.get("severity") and alert.get("severity"):
@@ -228,6 +256,8 @@ def _humanize_text(
     alert: Optional[Dict[str, Any]],
     catalog_description: str,
 ) -> Tuple[str, str, str]:
+    from .dedupe import build_observable_title, distinguishing_observables
+
     alert = alert or {}
     rule_name = str(payload.get("rule_name") or alert.get("title") or "").strip()
     host = str(payload.get("hostname") or "").strip()
@@ -237,9 +267,23 @@ def _humanize_text(
         payload.get("comment") or payload.get("note") or payload.get("description") or ""
     ).strip()
     activity = str(payload.get("activity") or "").strip()
+    observables = distinguishing_observables(payload, alert)
+    if not host and observables.get("host"):
+        host = observables["host"]
 
     new_title = (title or "").strip()
-    if _title_is_generic(new_title, action_type, payload.get("alert_id")):
+    needs_observable_title = action_type in {"add_alert_note", "close_alert"} and (
+        _title_is_generic(new_title, action_type, payload.get("alert_id"))
+        or _title_lacks_observables(new_title, observables)
+    )
+    if needs_observable_title and (rule_name or observables):
+        new_title = build_observable_title(
+            action_type,
+            rule_name=rule_name or str(payload.get("alert_id") or "alert"),
+            observables=observables,
+            reason=reason,
+        )
+    elif _title_is_generic(new_title, action_type, payload.get("alert_id")):
         subject = rule_name or payload.get("alert_id") or payload.get("endpoint_id") or action_type
         suffix_bits = [bit for bit in (host, user) if bit]
         suffix = f" ({', '.join(suffix_bits)})" if suffix_bits else ""
@@ -275,6 +319,15 @@ def _humanize_text(
             lines.append(f"User: {user}")
         if payload.get("source_ip"):
             lines.append(f"Source IP: {payload.get('source_ip')}")
+        if observables.get("dst"):
+            lines.append(
+                f"Destination: {observables['dst']}"
+                + (f":{observables['port']}" if observables.get("port") else "")
+            )
+        if observables.get("script"):
+            lines.append(f"Script: {observables['script']}")
+        if observables.get("target"):
+            lines.append(f"Target: {observables['target']}")
         if activity:
             lines.append(f"Activity: {activity}")
         if payload.get("timestamp") or alert.get("created_at"):
@@ -339,8 +392,23 @@ def _title_is_generic(title: str, action_type: str, alert_id: Any) -> bool:
         return True
     if lowered.startswith("add alert note:") and alert_id and str(alert_id) in title:
         return True
+    # Catalog-style titles without distinguishing flow details
+    if lowered.startswith("add note:") or lowered.startswith("close:"):
+        if "→" not in title and "->" not in title:
+            return True
     if lowered in {action_type, action_type.replace("_", " ")}:
         return True
+    return False
+
+
+def _title_lacks_observables(title: str, observables: Dict[str, str]) -> bool:
+    if not title or not observables:
+        return False
+    lowered = title.lower()
+    for key in ("dst", "script", "target", "port"):
+        value = observables.get(key)
+        if value and str(value).lower() not in lowered:
+            return True
     return False
 
 

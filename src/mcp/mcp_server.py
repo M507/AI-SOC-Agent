@@ -378,6 +378,54 @@ class SamiGPTMCPServer:
                 "required": ["action_type", "title", "summary"],
             },
         }
+        self.tools["find_related_requests"] = {
+            "name": "find_related_requests",
+            "description": (
+                "Look up open Requests (Approvals/Notes) related to an alert_id and/or "
+                "detection rule before filing fine_tune, visibility, runbook_gap, "
+                "add_alert_note, or close_alert. If a match already covers the same "
+                "alert document or the same rule recommendation, do NOT file another — "
+                "cite the existing request_id instead."
+            ),
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "alert_id": {
+                        "type": "string",
+                        "description": "SIEM alert id — finds pending notes/closes for that document",
+                    },
+                    "action_type": {
+                        "type": "string",
+                        "description": "Single action type filter (e.g. fine_tune, add_alert_note, close_alert)",
+                    },
+                    "action_types": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Optional list of action types to include",
+                    },
+                    "rule_id": {
+                        "type": "string",
+                        "description": "Detection rule id for recommendation / note matching",
+                    },
+                    "rule_name": {
+                        "type": "string",
+                        "description": "Detection rule name for recommendation / note matching",
+                    },
+                    "query": {
+                        "type": "string",
+                        "description": "Optional free-text filter against title/summary",
+                    },
+                    "open_only": {
+                        "type": "boolean",
+                        "description": "Only open (pending/informational) requests (default true)",
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Max rows to return (default 25)",
+                    },
+                },
+            },
+        }
 
     def _register_kb_tools(self) -> None:
         """
@@ -3401,17 +3449,13 @@ To be populated during investigation.
         
         method = request.get("method")
         params = request.get("params", {})
-        from .cluster_context import (
-            extract_cluster_id,
-            reset_elastic_cluster_id,
-            set_elastic_cluster_id,
-        )
+        from .cluster_context import bind_request_context, reset_request_context
 
-        cluster_token = set_elastic_cluster_id(extract_cluster_id(params))
+        cluster_token, session_token = bind_request_context(params)
         try:
             return await self._dispatch_request(request, method, params)
         finally:
-            reset_elastic_cluster_id(cluster_token)
+            reset_request_context(cluster_token, session_token)
 
     async def _dispatch_request(
         self,
@@ -3592,9 +3636,14 @@ To be populated during investigation.
             )
 
         from ..ai_controller.approval_queue.mcp_bridge import enqueue_gated_tool
-        from .cluster_context import get_elastic_cluster_id
+        from .cluster_context import get_elastic_cluster_id, get_session_id
 
-        queued = enqueue_gated_tool(tool_name, tool_args, cluster_id=get_elastic_cluster_id())
+        queued = enqueue_gated_tool(
+            tool_name,
+            tool_args,
+            cluster_id=get_elastic_cluster_id(),
+            session_id=get_session_id() or (tool_args or {}).get("session_id"),
+        )
         if queued:
             result_text = json.dumps(queued, indent=2)
             self._mcp_logger.info(
@@ -3662,7 +3711,7 @@ To be populated during investigation.
 
         if tool_name == "create_approval_request":
             from ..ai_controller.approval_queue.mcp_bridge import create_request_from_tool_args
-            from .cluster_context import get_elastic_cluster_id
+            from .cluster_context import get_elastic_cluster_id, get_session_id
 
             payload = args.get("payload")
             if isinstance(payload, str):
@@ -3671,11 +3720,26 @@ To be populated during investigation.
                     args["payload"] = json.loads(payload)
                 except json.JSONDecodeError:
                     pass
+            args = dict(args)
+            if not args.get("session_id"):
+                args["session_id"] = get_session_id()
             result = create_request_from_tool_args(args, cluster_id=get_elastic_cluster_id())
             self._mcp_logger.info(
                 "Tool %s filed approval request %s",
                 tool_name,
                 result.get("request_id"),
+            )
+            return result
+
+        if tool_name == "find_related_requests":
+            from ..ai_controller.approval_queue.mcp_bridge import find_related_requests_from_args
+            from .cluster_context import get_elastic_cluster_id
+
+            result = find_related_requests_from_args(args, cluster_id=get_elastic_cluster_id())
+            self._mcp_logger.info(
+                "Tool %s returned %s related request(s)",
+                tool_name,
+                result.get("count"),
             )
             return result
 
@@ -4087,10 +4151,13 @@ To be populated during investigation.
                 from ..ai_controller.approval_queue.mcp_bridge import enqueue_gated_tool
                 from .cluster_context import get_elastic_cluster_id
 
+                from .cluster_context import get_session_id as _get_session_id
+
                 queued_note = enqueue_gated_tool(
                     "add_alert_note",
                     {"alert_id": args["alert_id"], "note": note_text},
                     cluster_id=get_elastic_cluster_id(),
+                    session_id=_get_session_id(),
                 )
                 if isinstance(result, dict):
                     result["note_queued"] = queued_note

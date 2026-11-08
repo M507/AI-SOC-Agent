@@ -28,6 +28,7 @@ class ActionSpec:
     fields: Tuple[FieldSpec, ...]
     execution: str
     integration: str
+    queue_tab: str
     gated_mcp_tool: Optional[str] = None
     asks_question: bool = False
     default_follow_ups: Tuple[str, ...] = ()
@@ -58,6 +59,7 @@ class ActionSpec:
             "asks_question": self.asks_question,
             "gated_mcp_tool": self.gated_mcp_tool,
             "workflow": self.workflow,
+            "queue_tab": self.queue_tab,
             "notes": self.notes,
             "fields": [
                 {
@@ -84,6 +86,7 @@ ACTION_CATALOG: Tuple[ActionSpec, ...] = (
         risk="medium",
         execution="ready",
         integration="siem",
+        queue_tab="closures",
         gated_mcp_tool="close_alert",
         notes="Runs Elastic close_alert against the cluster bound to the request.",
         fields=_fields(
@@ -105,6 +108,7 @@ ACTION_CATALOG: Tuple[ActionSpec, ...] = (
         risk="low",
         execution="ready",
         integration="siem",
+        queue_tab="alert_notes",
         gated_mcp_tool="add_alert_note",
         notes="Runs Elastic add_alert_note against the cluster bound to the request.",
         fields=_fields(
@@ -125,6 +129,7 @@ ACTION_CATALOG: Tuple[ActionSpec, ...] = (
         risk="low",
         execution="ready",
         integration="siem",
+        queue_tab="questions",
         asks_question=True,
         default_follow_ups=("yes", "no"),
         notes="After Yes: acknowledge (close as benign). After No: escalate (Elastic Security case + true-positive tag).",
@@ -145,6 +150,7 @@ ACTION_CATALOG: Tuple[ActionSpec, ...] = (
         risk="critical",
         execution="stub",
         integration="none",
+        queue_tab="response",
         gated_mcp_tool="isolate_endpoint",
         notes=(
             "Intentionally disabled: Approve stores the payload and sets Waiting on integration. "
@@ -164,6 +170,7 @@ ACTION_CATALOG: Tuple[ActionSpec, ...] = (
         risk="high",
         execution="stub",
         integration="none",
+        queue_tab="response",
         gated_mcp_tool="release_endpoint_isolation",
         notes=(
             "Intentionally disabled: Approve stores the payload and sets Waiting on integration. "
@@ -183,6 +190,7 @@ ACTION_CATALOG: Tuple[ActionSpec, ...] = (
         risk="critical",
         execution="ready_if_configured",
         integration="edr",
+        queue_tab="response",
         gated_mcp_tool="kill_process_on_endpoint",
         notes="Requires EDR.",
         fields=_fields(
@@ -199,6 +207,7 @@ ACTION_CATALOG: Tuple[ActionSpec, ...] = (
         risk="high",
         execution="ready_if_configured",
         integration="edr",
+        queue_tab="response",
         gated_mcp_tool="collect_forensic_artifacts",
         notes="Requires EDR.",
         fields=_fields(
@@ -215,9 +224,10 @@ ACTION_CATALOG: Tuple[ActionSpec, ...] = (
         risk="low",
         execution="informational",
         integration="none",
+        queue_tab="fine_tune",
         gated_mcp_tool="create_fine_tuning_recommendation",
         notes=(
-            "Looks up the rule in Home-Lab-Rules and stores a suggestion under Requests → Notes. "
+            "Looks up the rule in Home-Lab-Rules and stores a suggestion under Requests → Fine-tune. "
             "No Approve button. When ENG is GitHub, may also open a linked issue."
         ),
         fields=_fields(
@@ -236,9 +246,10 @@ ACTION_CATALOG: Tuple[ActionSpec, ...] = (
         risk="low",
         execution="informational",
         integration="none",
+        queue_tab="visibility",
         gated_mcp_tool="create_visibility_recommendation",
         notes=(
-            "Searches the Home Lab rule catalog first. Filed under Requests → Notes with coverage evidence. "
+            "Searches the Home Lab rule catalog first. Filed under Requests → Visibility with coverage evidence. "
             "No Approve button. When ENG is GitHub, may also open a linked issue."
         ),
         fields=_fields(
@@ -258,10 +269,11 @@ ACTION_CATALOG: Tuple[ActionSpec, ...] = (
         risk="low",
         execution="informational",
         integration="none",
+        queue_tab="runbooks",
         gated_mcp_tool="create_runbook_recommendation",
         notes=(
             "File only AFTER the investigation finishes (final verdict set). "
-            "Server lists existing case runbooks and flags near-matches. Filed under Requests → Notes. "
+            "Server lists existing case runbooks and flags near-matches. Filed under Requests → Runbooks. "
             "No Approve button. When ENG is GitHub, may also open a linked issue. "
             "Use Create runbook in Requests to author soc*/cases/*.md via Open WebUI."
         ),
@@ -287,6 +299,7 @@ ACTION_CATALOG: Tuple[ActionSpec, ...] = (
         risk="low",
         execution="ready_if_configured",
         integration="case",
+        queue_tab="response",
         notes="Uses the configured case-management client.",
         fields=_fields(
             FieldSpec("title", "Title", True),
@@ -304,6 +317,7 @@ ACTION_CATALOG: Tuple[ActionSpec, ...] = (
         risk="medium",
         execution="ready_if_configured",
         integration="case",
+        queue_tab="closures",
         notes="Sets case status to closed.",
         fields=_fields(
             FieldSpec("case_id", "Case ID", True),
@@ -318,6 +332,7 @@ ACTION_CATALOG: Tuple[ActionSpec, ...] = (
         risk="medium",
         execution="ready",
         integration="siem",
+        queue_tab="response",
         notes="Tags the SIEM alert as TP and opens a case in Elastic Security (not IRIS/TheHive), including the full alert.",
         fields=_fields(
             FieldSpec("alert_id", "Alert ID", False),
@@ -334,6 +349,7 @@ ACTION_CATALOG: Tuple[ActionSpec, ...] = (
         risk="high",
         execution="stub",
         integration="none",
+        queue_tab="response",
         notes="Needs a firewall / proxy / EDR block API.",
         fields=_fields(
             FieldSpec("indicator", "Indicator", True),
@@ -349,6 +365,7 @@ ACTION_CATALOG: Tuple[ActionSpec, ...] = (
         risk="critical",
         execution="stub",
         integration="none",
+        queue_tab="response",
         notes="Needs an IAM / directory API (Okta, Entra, AD).",
         fields=_fields(
             FieldSpec("username", "Username", True),
@@ -364,6 +381,7 @@ ACTION_CATALOG: Tuple[ActionSpec, ...] = (
         risk="high",
         execution="stub",
         integration="none",
+        queue_tab="response",
         notes="Needs an IAM API.",
         fields=_fields(
             FieldSpec("username", "Username", True),
@@ -378,6 +396,7 @@ ACTION_CATALOG: Tuple[ActionSpec, ...] = (
         risk="high",
         execution="stub",
         integration="none",
+        queue_tab="response",
         notes="Needs a mail-gateway / M365 / Google Workspace API.",
         fields=_fields(
             FieldSpec("message_id", "Message ID", True),
@@ -412,10 +431,37 @@ def gated_mcp_tools() -> Tuple[str, ...]:
 
 SOC_CATEGORIES = frozenset({"siem", "identity", "edr", "case", "iam", "email", "network"})
 DETECTION_CATEGORIES = frozenset({"detections", "runbooks"})
-# Primary Requests tabs. Legacy keys stay as API aliases in matches_queue / queue_counts.
-QUEUE_NAMES = ("all", "approvals", "notes")
-_LEGACY_QUEUE_NAMES = ("soc", "engineering", "detection")
+
+# Primary Requests tabs (job-based). Legacy keys stay as API aliases in matches_queue.
+QUEUE_NAMES = (
+    "all",
+    "closures",
+    "alert_notes",
+    "questions",
+    "response",
+    "fine_tune",
+    "visibility",
+    "runbooks",
+)
+# Legacy union aliases still counted for older clients / tests.
+_LEGACY_QUEUE_NAMES = ("approvals", "notes", "soc", "engineering", "detection")
 QUEUE_COUNT_KEYS = QUEUE_NAMES + _LEGACY_QUEUE_NAMES
+
+# Nav badge: pending items on these tabs only (not alert notes / informational).
+ACTIONABLE_QUEUE_TABS = frozenset({"closures", "questions", "response"})
+
+# Legacy Approvals union and Notes union.
+_APPROVALS_UNION_TABS = frozenset({"closures", "alert_notes", "questions", "response"})
+_NOTES_UNION_TABS = frozenset({"fine_tune", "visibility", "runbooks"})
+_ENGINEERING_TABS = frozenset({"fine_tune", "visibility", "runbooks"})
+
+
+def queue_tab_for(action_type: str) -> str:
+    """Primary Requests tab for an action type."""
+    spec = get_action_spec(action_type)
+    if spec and spec.queue_tab:
+        return spec.queue_tab
+    return "response"
 
 
 def github_issue_link(payload: Optional[Dict[str, object]]) -> Optional[Dict[str, object]]:
@@ -446,14 +492,16 @@ def matches_queue(action_type: str, payload: Optional[Dict[str, object]], queue:
     key = (queue or "all").strip().lower()
     if key in {"all", "", "pending"}:
         return True
-    spec = get_action_spec(action_type)
-    category = spec.category if spec else ""
-    # Approvals = response / verification / stubs (everything not a detection note).
-    if key in {"approvals", "soc", "response"}:
-        return category not in DETECTION_CATEGORIES
-    # Notes = fine-tune / visibility / runbook gap.
+    tab = queue_tab_for(action_type)
+    # Primary job tabs.
+    if key in QUEUE_NAMES and key != "all":
+        return tab == key
+    # Legacy Approvals = closures + alert notes + questions + response.
+    if key in {"approvals", "soc"}:
+        return tab in _APPROVALS_UNION_TABS
+    # Legacy Notes = fine-tune + visibility + runbooks.
     if key in {"notes", "detection", "detections", "detection_engineering"}:
-        return category in DETECTION_CATEGORIES
+        return tab in _NOTES_UNION_TABS
     # Deprecated Engineering tab: GitHub-linked items only (API alias).
     if key in {"engineering", "eng"}:
         return github_issue_link(payload) is not None
@@ -464,3 +512,9 @@ def wants_github_facet(value: Optional[str]) -> bool:
     """True when list/filter should keep only GitHub-mirrored requests."""
     key = (value or "").strip().lower()
     return key in {"1", "true", "yes", "github", "linked", "linked=github"}
+
+
+def supports_github_facet(queue: Optional[str]) -> bool:
+    """GitHub facet is offered on engineering tabs and All."""
+    key = (queue or "").strip().lower()
+    return key in _ENGINEERING_TABS or key in {"all", "notes", "detection", "detections", "engineering", "eng"}
