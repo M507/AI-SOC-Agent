@@ -1396,69 +1396,96 @@ class ElasticSIEMClient:
                 must_clauses.append(self._alert_rule_id_clause(rule_id))
 
             if not include_investigated:
+                # Best-effort ES filter. Verdicts written only into _source (common for
+                # update_alert_verdict) are often unmapped, so exists matches nothing.
                 must_not_clauses.append({"exists": {"field": "signal.ai.verdict"}})
 
             bool_query: Dict[str, Any] = {"must": must_clauses}
             if must_not_clauses:
                 bool_query["must_not"] = must_not_clauses
 
-            query = {
-                "query": {"bool": bool_query},
-                "size": max_alerts,
-                "sort": [{"@timestamp": {"order": "desc"}}],
-            }
+            # Sort by @timestamp only. Sorting by _id returns 0 hits on some Elastic
+            # clusters (fielddata disabled). search_after still works on the timestamp.
+            sort = [{"@timestamp": {"order": "desc"}}]
+            # When excluding investigated alerts, over-fetch: the newest docs are often
+            # already triaged and ES cannot reliably filter unmapped signal.ai.verdict.
+            # Page until we have max_alerts uninvestigated results (or hits run out).
+            page_size = (
+                max_alerts
+                if include_investigated
+                else min(max(int(max_alerts) * 25, 100), 1000)
+            )
 
-            response = self._search_with_fallback(_ALERT_INDEX_PATTERNS, query)
-            hits = response.get("hits", {}).get("hits", [])
-            alerts = []
+            alerts: List[Dict[str, Any]] = []
+            search_after = None
+            while len(alerts) < max_alerts:
+                query: Dict[str, Any] = {
+                    "query": {"bool": bool_query},
+                    "size": page_size,
+                    "sort": sort,
+                }
+                if search_after is not None:
+                    query["search_after"] = search_after
 
-            for hit in hits:
-                source = hit.get("_source", {})
-                signal = source.get("signal", {}) if isinstance(source.get("signal"), dict) else {}
-                signal_ai = signal.get("ai", {}) if isinstance(signal.get("ai"), dict) else {}
-                verdict = signal_ai.get("verdict")
+                response = self._search_with_fallback(_ALERT_INDEX_PATTERNS, query)
+                hits = response.get("hits", {}).get("hits", [])
+                if not hits:
+                    break
 
-                # Safety net when exclude-investigated is active
-                if verdict and not include_investigated:
-                    continue
+                for hit in hits:
+                    source = hit.get("_source", {})
+                    signal = source.get("signal", {}) if isinstance(source.get("signal"), dict) else {}
+                    signal_ai = signal.get("ai", {}) if isinstance(signal.get("ai"), dict) else {}
+                    verdict = signal_ai.get("verdict")
 
-                rule_fields = self._extract_rule_fields(source, signal)
-                title = rule_fields["rule_name"]
-                alert_severity = (
-                    signal.get("severity")
-                    or source.get("kibana.alert.severity")
-                    or "medium"
-                )
-                status = (
-                    signal.get("status")
-                    or source.get("kibana.alert.workflow_status")
-                    or "open"
-                )
-                display = self._alert_display_extras(source, title)
+                    # Authoritative filter: ES exists on signal.ai.verdict is unreliable
+                    # when the field is source-only / unmapped.
+                    if verdict and not include_investigated:
+                        continue
 
-                alerts.append({
-                    "id": hit.get("_id", ""),
-                    "title": title,
-                    "rule_name": rule_fields["rule_name"],
-                    "rule_id": rule_fields["rule_id"],
-                    "severity": alert_severity,
-                    "status": status,
-                    "created_at": source.get("@timestamp", ""),
-                    "description": self._extract_description_from_alert(source, signal),
-                    "host_name": display["host_name"],
-                    "user_name": display["user_name"],
-                    "subtitle": display["subtitle"],
-                    "reason": display["reason"],
-                    "target": display["target"],
-                    "source": "elastic",
-                    "related_entities": self._extract_entities_from_alert(source),
-                    "verdict": verdict,
-                    "signal": {
-                        "ai": {
-                            "verdict": verdict,
-                        }
-                    },
-                })
+                    rule_fields = self._extract_rule_fields(source, signal)
+                    title = rule_fields["rule_name"]
+                    alert_severity = (
+                        signal.get("severity")
+                        or source.get("kibana.alert.severity")
+                        or "medium"
+                    )
+                    status = (
+                        signal.get("status")
+                        or source.get("kibana.alert.workflow_status")
+                        or "open"
+                    )
+                    display = self._alert_display_extras(source, title)
+
+                    alerts.append({
+                        "id": hit.get("_id", ""),
+                        "title": title,
+                        "rule_name": rule_fields["rule_name"],
+                        "rule_id": rule_fields["rule_id"],
+                        "severity": alert_severity,
+                        "status": status,
+                        "created_at": source.get("@timestamp", ""),
+                        "description": self._extract_description_from_alert(source, signal),
+                        "host_name": display["host_name"],
+                        "user_name": display["user_name"],
+                        "subtitle": display["subtitle"],
+                        "reason": display["reason"],
+                        "target": display["target"],
+                        "source": "elastic",
+                        "related_entities": self._extract_entities_from_alert(source),
+                        "verdict": verdict,
+                        "signal": {
+                            "ai": {
+                                "verdict": verdict,
+                            }
+                        },
+                    })
+                    if len(alerts) >= max_alerts:
+                        break
+
+                search_after = hits[-1].get("sort")
+                if search_after is None or len(hits) < page_size:
+                    break
 
             return alerts
         except Exception as e:

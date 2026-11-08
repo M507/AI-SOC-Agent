@@ -345,6 +345,7 @@ class AutorunManager {
         document.getElementById('edit-autorun-command').value = autorun.command || '';
         document.getElementById('edit-autorun-condition').value = condition.name;
         document.getElementById('edit-autorun-condition-limit').value = condition.limit;
+        document.getElementById('edit-autorun-condition-hours').value = condition.hoursBack || '1';
         document.getElementById('edit-autorun-interval').value = autorun.interval_seconds || 300;
         if (this.controller.elasticClusters) {
             this.controller.elasticClusters.fillSelect(
@@ -377,7 +378,8 @@ class AutorunManager {
         const command = document.getElementById('edit-autorun-command').value.trim();
         const condition = joinConditionFunction(
             document.getElementById('edit-autorun-condition').value,
-            document.getElementById('edit-autorun-condition-limit').value
+            document.getElementById('edit-autorun-condition-limit').value,
+            document.getElementById('edit-autorun-condition-hours').value
         ) || null;
         const intervalSeconds = Number.parseInt(
             document.getElementById('edit-autorun-interval').value,

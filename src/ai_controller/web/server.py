@@ -600,15 +600,22 @@ async def _check_autorun_condition(
 
                 # Build SIEM client for the autorun's cluster (or the default)
                 max_alerts = spec.alert_limit()
+                hours_back = spec.alert_hours_back()
                 details["command_executed"] = (
-                    f"python:get_recent_alerts(hours_back=1, max_alerts={max_alerts})"
+                    f"python:get_recent_alerts(hours_back={hours_back}, max_alerts={max_alerts})"
                 )
 
                 logger.debug(
-                    "Executing get_recent_alerts condition directly via SIEM client (max_alerts=%s)",
+                    "Executing get_recent_alerts condition directly via SIEM client "
+                    "(hours_back=%s, max_alerts=%s)",
+                    hours_back,
                     max_alerts,
                 )
-                output = get_recent_alerts(hours_back=1, max_alerts=max_alerts, client=siem_client)
+                output = get_recent_alerts(
+                    hours_back=hours_back,
+                    max_alerts=max_alerts,
+                    client=siem_client,
+                )
                 details["execution_success"] = True
                 details["output"] = output
                 details["output_type"] = type(output).__name__ if output is not None else "None"

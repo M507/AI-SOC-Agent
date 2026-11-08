@@ -1141,6 +1141,8 @@
                     <p style="margin: 8px 0 0 0; font-size: 0.9em;">
                         The autorun will only execute if the condition function returns content. 
                         If the function returns empty/no content, the autorun will be skipped.
+                        For <code>get_recent_alerts</code>, set lookback hours to control how far back
+                        the condition searches (default 1 hour).
                     </p>
                 </div>
                 <select id="autorun-condition">
@@ -1151,6 +1153,13 @@
                 <small>
                     Choose a condition function to control when the autorun runs.
                     If you leave this as \"No condition\", the autorun will always execute on schedule.
+                </small>
+
+                <label for="autorun-condition-hours">Lookback hours (optional):</label>
+                <input type="number" id="autorun-condition-hours" min="1" step="1" value="1" placeholder="1">
+                <small>
+                    How many hours back <code>get_recent_alerts</code> should search for uninvestigated
+                    alerts. Default is 1. Ignored for other conditions.
                 </small>
 
                 <label for="autorun-condition-limit">Items per run (optional):</label>
@@ -1197,6 +1206,13 @@
                     <option value="list_cases">list_cases</option>
                 </select>
 
+                <label for="edit-autorun-condition-hours">Lookback hours (optional):</label>
+                <input type="number" id="edit-autorun-condition-hours" min="1" step="1" value="1" placeholder="1">
+                <small>
+                    How many hours back <code>get_recent_alerts</code> should search (default 1).
+                    Ignored for other conditions.
+                </small>
+
                 <label for="edit-autorun-condition-limit">Items per run (optional):</label>
                 <input type="number" id="edit-autorun-condition-limit" min="1" step="1" placeholder="All (default)">
                 <small>Set to 1 to triage a single alert per run.</small>
@@ -1241,7 +1257,7 @@
     <script src="https://cdn.jsdelivr.net/npm/marked@12.0.0/marked.min.js"></script>
     
     <!-- Core utilities (no dependencies) -->
-    <script src="/static/utils.js?v=5"></script>
+    <script src="/static/utils.js?v=6"></script>
     <script src="/static/toast.js?v=1"></script>
     
     <!-- API client (no dependencies) -->
@@ -1252,8 +1268,8 @@
     <script src="/static/terminal.js?v=6"></script>
     <script src="/static/sessions.js?v=8"></script>
     <script src="/static/pdf_export.js?v=2"></script>
-    <script src="/static/autoruns.js?v=13"></script>
-    <script src="/static/modals.js?v=7"></script>
+    <script src="/static/autoruns.js?v=14"></script>
+    <script src="/static/modals.js?v=8"></script>
     <script src="/static/requests.js?v=6"></script>
     <script src="/static/cost.js?v=2"></script>
     <script src="/static/overview.js?v=2"></script>

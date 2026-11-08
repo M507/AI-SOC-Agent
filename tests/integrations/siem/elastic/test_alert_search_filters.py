@@ -9,9 +9,9 @@ from src.integrations.siem.elastic.elastic_client import ElasticSIEMClient
 from src.orchestrator import tools_siem
 
 
-def _hit(alert_id, *, rule_name, status, verdict=None, rule_id="rule-1"):
+def _hit(alert_id, *, rule_name, status, verdict=None, rule_id="rule-1", timestamp="2026-09-20T12:00:00Z"):
     source = {
-        "@timestamp": "2026-09-20T12:00:00Z",
+        "@timestamp": timestamp,
         "kibana.alert.rule.name": rule_name,
         "kibana.alert.rule.uuid": rule_id,
         "kibana.alert.workflow_status": status,
@@ -24,7 +24,12 @@ def _hit(alert_id, *, rule_name, status, verdict=None, rule_id="rule-1"):
     }
     if verdict:
         source["signal"]["ai"] = {"verdict": verdict}
-    return {"_id": alert_id, "_index": ".alerts-security.alerts-default", "_source": source}
+    return {
+        "_id": alert_id,
+        "_index": ".alerts-security.alerts-default",
+        "_source": source,
+        "sort": [timestamp, alert_id],
+    }
 
 
 def _client_with_hits(hits):
@@ -104,6 +109,43 @@ def test_get_security_alerts_default_excludes_closed_and_investigated():
     assert any(
         clause.get("exists", {}).get("field") == "signal.ai.verdict" for clause in must_not
     )
+    # Over-fetch when excluding investigated so leading verdicted hits cannot starve limit=N
+    assert http.post.call_args.kwargs["json_data"]["size"] >= 100
+
+
+def test_get_security_alerts_limit_one_skips_leading_verdicted_hits():
+    """Regression: unmapped signal.ai.verdict makes ES exists a no-op; Python must skip."""
+    client, http = _client_with_hits(
+        [
+            _hit(
+                "newest-verdicted",
+                rule_name="Already triaged",
+                status="open",
+                verdict="benign_true_positive",
+                timestamp="2026-11-08T00:46:00Z",
+            ),
+            _hit(
+                "also-verdicted",
+                rule_name="Already triaged",
+                status="open",
+                verdict="false_positive",
+                timestamp="2026-11-08T00:21:00Z",
+            ),
+            _hit(
+                "first-open",
+                rule_name="Needs triage",
+                status="open",
+                timestamp="2026-11-07T22:46:00Z",
+            ),
+        ]
+    )
+
+    alerts = client.get_security_alerts(hours_back=24, max_alerts=1)
+
+    assert len(alerts) == 1
+    assert alerts[0]["id"] == "first-open"
+    assert alerts[0]["verdict"] in (None, "")
+    assert http.post.call_args.kwargs["json_data"]["size"] >= 100
 
 
 def test_get_security_alerts_closed_includes_investigated_by_default():

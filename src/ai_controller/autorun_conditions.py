@@ -1,10 +1,11 @@
 """
 Autorun condition functions: parsing and prompt context.
 
-A condition string may carry a result limit, e.g. `get_recent_alerts 1` to
-pull a single alert per run. The condition output is also rendered into a
-context block so the scheduled prompt carries the alert data it triages;
-without it the agent has no way to know which alert to work on.
+A condition string may carry a result limit and lookback window, e.g.
+`get_recent_alerts 1` or `get_recent_alerts hours_back=24 limit=1`.
+The condition output is also rendered into a context block so the scheduled
+prompt carries the alert data it triages; without it the agent has no way to
+know which alert to work on.
 """
 
 from __future__ import annotations
@@ -19,18 +20,23 @@ logger = get_logger("sami.ai_controller.autorun_conditions")
 
 DEFAULT_ALERT_LIMIT = 100
 DEFAULT_CASE_LIMIT = 50
+DEFAULT_ALERT_HOURS_BACK = 1
 
 # Beyond this the JSON is summarized instead, so a busy SIEM cannot blow up
 # the prompt (or the provider's context window) on a scheduled run.
 MAX_CONTEXT_CHARS = 12000
 
+_LIMIT_KEYS = {"limit", "max_alerts", "count"}
+_HOURS_KEYS = {"hours_back", "hours"}
+
 
 @dataclass(frozen=True)
 class ConditionSpec:
-    """A condition function name plus an optional caller-supplied limit."""
+    """A condition function name plus optional limit / lookback."""
 
     name: str
     limit: Optional[int] = None
+    hours_back: Optional[int] = None
     raw: str = ""
 
     def alert_limit(self) -> int:
@@ -39,39 +45,76 @@ class ConditionSpec:
     def case_limit(self) -> int:
         return self.limit or DEFAULT_CASE_LIMIT
 
+    def alert_hours_back(self) -> int:
+        return self.hours_back or DEFAULT_ALERT_HOURS_BACK
+
+
+def _parse_positive_int(value: str) -> Optional[int]:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return None
+    return parsed if parsed >= 1 else None
+
 
 def parse_condition_spec(condition_function: Optional[str]) -> ConditionSpec:
     """
-    Parse `get_recent_alerts`, `get_recent_alerts 1`, or `get_recent_alerts limit=1`.
+    Parse condition strings such as:
 
-    Unparseable trailing text is left on the name so the generic executor
-    fallback keeps receiving the original string.
+    - `get_recent_alerts`
+    - `get_recent_alerts 1`
+    - `get_recent_alerts limit=1`
+    - `get_recent_alerts hours_back=24`
+    - `get_recent_alerts hours_back=24 limit=1`
+    - `run get_recent_alerts hours_back=24 limit=1`
+
+    Unknown ``key=value`` tokens stay on the name so the generic executor
+    fallback still receives them.
     """
     raw = (condition_function or "").strip()
     if not raw:
-        return ConditionSpec(name="", limit=None, raw="")
+        return ConditionSpec(name="", limit=None, hours_back=None, raw="")
 
     body = raw[4:].strip() if raw.lower().startswith("run ") else raw
     parts = body.split()
-    if len(parts) < 2:
-        return ConditionSpec(name=body, limit=None, raw=raw)
+    if not parts:
+        return ConditionSpec(name="", limit=None, hours_back=None, raw=raw)
 
-    candidate = parts[-1]
-    if "=" in candidate:
-        key, _, value = candidate.partition("=")
-        if key.strip().lower() not in {"limit", "max_alerts", "count"}:
-            return ConditionSpec(name=body, limit=None, raw=raw)
-        candidate = value
+    name_parts: List[str] = []
+    limit: Optional[int] = None
+    hours_back: Optional[int] = None
 
-    try:
-        limit = int(candidate)
-    except ValueError:
-        return ConditionSpec(name=body, limit=None, raw=raw)
-    if limit < 1:
-        logger.warning("Ignoring non-positive condition limit in %r", raw)
-        return ConditionSpec(name=" ".join(parts[:-1]), limit=None, raw=raw)
+    for part in parts:
+        if "=" not in part:
+            name_parts.append(part)
+            continue
+        key, _, value = part.partition("=")
+        key_norm = key.strip().lower()
+        parsed = _parse_positive_int(value.strip())
+        if key_norm in _LIMIT_KEYS and parsed is not None:
+            limit = parsed
+            continue
+        if key_norm in _HOURS_KEYS and parsed is not None:
+            hours_back = parsed
+            continue
+        name_parts.append(part)
 
-    return ConditionSpec(name=" ".join(parts[:-1]), limit=limit, raw=raw)
+    # Trailing bare integer is the items-per-run limit (legacy form).
+    if name_parts and limit is None:
+        trailing = _parse_positive_int(name_parts[-1])
+        if trailing is not None and len(name_parts) >= 2:
+            limit = trailing
+            name_parts = name_parts[:-1]
+        elif trailing is not None and trailing < 1:
+            logger.warning("Ignoring non-positive condition limit in %r", raw)
+            name_parts = name_parts[:-1]
+
+    return ConditionSpec(
+        name=" ".join(name_parts),
+        limit=limit,
+        hours_back=hours_back,
+        raw=raw,
+    )
 
 
 def _summarize_alerts(output: Dict[str, Any]) -> Dict[str, Any]:

@@ -9,11 +9,15 @@ from src.ai_controller.autorun_conditions import (
 
 
 def test_bare_condition_keeps_default_limits():
+    from src.ai_controller.autorun_conditions import DEFAULT_ALERT_HOURS_BACK
+
     spec = parse_condition_spec("get_recent_alerts")
 
     assert spec.name == "get_recent_alerts"
     assert spec.limit is None
+    assert spec.hours_back is None
     assert spec.alert_limit() == DEFAULT_ALERT_LIMIT
+    assert spec.alert_hours_back() == DEFAULT_ALERT_HOURS_BACK
 
 
 def test_trailing_integer_sets_the_limit():
@@ -22,6 +26,7 @@ def test_trailing_integer_sets_the_limit():
     assert spec.name == "get_recent_alerts"
     assert spec.limit == 1
     assert spec.alert_limit() == 1
+    assert spec.hours_back is None
 
 
 def test_limit_keyword_and_run_prefix_are_accepted():
@@ -29,11 +34,30 @@ def test_limit_keyword_and_run_prefix_are_accepted():
     assert parse_condition_spec("run get_recent_alerts").name == "get_recent_alerts"
 
 
-def test_non_numeric_suffix_is_left_for_the_generic_executor():
-    spec = parse_condition_spec("run some_tool with hours_back=2")
+def test_hours_back_keyword_is_parsed():
+    spec = parse_condition_spec("get_recent_alerts hours_back=24 limit=1")
+
+    assert spec.name == "get_recent_alerts"
+    assert spec.hours_back == 24
+    assert spec.limit == 1
+    assert spec.alert_hours_back() == 24
+
+
+def test_hours_back_can_appear_without_a_limit():
+    spec = parse_condition_spec("get_recent_alerts hours_back=48")
+
+    assert spec.name == "get_recent_alerts"
+    assert spec.hours_back == 48
+    assert spec.limit is None
+    assert spec.alert_limit() == DEFAULT_ALERT_LIMIT
+
+
+def test_unknown_kwargs_stay_on_the_name_for_generic_executor():
+    spec = parse_condition_spec("run some_tool with foo=2")
 
     assert spec.limit is None
-    assert spec.name == "some_tool with hours_back=2"
+    assert spec.hours_back is None
+    assert spec.name == "some_tool with foo=2"
 
 
 def test_context_carries_the_alert_so_the_agent_need_not_ask():
