@@ -29,6 +29,16 @@ def _require(request: ApprovalRequest, *names: str) -> None:
         raise ValueError(f"Missing payload fields: {', '.join(missing)}")
 
 
+def _alert_ids_for_request(request: ApprovalRequest) -> list:
+    from .dedupe import related_alert_ids_of
+
+    ids = related_alert_ids_of(request)
+    if ids:
+        return ids
+    raw = request.payload.get("alert_id")
+    return [str(raw)] if raw not in (None, "") else []
+
+
 class CloseAlertHandler:
     def execute(self, request: ApprovalRequest, clients: ClientBundle) -> Dict[str, Any]:
         _require(request, "alert_id")
@@ -36,12 +46,27 @@ class CloseAlertHandler:
             return _missing("siem", "No SIEM client for this cluster. Close payload is stored.")
         from ...orchestrator import tools_siem
 
-        return tools_siem.close_alert(
-            alert_id=str(request.payload["alert_id"]),
-            reason=request.payload.get("reason") or "false_positive",
-            comment=request.payload.get("comment") or request.summary,
-            client=clients.siem,
-        )
+        alert_ids = _alert_ids_for_request(request)
+        reason = request.payload.get("reason") or "false_positive"
+        comment = request.payload.get("comment") or request.summary
+        results = []
+        for alert_id in alert_ids:
+            results.append(
+                tools_siem.close_alert(
+                    alert_id=str(alert_id),
+                    reason=reason,
+                    comment=comment,
+                    client=clients.siem,
+                )
+            )
+        if len(results) == 1:
+            return results[0]
+        return {
+            "success": all(bool(item.get("success", True)) for item in results if isinstance(item, dict)),
+            "closed_count": len(results),
+            "alert_ids": alert_ids,
+            "results": results,
+        }
 
 
 class AddAlertNoteHandler:
@@ -51,11 +76,25 @@ class AddAlertNoteHandler:
             return _missing("siem", "No SIEM client for this cluster. Note payload is stored.")
         from ...orchestrator import tools_siem
 
-        return tools_siem.add_alert_note(
-            alert_id=str(request.payload["alert_id"]),
-            note=str(request.payload["note"]),
-            client=clients.siem,
-        )
+        alert_ids = _alert_ids_for_request(request)
+        note = str(request.payload["note"])
+        results = []
+        for alert_id in alert_ids:
+            results.append(
+                tools_siem.add_alert_note(
+                    alert_id=str(alert_id),
+                    note=note,
+                    client=clients.siem,
+                )
+            )
+        if len(results) == 1:
+            return results[0]
+        return {
+            "success": all(bool(item.get("success", True)) for item in results if isinstance(item, dict)),
+            "noted_count": len(results),
+            "alert_ids": alert_ids,
+            "results": results,
+        }
 
 
 class KillProcessHandler:

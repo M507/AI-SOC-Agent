@@ -22,12 +22,16 @@ from .catalog import (
 from .clients import resolve_clients
 from .dedupe import (
     ALERT_SCOPED_ACTIONS,
+    ENDPOINT_SCOPED_ACTIONS,
     INFORMATIONAL_ACTIONS,
     EnqueueOutcome,
     find_open_alert_match,
+    find_open_endpoint_match,
+    find_open_flow_match,
     find_open_informational_match,
     find_related_requests as _find_related_requests,
     note_is_richer,
+    related_alert_ids_of,
 )
 from .models import ApprovalRequest, Decision, FollowUpPlan, RequestStatus, is_archived
 from .store import RequestStore
@@ -389,6 +393,13 @@ class ApprovalQueue:
                     alert_id=alert_id,
                     cluster_id=cluster_id,
                 )
+            if existing is None:
+                existing = find_open_flow_match(
+                    snapshot,
+                    action_type=action_type,
+                    payload=payload,
+                    cluster_id=cluster_id,
+                )
         elif action_type in INFORMATIONAL_ACTIONS:
             existing = find_open_informational_match(
                 snapshot,
@@ -398,8 +409,18 @@ class ApprovalQueue:
                 summary=summary,
                 cluster_id=cluster_id,
             )
+        elif action_type in ENDPOINT_SCOPED_ACTIONS:
+            existing = find_open_endpoint_match(
+                snapshot,
+                action_type=action_type,
+                payload=payload,
+                cluster_id=cluster_id,
+            )
         if existing is None:
             return None
+
+        if action_type in ALERT_SCOPED_ACTIONS:
+            existing = self._merge_related_alert_ids(existing, payload)
 
         if action_type == "add_alert_note":
             new_note = str(payload.get("note") or summary or "").strip()
@@ -421,6 +442,13 @@ class ApprovalQueue:
 
                 existing = enrich_request(existing, force=True)
                 return EnqueueOutcome(request=self.store.put(existing), outcome="updated")
+            if session_id and not existing.session_id:
+                existing.session_id = session_id
+                existing.updated_at = datetime.now()
+                return EnqueueOutcome(request=self.store.put(existing), outcome="deduplicated")
+            # related_alert_ids may have changed even when note text did not
+            existing.updated_at = datetime.now()
+            return EnqueueOutcome(request=self.store.put(existing), outcome="deduplicated")
 
         if action_type == "close_alert":
             changed = False
@@ -439,16 +467,46 @@ class ApprovalQueue:
             if session_id and not existing.session_id:
                 existing.session_id = session_id
                 changed = True
-            if changed:
-                existing.updated_at = datetime.now()
-                return EnqueueOutcome(request=self.store.put(existing), outcome="updated")
-            return EnqueueOutcome(request=existing, outcome="deduplicated")
+            # Always persist after related_alert_ids merge
+            existing.updated_at = datetime.now()
+            return EnqueueOutcome(
+                request=self.store.put(existing),
+                outcome="updated" if changed else "deduplicated",
+            )
 
         if session_id and not existing.session_id:
             existing.session_id = session_id
             existing.updated_at = datetime.now()
             return EnqueueOutcome(request=self.store.put(existing), outcome="deduplicated")
         return EnqueueOutcome(request=existing, outcome="deduplicated")
+
+    @staticmethod
+    def _merge_related_alert_ids(
+        existing: ApprovalRequest,
+        payload: Dict[str, Any],
+    ) -> ApprovalRequest:
+        """Keep one ticket but remember every SIEM alert_id that folded into it."""
+        existing.payload = dict(existing.payload or {})
+        ids = related_alert_ids_of(existing)
+        for key in ("alert_id", "alertId"):
+            raw = payload.get(key)
+            if raw not in (None, ""):
+                text = str(raw).strip()
+                if text and text not in ids:
+                    ids.append(text)
+        extra = payload.get("related_alert_ids") or payload.get("alert_ids") or []
+        if isinstance(extra, str):
+            extra = [part.strip() for part in extra.split(",") if part.strip()]
+        if isinstance(extra, list):
+            for raw in extra:
+                text = str(raw or "").strip()
+                if text and text not in ids:
+                    ids.append(text)
+        if ids:
+            existing.payload["alert_id"] = ids[0]
+            if len(ids) > 1:
+                existing.payload["related_alert_ids"] = ids
+        return existing
 
     def find_related_requests(
         self,

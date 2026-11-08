@@ -1188,6 +1188,83 @@ def test_find_related_requests_by_rule_and_alert(tmp_path, monkeypatch):
     assert unrelated == []
 
 
+def test_same_flow_different_alert_ids_collapse_and_remember_ids(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        "src.ai_controller.approval_queue.enrichment.resolve_clients",
+        lambda cluster_id=None: ClientBundle(siem=None),
+    )
+    queue = ApprovalQueue(str(tmp_path))
+    first = queue.enqueue(
+        "add_alert_note",
+        title="Note: ntopng",
+        summary="first",
+        payload={
+            "alert_id": "alert-flow-1",
+            "note": "first",
+            "rule_name": "ntopng Security Alert",
+            "hostname": "10.10.10.99",
+            "destination_ip": "185.125.190.101",
+            "alert": {
+                "id": "alert-flow-1",
+                "title": "ntopng Security Alert",
+                "related_entities": ["host:10.10.10.99", "ip:185.125.190.101"],
+            },
+        },
+        cluster_id="lab",
+    )
+    second = queue.enqueue(
+        "add_alert_note",
+        title="Note: ntopng",
+        summary="second richer note with 185.125.190.101 disposition benign",
+        payload={
+            "alert_id": "alert-flow-2",
+            "note": "second richer note with 185.125.190.101 disposition benign",
+            "rule_name": "ntopng Security Alert",
+            "hostname": "10.10.10.99",
+            "destination_ip": "185.125.190.101",
+            "alert": {
+                "id": "alert-flow-2",
+                "title": "ntopng Security Alert",
+                "related_entities": ["host:10.10.10.99", "ip:185.125.190.101"],
+            },
+        },
+        cluster_id="lab",
+    )
+    assert first.outcome == "created"
+    assert second.outcome in {"deduplicated", "updated"}
+    assert second.request.id == first.request.id
+    related = (second.request.payload or {}).get("related_alert_ids") or []
+    assert "alert-flow-1" in related or second.request.payload.get("alert_id") == "alert-flow-1"
+    assert "alert-flow-2" in related or second.request.payload.get("alert_id") == "alert-flow-2"
+    pending = [i for i in queue.list(status="pending") if i.action_type == "add_alert_note"]
+    assert len(pending) == 1
+
+
+def test_isolate_endpoint_dedupes_by_endpoint(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        "src.ai_controller.approval_queue.enrichment.resolve_clients",
+        lambda cluster_id=None: ClientBundle(siem=None),
+    )
+    queue = ApprovalQueue(str(tmp_path))
+    first = queue.enqueue(
+        "isolate_endpoint",
+        title="Isolate host",
+        summary="isolate",
+        payload={"endpoint_id": "agent-1", "hostname": "workstation-1"},
+        cluster_id="lab",
+    )
+    second = queue.enqueue(
+        "isolate_endpoint",
+        title="Isolate again",
+        summary="isolate again",
+        payload={"endpoint_id": "agent-1", "hostname": "workstation-1"},
+        cluster_id="lab",
+    )
+    assert first.outcome == "created"
+    assert second.outcome == "deduplicated"
+    assert second.request.id == first.request.id
+
+
 def test_mcp_find_related_requests_and_session_meta(tmp_path, monkeypatch):
     from src.ai_controller.approval_queue import service as queue_service
     from src.ai_controller.approval_queue.mcp_bridge import enqueue_gated_tool, find_related_requests_from_args

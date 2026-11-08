@@ -10,6 +10,7 @@ from .models import ApprovalRequest, RequestStatus, is_archived
 
 ALERT_SCOPED_ACTIONS = frozenset({"add_alert_note", "close_alert"})
 INFORMATIONAL_ACTIONS = frozenset({"fine_tune", "visibility", "runbook_gap"})
+ENDPOINT_SCOPED_ACTIONS = frozenset({"isolate_endpoint", "release_isolation"})
 _OPEN = frozenset(
     {
         RequestStatus.PENDING,
@@ -122,6 +123,82 @@ def note_is_richer(existing_note: str, new_note: str) -> bool:
     return old_vague and new_concrete and len(new) >= len(old)
 
 
+def _payload_host_dst(payload: Optional[Dict[str, Any]]) -> tuple[str, str]:
+    payload = payload or {}
+    obs = distinguishing_observables(payload)
+    host = str(
+        payload.get("hostname")
+        or obs.get("host")
+        or obs.get("src")
+        or payload.get("source_ip")
+        or ""
+    ).strip().lower()
+    dst = str(
+        payload.get("destination_ip")
+        or payload.get("dst_ip")
+        or obs.get("dst")
+        or ""
+    ).strip().lower()
+    return host, dst
+
+
+def flow_fingerprint(
+    action_type: str,
+    payload: Optional[Dict[str, Any]],
+    *,
+    cluster_id: Optional[str] = None,
+) -> str:
+    """
+    Collapse lookalike Approvals: same action + rule + host → dst.
+    Used when distinct SIEM alert_ids are the same noisy flow pattern.
+    """
+    payload = payload or {}
+    host, dst = _payload_host_dst(payload)
+    rule = rule_key_of(payload)
+    if not host or not rule:
+        return ""
+    cluster = (cluster_id or "").strip() or "_"
+    # Prefer host→dst; fall back to host-only (e.g. scan detections without peer).
+    peer = dst or "_"
+    return f"{cluster}|{action_type}|{rule}|host:{host}|dst:{peer}"
+
+
+def endpoint_fingerprint(
+    action_type: str,
+    payload: Optional[Dict[str, Any]],
+    *,
+    cluster_id: Optional[str] = None,
+) -> str:
+    payload = payload or {}
+    endpoint = str(
+        payload.get("endpoint_id")
+        or payload.get("hostname")
+        or payload.get("agent_id")
+        or ""
+    ).strip().lower()
+    if not endpoint or action_type not in ENDPOINT_SCOPED_ACTIONS:
+        return ""
+    cluster = (cluster_id or "").strip() or "_"
+    return f"{cluster}|{action_type}|endpoint:{endpoint}"
+
+
+def related_alert_ids_of(request: ApprovalRequest) -> List[str]:
+    payload = request.payload or {}
+    ids: List[str] = []
+    primary = alert_id_of(request)
+    if primary:
+        ids.append(primary)
+    extra = payload.get("related_alert_ids") or payload.get("alert_ids") or []
+    if isinstance(extra, str):
+        extra = [part.strip() for part in extra.split(",") if part.strip()]
+    if isinstance(extra, list):
+        for raw in extra:
+            text = str(raw or "").strip()
+            if text and text not in ids:
+                ids.append(text)
+    return ids
+
+
 def find_open_alert_match(
     items: Iterable[ApprovalRequest],
     *,
@@ -131,6 +208,7 @@ def find_open_alert_match(
 ) -> Optional[ApprovalRequest]:
     if action_type not in ALERT_SCOPED_ACTIONS or not alert_id:
         return None
+    target = str(alert_id)
     for item in items:
         if not is_open_request(item):
             continue
@@ -138,7 +216,63 @@ def find_open_alert_match(
             continue
         if cluster_id and item.cluster_id and item.cluster_id != cluster_id:
             continue
-        if alert_id_of(item) == str(alert_id):
+        if target in related_alert_ids_of(item):
+            return item
+    return None
+
+
+def find_open_flow_match(
+    items: Iterable[ApprovalRequest],
+    *,
+    action_type: str,
+    payload: Optional[Dict[str, Any]],
+    cluster_id: Optional[str] = None,
+) -> Optional[ApprovalRequest]:
+    if action_type not in ALERT_SCOPED_ACTIONS:
+        return None
+    target = flow_fingerprint(action_type, payload, cluster_id=cluster_id)
+    if not target:
+        return None
+    for item in items:
+        if not is_open_request(item):
+            continue
+        if item.action_type != action_type:
+            continue
+        if cluster_id and item.cluster_id and item.cluster_id != cluster_id:
+            continue
+        existing = flow_fingerprint(
+            item.action_type,
+            item.payload,
+            cluster_id=item.cluster_id or cluster_id,
+        )
+        if existing and existing == target:
+            return item
+    return None
+
+
+def find_open_endpoint_match(
+    items: Iterable[ApprovalRequest],
+    *,
+    action_type: str,
+    payload: Optional[Dict[str, Any]],
+    cluster_id: Optional[str] = None,
+) -> Optional[ApprovalRequest]:
+    target = endpoint_fingerprint(action_type, payload, cluster_id=cluster_id)
+    if not target:
+        return None
+    for item in items:
+        if not is_open_request(item):
+            continue
+        if item.action_type != action_type:
+            continue
+        if cluster_id and item.cluster_id and item.cluster_id != cluster_id:
+            continue
+        existing = endpoint_fingerprint(
+            item.action_type,
+            item.payload,
+            cluster_id=item.cluster_id or cluster_id,
+        )
+        if existing and existing == target:
             return item
     return None
 
